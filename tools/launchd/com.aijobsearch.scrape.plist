@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daily unattended job collection (tools/scrape_cron.py).
+
+  Install:
+    (see the sed one-liner below - a plain cp leaves the placeholder paths in place)
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.aijobsearch.scrape.plist
+  Run it once by hand:
+    launchctl kickstart -p gui/$(id -u)/com.aijobsearch.scrape
+  Remove:
+    launchctl bootout gui/$(id -u)/com.aijobsearch.scrape
+    rm ~/Library/LaunchAgents/com.aijobsearch.scrape.plist
+
+  The three /ABSOLUTE/PATH/TO/ai-job-search paths below are absolute on purpose -
+  launchd has no notion of a working directory unless you give it one. Rewrite them
+  for your own checkout as you install, and again if the repo ever moves:
+
+    sed "s|/ABSOLUTE/PATH/TO/ai-job-search|$PWD|g" \
+      tools/launchd/com.aijobsearch.scrape.plist \
+      > ~/Library/LaunchAgents/com.aijobsearch.scrape.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aijobsearch.scrape</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/ABSOLUTE/PATH/TO/ai-job-search/tools/scrape_cron.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/ABSOLUTE/PATH/TO/ai-job-search</string>
+
+  <!-- launchd starts with a minimal PATH; bun lives in Homebrew's bin and the
+       portal CLIs are useless without it. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <!-- The Mac is usually asleep or shut at 09:00 on some days; this makes launchd
+       run the job as soon as it is awake again instead of skipping the day. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/ABSOLUTE/PATH/TO/ai-job-search/job_scraper/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABSOLUTE/PATH/TO/ai-job-search/job_scraper/launchd.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

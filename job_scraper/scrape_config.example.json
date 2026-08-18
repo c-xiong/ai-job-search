@@ -1,0 +1,12 @@
+{
+  "_comment": "Template for the scheduled collector (tools/scrape_cron.py). Copy to scrape_config.json and edit for your own market - the real file is gitignored, because the queries encode where you are looking and for what. It is re-read on every run. Keep the volume modest: linkedin-search hits LinkedIn's public pages and is personal-use only.",
+  "jobage_days": 7,
+  "limit_per_query": 10,
+  "linkedin": [
+    {"q": "[YOUR_PRIMARY_JOB_TITLE]", "l": "[YOUR_CITY], [YOUR_COUNTRY]"},
+    {"q": "[YOUR_SECONDARY_JOB_TITLE]", "l": "[YOUR_COUNTRY]"}
+  ],
+  "freehire": [
+    {"category": "[YOUR_CATEGORY e.g. ml_ai or backend,fullstack]", "country": "[YOUR_COUNTRY_CODES e.g. CH,DE,AT]"}
+  ]
+}

@@ -5,7 +5,11 @@
       "Bash(bun run:*)",
       "Bash(python salary_lookup.py:*)",
       "Bash(python3 salary_lookup.py:*)",
-      "Bash(pdftotext:*)"
+      "Bash(pdftotext:*)",
+      "Bash(python3 tools/jobs_md.py:*)",
+      "Bash(python tools/jobs_md.py:*)",
+      "Bash(python3 tools/jobs_board.py:*)",
+      "Bash(python3 tools/scrape_cron.py:*)"
     ]
   }
 }

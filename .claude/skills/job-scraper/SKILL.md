@@ -38,9 +38,14 @@ Optional arguments:
 
 ### Step 0: Load State
 
-1. Read `job_scraper/seen_jobs.json` (create if missing - start with `{"seen": {}}`)
-2. Read `job_search_tracker.csv` to extract already-applied companies+roles
-3. Read `search-queries.md` (this directory) for the search strategy
+1. Run `python3 tools/jobs_md.py sync` first, before reading anything. It folds any hand edits
+   the user made in `job_scraper/jobs.md` (the human-editable job list) back into
+   `job_scraper/seen_jobs.json` as `user_status` / `user_note`. Skipping this loses their
+   decisions. If `seen_jobs.json` does not exist yet, the tool exits 1 and there is nothing to
+   fold in - carry on.
+2. Read `job_scraper/seen_jobs.json` (create if missing - start with `{"seen": {}}`)
+3. Read `job_search_tracker.csv` to extract already-applied companies+roles
+4. Read `search-queries.md` (this directory) for the search strategy
 
 ### Step 1: Search
 
@@ -151,6 +156,17 @@ The `portal` field records which CLI skill produced the job (results are already
 `deadline` is a base field rather than a `/rank` extension: Step 2's detail fetch already extracts the application deadline, so it is written when the job is first seen and refreshed by `/rank` Step 4 when a scoring agent returns a different value. `null` means the posting states no deadline; a missing key means the entry predates this field - **never infer a deadline** from either, and never backfill by guessing.
 
 2. Only present jobs NOT already in the seen list or tracker.
+
+3. **Respect the user's own exclusions.** An entry whose `user_status` is `no` was excluded by the
+   user personally - never present it again and never re-score it. `maybe` means keep it, ranked
+   lower. `star`, `yes` and `applied` are the user's, not yours: carry them through untouched.
+
+4. **Regenerate the hand-editable list.** Run `python3 tools/jobs_md.py sync` after writing
+   `seen_jobs.json`. This rewrites `job_scraper/jobs.md` with the new jobs added as `new`, rows
+   re-sorted, and every section count refreshed - while preserving the Status and My-notes cells
+   the user edited. Mention the file in the Step 5 summary so they know where their list lives.
+   Every newly scraped job must reach that file: the terminal table is a preview, `jobs.md` is
+   the record.
 
 ### Step 4.5: Generate Referral Contact Links (High & Medium Fit Only)
 
