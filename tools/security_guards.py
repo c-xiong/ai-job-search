@@ -42,10 +42,36 @@ ALLOWED_PERMISSIONS = {
     "Bash(python salary_lookup.py:*)",
     "Bash(python3 salary_lookup.py:*)",
     "Bash(pdftotext:*)",
+    # jobs_md.py syncs job_scraper/seen_jobs.json <-> job_scraper/jobs.md. Local,
+    # stdlib-only, no network, writes only those two paths - /scrape calls it on
+    # every run, so prompting each time would be pure friction.
+    "Bash(python3 tools/jobs_md.py:*)",
+    "Bash(python tools/jobs_md.py:*)",
+    # jobs_board.py serves the triage UI on 127.0.0.1 with a per-run token; it
+    # reads and writes only job_scraper/. scrape_cron.py is the unattended
+    # collector - it shells out to the same portal CLIs `Bash(bun run:*)` already
+    # covers, and writes only job_scraper/.
+    "Bash(python3 tools/jobs_board.py:*)",
+    "Bash(python3 tools/scrape_cron.py:*)",
 }
 
 # Personal-data ignore rules that must never disappear from .gitignore.
 REQUIRED_IGNORE_RULES = [
+    # PUBLIC FORK rules. Upstream tracks these files and fills them in place,
+    # which is safe in a private fork; here only their `*.example` twins are
+    # tracked. Losing any one of these lines would publish real identity data
+    # on the next commit, so they are pinned exactly like the rules below.
+    "CLAUDE.md",
+    ".claude/skills/job-application-assistant/01-candidate-profile.md",
+    ".claude/skills/job-application-assistant/02-behavioral-profile.md",
+    ".claude/skills/job-application-assistant/04-job-evaluation.md",
+    ".claude/skills/job-application-assistant/05-cv-templates.md",
+    ".claude/skills/job-application-assistant/07-interview-prep.md",
+    ".claude/skills/job-scraper/search-queries.md",
+    "job_scraper/scrape_config.json",
+    "cv/my_cv.tex",
+    "cv/variants/",
+    "docs/",
     "salary_data.json",
     # Depth-independent: the job-scraper skill resolves `job_scraper/` relative
     # to its own directory, so the state file lands under .claude/skills/... and
@@ -99,6 +125,12 @@ ALLOWED_IGNORE_NEGATIONS = {
     "!cv/main_example.tex",
     "!cover_letters/cover_example.tex",
     "!documents/**/.gitkeep",
+    # NOTE: upstream also allows "!job_scraper/jobs.md", re-including the
+    # hand-editable shortlist as a decision record worth versioning - but only,
+    # by its own warning, in a PRIVATE fork. This fork is public, so that
+    # negation is dropped from both .gitignore and this allowlist: jobs.md names
+    # every company considered plus the owner's private notes. Re-adding it here
+    # is the one change to this file that must never be made.
 }
 
 # Hook commands the template legitimately ships, as "<Event>:<command>" strings.

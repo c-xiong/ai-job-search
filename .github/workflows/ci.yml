@@ -194,8 +194,13 @@ jobs:
         working-directory: .agents/skills/${{ matrix.tool }}/cli
 
   placeholder-integrity:
-    name: Placeholder integrity (upstream template only)
-    if: github.repository == 'MadsLorentzen/ai-job-search'
+    # Runs on every repository, unlike upstream, where this job is gated to the
+    # template repo because forks personalize the tracked files in place. This
+    # fork is PUBLIC and inverts that: the files /setup personalizes are
+    # gitignored, only their `*.example` twins are tracked, and this job is the
+    # check that keeps the split honest. Two failure modes, both caught below:
+    # a template that lost its placeholders, and a personal file that got staged.
+    name: Placeholder integrity and personal-data leak guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -203,14 +208,45 @@ jobs:
         run: |
           fail=0
           check() {
-            if ! grep -q "$2" "$1"; then
+            if [ ! -f "$1" ]; then
+              echo "::error file=$1::tracked template file is missing"
+              fail=1
+            elif ! grep -q "$2" "$1"; then
               echo "::error file=$1::expected placeholder token $2 - personal data may have been committed"
               fail=1
             fi
           }
-          check CLAUDE.md '\[YOUR_NAME\]'
+          check CLAUDE.example.md '\[YOUR_NAME\]'
           check cv/main_example.tex '\[YOUR_NAME\]'
           check cover_letters/cover_example.tex '\[YOUR NAME\]'
-          check .claude/skills/job-application-assistant/01-candidate-profile.md '<!-- SETUP'
-          check .claude/skills/job-application-assistant/04-job-evaluation.md '\[YOUR_PRIMARY_SKILLS\]'
+          check .claude/skills/job-application-assistant/01-candidate-profile.example.md '<!-- SETUP'
+          check .claude/skills/job-application-assistant/04-job-evaluation.example.md '\[YOUR_PRIMARY_SKILLS\]'
+          exit $fail
+      - name: Personalized files must not be tracked
+        run: |
+          fail=0
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+              echo "::error file=$path::personal file is tracked - it must stay gitignored, only its *.example twin belongs in git"
+              fail=1
+            fi
+          done <<'PATHS'
+          CLAUDE.md
+          .claude/skills/job-application-assistant/01-candidate-profile.md
+          .claude/skills/job-application-assistant/02-behavioral-profile.md
+          .claude/skills/job-application-assistant/04-job-evaluation.md
+          .claude/skills/job-application-assistant/05-cv-templates.md
+          .claude/skills/job-application-assistant/07-interview-prep.md
+          .claude/skills/job-scraper/search-queries.md
+          job_scraper/scrape_config.json
+          job_scraper/jobs.md
+          cv/my_cv.tex
+          PATHS
+          tracked_private=$(git ls-files -- docs cv/variants cv/out)
+          if [ -n "$tracked_private" ]; then
+            echo "::error::these must stay untracked - first-person working notes and personal CV drivers:"
+            echo "$tracked_private"
+            fail=1
+          fi
           exit $fail

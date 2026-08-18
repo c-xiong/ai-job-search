@@ -18,6 +18,21 @@ An AI-powered job application framework built on [Claude Code](https://claude.co
 >
 > This project has **no affiliated cryptocurrency, token, or paid sponsorship program**. Anything claiming otherwise is unauthorized and should be treated as a scam. The only ways to support the project are the Ko-fi link below and contributing on GitHub.
 
+## About this fork
+
+This is a **public** fork of [MadsLorentzen/ai-job-search](https://github.com/MadsLorentzen/ai-job-search), used to run a real job search and to keep building on the framework.
+
+Upstream assumes a *private* fork: `/setup` writes your name, phone, email, employers and target list straight into `CLAUDE.md` and the skill files, and those files are tracked. That is fine in private and unacceptable in public, so this fork inverts the rule:
+
+| | Upstream | Here |
+|---|---|---|
+| Files `/setup` personalizes | tracked, filled in place | **gitignored** |
+| What is tracked instead | — | a `*.example` twin holding upstream's placeholders |
+| `job_scraper/jobs.md` shortlist | re-included, "private forks only" | **gitignored** |
+| Placeholder-integrity CI job | upstream repo only | **runs here**, plus a leak guard that fails if a personal file is ever staged |
+
+So nothing in this repository describes a real person. Clone it and it behaves like the upstream template — see the bootstrap step below.
+
 ## Does it actually work?
 
 I'm a geophysicist by training. When my position was cut in late 2025, I built this framework to run my own job search - the same `/scrape`, `/apply`, and `/interview` workflow in this repo, used weekly, on my own career. I was upfront about it with every employer I spoke to, and instead of counting against me, it usually sparked a genuine technical conversation.
@@ -76,6 +91,24 @@ The framework encodes career guidance best practices, including structured evalu
 ```bash
 gh repo fork MadsLorentzen/ai-job-search --clone
 cd ai-job-search
+```
+
+Then create your personal working copies from the tracked templates. They are gitignored, so `/setup` can fill them in with real details without any risk of committing them:
+
+```bash
+cp CLAUDE.example.md CLAUDE.md
+for f in .claude/skills/*/*.example.md; do cp "$f" "${f%.example.md}.md"; done
+cp job_scraper/scrape_config.example.json job_scraper/scrape_config.json
+```
+
+PowerShell:
+
+```powershell
+Copy-Item CLAUDE.example.md CLAUDE.md
+Get-ChildItem .claude/skills/*/*.example.md | ForEach-Object {
+  Copy-Item $_.FullName ($_.FullName -replace '\.example\.md$', '.md')
+}
+Copy-Item job_scraper/scrape_config.example.json job_scraper/scrape_config.json
 ```
 
 ### 2. Install job search tools

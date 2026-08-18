@@ -18,6 +18,43 @@ venv/
 *.fls
 *.fdb_latexmk
 
+# ---------------------------------------------------------------------------
+# PUBLIC FORK: files /setup personalizes are local-only
+#
+# Upstream tracks these files and expects you to fill them in place, which is
+# safe in a private fork. This fork is public, so every file that /setup writes
+# real identity into is ignored here and only its `*.example` twin is tracked.
+#
+# Bootstrap a fresh clone with:
+#   cp CLAUDE.example.md CLAUDE.md
+#   for f in .claude/skills/*/*.example.md; do cp "$f" "${f%.example.md}.md"; done
+#   cp job_scraper/scrape_config.example.json job_scraper/scrape_config.json
+#
+# CI enforces the split: the placeholder-integrity job fails if a tracked
+# *.example file loses its [YOUR_*] tokens, and the leak guard fails if any of
+# the ignored paths below is ever staged.
+# ---------------------------------------------------------------------------
+CLAUDE.md
+.claude/skills/job-application-assistant/01-candidate-profile.md
+.claude/skills/job-application-assistant/02-behavioral-profile.md
+.claude/skills/job-application-assistant/04-job-evaluation.md
+.claude/skills/job-application-assistant/05-cv-templates.md
+.claude/skills/job-application-assistant/07-interview-prep.md
+.claude/skills/job-scraper/search-queries.md
+job_scraper/scrape_config.json
+
+# The real CV source and everything generated from it. cv/main_*.* below covers
+# the /apply output; this covers the hand-maintained single-source CV and its
+# variant drivers, which carry name, phone, email and address in plain text.
+cv/my_cv.tex
+cv/variants/
+cv/out/
+
+# Working design docs and plans. They name target companies and are written in
+# the first person; a doc meant for the public gets re-included explicitly with
+# a `!docs/<name>.md` line under this one.
+docs/
+
 # Personal data (never commit these)
 salary_data.json
 # Match at any depth: the job-scraper skill resolves `job_scraper/` relative to
@@ -26,6 +63,15 @@ salary_data.json
 **/job_scraper/seen_jobs.json
 **/job_scraper/notion_sync.json
 **/job_scraper/*.md
+# NOTE: upstream re-includes job_scraper/jobs.md right here (`!job_scraper/jobs.md`),
+# labelled PRIVATE FORKS ONLY, because the shortlist is a useful decision record.
+# This fork is PUBLIC, so that negation is deliberately dropped: jobs.md names every
+# company considered along with the owner's own "no" calls and private notes, and it
+# stays local-only. The `**/job_scraper/*.md` rule above is what keeps it out.
+# The CSV exports are derived from seen_jobs.json on every sync - regenerating them is
+# free, and versioning them would just add noisy diffs alongside jobs.md.
+job_scraper/*.csv
+job_scraper/*.log
 *_BehavioralReport.pdf
 linkedin_Profile.pdf
 
