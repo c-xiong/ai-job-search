@@ -47,7 +47,7 @@
         <div class="panelhead">
           <span class="label">Board</span><span class="count" id="count"></span><span class="spacer"></span>
           <label class="search"><span>⌕</span><input type="search" id="q" placeholder="filter by role, company…"></label>
-          <button class="secondary" id="shortcut-toggle" aria-expanded="true" title="Show or hide keyboard shortcuts">? Shortcuts</button>
+          <button class="secondary" id="shortcut-toggle" aria-expanded="true" title="Show or hide keyboard shortcuts">Hide shortcuts</button>
           <button class="secondary expand" data-expand="board">↗ Expand</button>
         </div>
         <div class="chips" id="chips"></div>
@@ -62,7 +62,7 @@
         <div class="keybar" id="keybar">
           <span><kbd>j</kbd><kbd>k</kbd> move</span>
           <span><kbd>s</kbd> star <kbd>y</kbd> yes <kbd>m</kbd> maybe <kbd>n</kbd> no <kbd>g</kbd> gate <kbd>a</kbd> applied <kbd>u</kbd> new</span>
-          <span><kbd>e</kbd> note</span><span><kbd>t</kbd> tailor</span><span><kbd>z</kbd> undo</span><span><kbd>enter</kbd> open link</span><span><kbd>/</kbd> search</span><button class="linkish shortcut-hide" id="shortcut-hide">Hide shortcuts</button>
+          <span><kbd>e</kbd> note</span><span><kbd>t</kbd> tailor</span><span><kbd>z</kbd> undo</span><span><kbd>enter</kbd> open link</span><span><kbd>/</kbd> search</span>
         </div>
       </section>
       <div class="splitter horizontal" id="centre-row-split" role="separator" tabindex="0" aria-label="Resize Board and Applications" aria-orientation="horizontal"></div>
@@ -91,16 +91,16 @@
     <span class="tag" id="striptag">server</span><span class="time" id="striptime"></span><span class="msg" id="stripmsg">starting…</span><span class="spacer"></span><span id="striprunning"></span><span class="dur" id="stripdur"></span>
     <button class="linkish" id="striptoggle">Activity <span class="n" id="stripcount">0</span> <span id="stripcaret">⌃</span></button>
   </div>
+  <div class="modal-backdrop" id="text-modal" hidden>
+    <section class="text-modal" role="dialog" aria-modal="true" aria-labelledby="text-modal-title">
+      <div class="modal-head"><div><span class="label" id="text-modal-eyebrow">Edit</span><h2 id="text-modal-title">Add a note</h2></div><button class="modal-close" id="text-modal-close" aria-label="Close">×</button></div>
+      <label class="modal-label" for="text-modal-input" id="text-modal-label">Text</label>
+      <textarea id="text-modal-input" rows="8"></textarea>
+      <div class="modal-hint" id="text-modal-hint"></div>
+      <div class="modal-actions"><button class="secondary" id="text-modal-cancel">Cancel</button><button class="primary" id="text-modal-submit">Save</button></div>
+    </section>
+  </div>
 </div>
 <div id="toast"><span id="toastmsg"></span><button id="toastundo" hidden>Undo <span id="toastsec"></span></button></div>
-<div class="modal-backdrop" id="text-modal" hidden>
-  <section class="text-modal" role="dialog" aria-modal="true" aria-labelledby="text-modal-title">
-    <div class="modal-head"><div><span class="label" id="text-modal-eyebrow">Edit</span><h2 id="text-modal-title">Add a note</h2></div><button class="modal-close" id="text-modal-close" aria-label="Close">×</button></div>
-    <label class="modal-label" for="text-modal-input" id="text-modal-label">Text</label>
-    <textarea id="text-modal-input" rows="8"></textarea>
-    <div class="modal-hint" id="text-modal-hint"></div>
-    <div class="modal-actions"><button class="secondary" id="text-modal-cancel">Cancel</button><button class="primary" id="text-modal-submit">Save</button></div>
-  </section>
-</div>
 <script src="/static/app.js"></script>
 </body></html>

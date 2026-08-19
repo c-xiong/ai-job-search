@@ -240,7 +240,7 @@ function applyLayout(){
   app.classList.toggle("left-collapsed",layout.leftCollapsed||layout.autoLeft);app.classList.toggle("right-collapsed",layout.rightCollapsed||layout.autoRight);
   el("left-rail").classList.toggle("collapsed",layout.leftCollapsed||layout.autoLeft);el("right-rail").classList.toggle("collapsed",layout.rightCollapsed||layout.autoRight);
   document.querySelector('[data-collapse="left"]').setAttribute("aria-expanded",String(!(layout.leftCollapsed||layout.autoLeft)));document.querySelector('[data-collapse="right"]').setAttribute("aria-expanded",String(!(layout.rightCollapsed||layout.autoRight)));
-  el("keybar").hidden=!!layout.shortcutsHidden;el("shortcut-toggle").setAttribute("aria-expanded",String(!layout.shortcutsHidden));el("shortcut-toggle").textContent=layout.shortcutsHidden?"? Shortcuts":"Shortcuts";
+  el("keybar").hidden=!!layout.shortcutsHidden;el("shortcut-toggle").setAttribute("aria-expanded",String(!layout.shortcutsHidden));el("shortcut-toggle").textContent=layout.shortcutsHidden?"Show shortcuts":"Hide shortcuts";
   updateSeparatorAria();
 }
 function toggleShortcuts(force){layout.shortcutsHidden=typeof force==="boolean"?force:!layout.shortcutsHidden;applyLayout();saveLayout()}
@@ -330,7 +330,6 @@ document.addEventListener("click",event=>{
   if(event.target.closest("#text-modal-cancel,#text-modal-close"))return void closeTextModal(false);
   if(event.target===el("text-modal"))return void closeTextModal(false);
   if(event.target.closest("#shortcut-toggle"))return void toggleShortcuts();
-  if(event.target.closest("#shortcut-hide"))return void toggleShortcuts(true);
   if(event.target.closest("#companies-open"))return void renderCompanies();
   if(event.target.closest("#toastundo"))return void undo();
   if(event.target.closest("#striptoggle"))return void toggleDrawer();
