@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- _capture: GET https://merantix.jobs.personio.de/xml | captured 2026-08-18 |
+     Element names, order and CDATA wrapping were read off a live Personio feed on
+     2026-08-18; posting content here is minimized and synthetic. 4 of 14 positions:
+     one that passes, one Werkstudent in DE (must drop), one Werkstudent with no
+     office (must be kept and flagged), one Werkstudent in Zurich (must be kept).
+     Refresh with capture.sh. -->
+<workzag-jobs>
+  <position>
+    <id>2246041</id>
+    <subcompany>Merantix Momentum</subcompany>
+    <office>Berlin</office>
+    <department>Engineering</department>
+    <recruitingCategory>Angestellte / Employee</recruitingCategory>
+    <name>Machine Learning Engineer (m/f/d)</name>
+    <jobDescriptions>
+      <jobDescription>
+        <name>Your role</name>
+        <value><![CDATA[<ul><li>Build LLM and NLP systems in PyTorch</li><li>Ship a FastAPI service</li></ul>]]></value>
+      </jobDescription>
+      <jobDescription>
+        <name>Your profile</name>
+        <value><![CDATA[<p>MSc &amp; strong Python. Evaluation experience is a plus.</p>]]></value>
+      </jobDescription>
+    </jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>entry-level</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>0-1</yearsOfExperience>
+    <occupation>it_software</occupation>
+    <occupationCategory>it_software_engineering</occupationCategory>
+    <createdAt>2026-08-11T15:49:07+00:00</createdAt>
+  </position>
+  <position>
+    <id>2246042</id>
+    <subcompany>Merantix Momentum</subcompany>
+    <office>Berlin</office>
+    <department>Data</department>
+    <recruitingCategory>Werkstudent</recruitingCategory>
+    <name>Werkstudent Data Science (m/w/d)</name>
+    <jobDescriptions>
+      <jobDescription>
+        <name>Deine Aufgaben</name>
+        <value><![CDATA[<p>Sehr gute Deutschkenntnisse erforderlich.</p>]]></value>
+      </jobDescription>
+    </jobDescriptions>
+    <employmentType>intern</employmentType>
+    <seniority>student</seniority>
+    <schedule>part-time</schedule>
+    <yearsOfExperience>0-1</yearsOfExperience>
+    <occupation>it_software</occupation>
+    <occupationCategory>it_software_engineering</occupationCategory>
+    <createdAt>2026-08-09T15:49:07+00:00</createdAt>
+  </position>
+  <position>
+    <id>2246043</id>
+    <subcompany>Merantix Labs</subcompany>
+    <office></office>
+    <department>Engineering</department>
+    <recruitingCategory>Werkstudent</recruitingCategory>
+    <name>Working Student Software Engineer</name>
+    <jobDescriptions></jobDescriptions>
+    <employmentType>intern</employmentType>
+    <seniority>student</seniority>
+    <schedule>part-time</schedule>
+    <yearsOfExperience>0-1</yearsOfExperience>
+    <occupation>it_software</occupation>
+    <occupationCategory>it_software_engineering</occupationCategory>
+    <createdAt>2026-08-08T15:49:07+00:00</createdAt>
+  </position>
+  <position>
+    <id>2246044</id>
+    <subcompany>Merantix Momentum</subcompany>
+    <office>Z&#252;rich</office>
+    <department>Engineering</department>
+    <recruitingCategory>Werkstudent</recruitingCategory>
+    <name>Working Student Data Engineer</name>
+    <jobDescriptions></jobDescriptions>
+    <employmentType>intern</employmentType>
+    <seniority>student</seniority>
+    <schedule>part-time</schedule>
+    <yearsOfExperience>0-1</yearsOfExperience>
+    <occupation>it_software</occupation>
+    <occupationCategory>it_software_engineering</occupationCategory>
+    <createdAt>2026-08-07T15:49:07+00:00</createdAt>
+  </position>
+</workzag-jobs>

@@ -1,0 +1,28 @@
+{
+  "_capture": {
+    "endpoint": "hand-made",
+    "captured": "2026-08-18",
+    "provenance": "A minimal Greenhouse board whose company_name is unique, so the slug-fallback path in `resolve` can be tested without colliding with another fixture company's name."
+  },
+  "jobs": [
+    {
+      "id": 999001,
+      "title": "Software Engineer",
+      "company_name": "SlugCo",
+      "absolute_url": "https://job-boards.greenhouse.io/slugco/jobs/999001",
+      "requisition_id": "1",
+      "updated_at": "2026-08-15T09:00:00-04:00",
+      "first_published": "2026-08-14T09:00:00-04:00",
+      "application_deadline": null,
+      "location": {
+        "name": "Berlin"
+      },
+      "metadata": [],
+      "language": "en",
+      "content": "&lt;p&gt;Python.&lt;/p&gt;"
+    }
+  ],
+  "meta": {
+    "total": 1
+  }
+}

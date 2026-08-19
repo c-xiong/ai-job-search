@@ -1,0 +1,110 @@
+{
+  "_capture": {
+    "endpoint": "GET https://api.ashbyhq.com/posting-api/job-board/deepjudge",
+    "captured": "2026-08-18",
+    "provenance": "Field names, types and nesting were read off the live endpoint on 2026-08-18. The posting CONTENT here is minimized and synthetic - real boards run to hundreds of postings and 300 KB, and a parser fixture needs neither. Refresh with capture.sh.",
+    "minimization": "5 of 23 postings, chosen to cover every location branch: an onsite target city, a bare Remote (uncertain), a Remote-US (must drop), a Remote-Europe (must keep), and one isListed:false (must never appear)."
+  },
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "id": "41c79388-fad4-4286-948c-b279c35c568d",
+      "title": "Applied AI Engineer",
+      "department": "Engineering",
+      "team": "Applied AI",
+      "employmentType": "FullTime",
+      "location": "Zurich",
+      "secondaryLocations": [],
+      "publishedAt": "2026-08-16T09:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": false,
+      "workplaceType": "Hybrid",
+      "address": {
+        "postalAddress": {
+          "addressRegion": "Zurich",
+          "addressCountry": "Switzerland",
+          "addressLocality": "Zurich"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/deepjudge/41c79388-fad4-4286-948c-b279c35c568d",
+      "applyUrl": "https://jobs.ashbyhq.com/deepjudge/41c79388-fad4-4286-948c-b279c35c568d/application",
+      "descriptionHtml": "<p>RAG over legal corpora.</p>",
+      "descriptionPlain": "You will build RAG and LLM retrieval over legal corpora, with evaluation harnesses and vector search."
+    },
+    {
+      "id": "51c79388-fad4-4286-948c-b279c35c5001",
+      "title": "Agentic Harness Engineer",
+      "department": "Engineering",
+      "team": "Platform",
+      "employmentType": "FullTime",
+      "location": "Remote",
+      "secondaryLocations": [],
+      "publishedAt": "2026-08-15T09:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "jobUrl": "https://jobs.ashbyhq.com/deepjudge/51c79388-fad4-4286-948c-b279c35c5001",
+      "applyUrl": "https://jobs.ashbyhq.com/deepjudge/51c79388-fad4-4286-948c-b279c35c5001/application",
+      "descriptionHtml": "<p>Agent loops.</p>",
+      "descriptionPlain": "Guarded agent loops, budgets, failure handling."
+    },
+    {
+      "id": "61c79388-fad4-4286-948c-b279c35c5002",
+      "title": "Software Engineer, Indexing",
+      "department": "Engineering",
+      "team": "Indexing",
+      "employmentType": "FullTime",
+      "location": "Remote - United States",
+      "secondaryLocations": [],
+      "publishedAt": "2026-08-14T09:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "address": {
+        "postalAddress": {
+          "addressRegion": "NY",
+          "addressCountry": "United States",
+          "addressLocality": "New York"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/deepjudge/61c79388-fad4-4286-948c-b279c35c5002",
+      "applyUrl": "https://jobs.ashbyhq.com/deepjudge/61c79388-fad4-4286-948c-b279c35c5002/application",
+      "descriptionHtml": "<p>Indexing.</p>",
+      "descriptionPlain": "Distributed indexing."
+    },
+    {
+      "id": "71c79388-fad4-4286-948c-b279c35c5003",
+      "title": "Research Engineer, NLP",
+      "department": "Research",
+      "team": "NLP",
+      "employmentType": "FullTime",
+      "location": "Remote - Europe",
+      "secondaryLocations": [],
+      "publishedAt": "2026-08-13T09:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "jobUrl": "https://jobs.ashbyhq.com/deepjudge/71c79388-fad4-4286-948c-b279c35c5003",
+      "applyUrl": "https://jobs.ashbyhq.com/deepjudge/71c79388-fad4-4286-948c-b279c35c5003/application",
+      "descriptionHtml": "<p>NLP research.</p>",
+      "descriptionPlain": "Sentence embeddings, spaCy pipelines, transformers, evaluation."
+    },
+    {
+      "id": "81c79388-fad4-4286-948c-b279c35c5004",
+      "title": "Data Engineer (unlisted draft)",
+      "department": "Engineering",
+      "team": "Data",
+      "employmentType": "FullTime",
+      "location": "Zurich",
+      "secondaryLocations": [],
+      "publishedAt": "2026-08-10T09:00:00.000+00:00",
+      "isListed": false,
+      "isRemote": false,
+      "workplaceType": "Onsite",
+      "jobUrl": "https://jobs.ashbyhq.com/deepjudge/81c79388-fad4-4286-948c-b279c35c5004",
+      "applyUrl": "https://jobs.ashbyhq.com/deepjudge/81c79388-fad4-4286-948c-b279c35c5004/application",
+      "descriptionHtml": "<p>Draft.</p>",
+      "descriptionPlain": "Draft."
+    }
+  ]
+}

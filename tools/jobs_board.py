@@ -8,9 +8,16 @@ Reads `job_scraper/seen_jobs.json` and writes every change straight back to it,
 then regenerates `jobs.md` and the two CSV exports through tools/jobs_md.py - so
 the board, the markdown and the spreadsheets can never drift apart.
 
+**Fetch new jobs** runs every enabled source once, on demand, in a background
+thread: `POST /api/fetch` starts it, `GET /api/fetch/status` reports progress.
+(The plan called this route `/api/ats/fetch`; the button drives freehire and
+LinkedIn as well, so the ATS-specific name would have been wrong.) Collection
+itself lives in `tools/fetch_jobs.py` and works the same from a terminal.
+
 Security: binds 127.0.0.1 only, and every API call must carry a random token
 minted at startup. Without the token any web page you happen to have open could
-POST to localhost and silently rewrite your job list.
+POST to localhost and silently rewrite your job list - or, now, make your machine
+crawl five vendors.
 
 Stdlib only, Python 3.9+.
 """
@@ -19,6 +26,8 @@ import argparse
 import json
 import secrets
 import sys
+import threading
+import traceback
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +35,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fetch_jobs  # noqa: E402
 import jobs_md  # noqa: E402
 
 TOKEN = secrets.token_urlsafe(16)
@@ -62,33 +72,140 @@ def load():
 
 
 def save(seen):
-    jobs_md.SEEN.write_text(json.dumps({"seen": seen}, indent=2, ensure_ascii=False) + "\n",
-                            encoding="utf-8")
+    # Atomic: this file is the only copy of every status and note you have set,
+    # and a half-written one loses all of it.
+    jobs_md.save_seen(seen)
     jobs_md.MD.write_text(jobs_md.render(seen), encoding="utf-8")
     jobs_md.write_csv(seen)
+
+
+# The link to click: the first-party ATS posting when the row has one. Shared
+# with jobs_md so the board, jobs.md and the CSV exports all point at the same
+# place.
+primary_url = jobs_md.primary_url
 
 
 def jobs_payload():
     seen = load()
     rows = []
     for url, e in seen.items():
+        why = e.get("note", "")
+        # A collector cannot fill `fit`, so a freshly fetched row would otherwise
+        # arrive with no visible reason for its position. The prefit reasons are
+        # that reason, and they are shown as such - never as a fit assessment.
+        if not why and e.get("prefit_reasons"):
+            why = "PREFIT: " + "; ".join(e["prefit_reasons"])
         rows.append({
             "url": url,
+            "open_url": primary_url(e),
             "status": e.get("user_status", "new"),
             "fit": (e.get("fit") or "").lower(),
+            "score": jobs_md.priority_score(e),
+            "ranked": isinstance(e.get("rank_score"), (int, float)),
             "title": e.get("title", ""),
             "company": e.get("company", ""),
             "location": e.get("location", ""),
             "posted": e.get("posted") or e.get("first_seen", ""),
-            "why": e.get("note", ""),
+            "why": why,
             "note": e.get("user_note", ""),
             "portal": e.get("portal", ""),
+            "dupes": e.get("possible_duplicate_of") or [],
         })
+    # Your status first, then display priority (rank_score > prefit_score > fit),
+    # then newest. Same order as jobs_md.sort_key, so the board and the markdown
+    # can never disagree about what is at the top.
     rows.sort(key=lambda r: (jobs_md.STATUSES.index(r["status"]) if r["status"] in LOCK_STATUSES
                              else 99,
-                             jobs_md.FIT_ORDER.get(r["fit"], 3),
+                             -r["score"],
                              jobs_md._neg_date(r["posted"])))
-    return {"jobs": rows, "statuses": jobs_md.STATUSES}
+    return {"jobs": rows, "statuses": jobs_md.STATUSES, "sources": list(fetch_jobs.SOURCES),
+            "detail_ceiling": fetch_jobs.LINKEDIN_DETAIL_CEILING}
+
+
+# The background fetch. One at a time, enforced by fetch_jobs' own lock file as
+# well as this flag - the flag is for a fast answer to the second click, the lock
+# is what actually holds when two processes race.
+FETCH = {"running": False, "log": [], "sources": [], "error": None, "finished_at": None}
+FETCH_LOCK = threading.Lock()
+
+# Every read-modify-write of seen_jobs.json goes through jobs_md.board_lock() -
+# an OS-level lock, not just an in-process one. A fetch runs for a minute or two
+# in a background thread while you keep pressing `s` and `n` in the table, and
+# `python3 tools/fetch_jobs.py` in a terminal is a third writer. The fetch does
+# its network half outside the lock and only takes it to merge and write.
+
+
+def fetch_worker(sources, max_companies, max_new_jobs, detail_fetches):
+    lines = []
+    try:
+        summaries, lines = fetch_jobs.fetch(sources, max_companies, max_new_jobs,
+                                            detail_fetches, False, lines)
+        with FETCH_LOCK:
+            FETCH["sources"] = summaries
+            FETCH["error"] = None
+    except fetch_jobs.AlreadyRunning as exc:
+        with FETCH_LOCK:
+            FETCH["error"] = str(exc)
+    except Exception as exc:  # a crashed fetch must not leave the UI spinning
+        traceback.print_exc()
+        with FETCH_LOCK:
+            FETCH["error"] = "%s: %s" % (type(exc).__name__, exc)
+    finally:
+        with FETCH_LOCK:
+            FETCH["log"] = lines[-40:]
+            FETCH["running"] = False
+            FETCH["finished_at"] = datetime.now().isoformat()
+
+
+def start_fetch(payload):
+    """Validate the request and start the worker. Returns (http_status, body)."""
+    with FETCH_LOCK:
+        if FETCH["running"]:
+            return 409, {"error": "a fetch is already running"}
+        # An *absent* `sources` means "all of them"; an explicitly empty list
+        # means the caller deselected everything, which is a mistake to report
+        # rather than to reinterpret as "fetch everything".
+        sources = payload.get("sources")
+        if sources is None:
+            sources = list(fetch_jobs.SOURCES)
+        if not isinstance(sources, list) or not all(s in fetch_jobs.SOURCES for s in sources):
+            return 400, {"error": "sources must be a subset of %s" % (list(fetch_jobs.SOURCES),)}
+        if not sources:
+            return 400, {"error": "select at least one source"}
+
+        def bounded(key, default, low, high):
+            try:
+                return max(low, min(int(payload.get(key, default)), high))
+            except (TypeError, ValueError):
+                return default
+
+        max_companies = bounded("max_companies", 8, 1, 20)
+        max_new_jobs = bounded("max_new_jobs", 40, 1, 200)
+        detail_fetches = bounded("linkedin_detail_fetches", fetch_jobs.LINKEDIN_DETAIL_DEFAULT,
+                                 0, fetch_jobs.LINKEDIN_DETAIL_CEILING)
+        FETCH.update({"running": True, "log": [], "sources": [], "error": None, "finished_at": None})
+    threading.Thread(target=fetch_worker, daemon=True,
+                     args=(sources, max_companies, max_new_jobs, detail_fetches)).start()
+    return 202, {"started": True, "sources": sources, "max_companies": max_companies,
+                 "max_new_jobs": max_new_jobs, "linkedin_detail_fetches": detail_fetches}
+
+
+def fetch_status():
+    with FETCH_LOCK:
+        state = dict(FETCH)
+    # While a run is in flight the worker's own status file is fresher than the
+    # in-process copy, because fetch_jobs writes it after every source.
+    on_disk = {}
+    if fetch_jobs.STATUS.exists():
+        try:
+            on_disk = json.loads(fetch_jobs.STATUS.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            on_disk = {}
+    if state["running"] and on_disk.get("log"):
+        state["log"] = on_disk["log"]
+        state["sources"] = on_disk.get("sources") or state["sources"]
+    state["degraded"] = any(s.get("degraded") for s in state["sources"] or [])
+    return state
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -124,11 +241,18 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authed(query):
                 return self._send(403, json.dumps({"error": "forbidden"}))
             return self._send(200, json.dumps(jobs_payload(), ensure_ascii=False))
+        if parts.path == "/api/fetch/status":
+            if not self._authed(query):
+                return self._send(403, json.dumps({"error": "forbidden"}))
+            return self._send(200, json.dumps(fetch_status(), ensure_ascii=False))
         self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
         parts = urlparse(self.path)
-        if parts.path != "/api/update" or not self._authed(parse_qs(parts.query)):
+        if parts.path not in ("/api/update", "/api/fetch") or not self._authed(parse_qs(parts.query)):
+            # The token is what stops any web page you happen to have open from
+            # POSTing to localhost - and for /api/fetch that means it is what
+            # stops a web page from making your machine crawl five vendors.
             return self._send(403, json.dumps({"error": "forbidden"}))
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -136,18 +260,26 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             return self._send(400, json.dumps({"error": "bad json"}))
 
+        if parts.path == "/api/fetch":
+            code, body = start_fetch(payload if isinstance(payload, dict) else {})
+            return self._send(code, json.dumps(body, ensure_ascii=False))
+
         url = payload.get("url")
-        seen = load()
-        if url not in seen:
-            return self._send(404, json.dumps({"error": "unknown job"}))
-        if "status" in payload:
-            status = payload["status"]
-            if status not in LOCK_STATUSES:
-                return self._send(400, json.dumps({"error": "bad status"}))
-            seen[url]["user_status"] = status
-        if "note" in payload:
-            seen[url]["user_note"] = str(payload["note"])[:500]
-        save(seen)
+        # Read-modify-write under the same lock the background fetch takes, so a
+        # status set while a fetch is in flight cannot be reverted by the fetch's
+        # copy of the board (or the other way round).
+        with jobs_md.board_lock():
+            seen = load()
+            if url not in seen:
+                return self._send(404, json.dumps({"error": "unknown job"}))
+            if "status" in payload:
+                status = payload["status"]
+                if status not in LOCK_STATUSES:
+                    return self._send(400, json.dumps({"error": "bad status"}))
+                seen[url]["user_status"] = status
+            if "note" in payload:
+                seen[url]["user_note"] = str(payload["note"])[:500]
+            save(seen)
         self._send(200, json.dumps({"ok": True}))
 
 
@@ -214,12 +346,42 @@ kbd{background:var(--chip);border:1px solid var(--line);border-radius:4px;
   border-radius:5px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
 #toastundo:hover{background:rgba(255,255,255,.3)}
 .empty{padding:40px;text-align:center;color:var(--dim)}
+.row2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;
+  padding-top:8px;border-top:1px solid var(--line)}
+button.go{background:var(--selbar);color:#fff;border:1px solid var(--selbar);border-radius:6px;
+  padding:5px 12px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+button.go:disabled{opacity:.55;cursor:progress}
+label.src{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--dim);cursor:pointer}
+label.src input{accent-color:var(--selbar)}
+.adv{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
+.adv input[type=number]{width:52px;background:var(--bg);color:var(--text);
+  border:1px solid var(--line);border-radius:5px;padding:2px 5px;font:inherit;font-size:12px}
+#fstat{font-size:12px;color:var(--dim);flex:1;min-width:180px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#fstat.bad{color:#b4462f}
+.banner{background:#8a5a12;color:#fff;padding:6px 14px;font-size:12px}
+.dupe{color:var(--medium);font-size:11px;margin-left:4px}
 </style></head><body>
+<div class="banner" id="degraded" hidden></div>
 <header>
   <div class="row1">
     <h1>Job Board</h1>
     <div class="chips" id="chips"></div>
     <input type="search" id="q" placeholder="filter by role, company, location…">
+  </div>
+  <div class="row2">
+    <button class="go" id="fetch">Fetch new jobs</button>
+    <label class="src"><input type="checkbox" id="s-ats" checked> ATS boards</label>
+    <label class="src"><input type="checkbox" id="s-freehire" checked> freehire</label>
+    <label class="src"><input type="checkbox" id="s-linkedin" checked> LinkedIn</label>
+    <details class="adv"><summary style="cursor:pointer">advanced</summary>
+      <span class="adv" style="margin-left:8px">
+        companies <input type="number" id="mc" value="8" min="1" max="20">
+        rows <input type="number" id="mn" value="40" min="1" max="200">
+        LinkedIn details <input type="number" id="md" value="15" min="0" max="20">
+      </span>
+    </details>
+    <span id="fstat"></span>
   </div>
 </header>
 <table><thead><tr>
@@ -308,9 +470,10 @@ function render(){
       <td class="co">${esc(j.posted).slice(5)}</td>
       <td><select data-url="${esc(j.url)}">${STATUSES.map(s=>
           `<option value="${s}" ${s===j.status?"selected":""}>${s}</option>`).join("")}</select></td>
-      <td class="why" title="${esc(j.why)}">${esc(j.why)}</td>
+      <td class="why" title="${esc(j.why)}">${esc(j.why)}${j.dupes && j.dupes.length
+          ? `<span class="dupe" title="possible duplicate of: ${esc(j.dupes.join(", "))}">· possible dupe</span>` : ""}</td>
       <td class="note" data-url="${esc(j.url)}" title="click to edit">${esc(j.note)}</td>
-      <td><a class="open" href="${esc(j.url)}" target="_blank" rel="noopener">open ↗</a></td>
+      <td><a class="open" href="${esc(j.open_url || j.url)}" target="_blank" rel="noopener">open ↗</a></td>
     </tr>`).join("");
   document.getElementById("empty").hidden = rows.length>0;
   document.getElementById("count").textContent = `${rows.length} shown · ${JOBS.length} total`;
@@ -377,7 +540,7 @@ document.addEventListener("keydown", e=>{
   const rows=shown();
   const K={j:1,ArrowDown:1,k:-1,ArrowUp:-1};
   if(e.key in K){ e.preventDefault(); sel=Math.min(rows.length-1,Math.max(0,sel+K[e.key])); render(); return; }
-  if(e.key==="Enter"){ const j=rows[sel]; if(j) window.open(j.url,"_blank","noopener"); return; }
+  if(e.key==="Enter"){ const j=rows[sel]; if(j) window.open(j.open_url||j.url,"_blank","noopener"); return; }
   if(e.key==="e"){ e.preventDefault(); editNote(); return; }
   if(e.key==="z"){ e.preventDefault(); undo(); return; }
   const M={s:"star",y:"yes",m:"maybe",n:"no",a:"applied",u:"new",g:"gate"};
@@ -385,8 +548,72 @@ document.addEventListener("keydown", e=>{
 });
 document.getElementById("q").addEventListener("input", e=>{ q=e.target.value; sel=0; render(); });
 
+// ---------------------------------------------------------------- fetching
+// One button drives every source. The run happens in a background thread on the
+// server and this polls a status endpoint, rather than holding an HTTP request
+// open for the two minutes a five-vendor sweep can take.
+let POLL=null;
+
+const chosenSources = () =>
+  ["ats","freehire","linkedin"].filter(s=>document.getElementById("s-"+s).checked);
+
+function fstat(msg, bad){
+  const el=document.getElementById("fstat");
+  el.textContent=msg||""; el.classList.toggle("bad", !!bad);
+}
+
+async function reloadJobs(){
+  const d = await (await fetch("/api/jobs?t="+T)).json();
+  JOBS=d.jobs; STATUSES=d.statuses; FILTERS=buildFilters(); render();
+}
+
+async function pollFetch(){
+  const s = await (await fetch("/api/fetch/status?t="+T)).json();
+  if(s.running){
+    const tail=(s.log||[]).slice(-1)[0]||"working…";
+    fstat(tail.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d\s+/,""));
+    return;
+  }
+  clearInterval(POLL); POLL=null;
+  document.getElementById("fetch").disabled=false;
+  await reloadJobs();
+  const banner=document.getElementById("degraded");
+  const failed=(s.sources||[]).flatMap(x=>x.failed||[]);
+  if(s.error){ fstat(s.error, true); }
+  else{
+    const added=(s.sources||[]).reduce((n,x)=>n+(x.added||0),0);
+    const gated=(s.sources||[]).reduce((n,x)=>n+(x.gated||0),0);
+    fstat(added+" new · "+gated+" auto-gated on German");
+  }
+  if(failed.length){
+    banner.hidden=false;
+    banner.textContent="Degraded run: "+failed.join(", ")+
+      " did not answer. Their results are missing, everything else was kept, and they are retried first next time.";
+  } else { banner.hidden=true; }
+}
+
+document.getElementById("fetch").addEventListener("click", async ()=>{
+  const sources=chosenSources();
+  if(!sources.length){ fstat("select at least one source", true); return; }
+  const btn=document.getElementById("fetch");
+  btn.disabled=true; fstat("starting…");
+  const body={sources,
+    max_companies:+document.getElementById("mc").value||8,
+    max_new_jobs:+document.getElementById("mn").value||40,
+    linkedin_detail_fetches:+document.getElementById("md").value};
+  const r=await fetch("/api/fetch?t="+T,{method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  if(!r.ok){ btn.disabled=false; fstat((await r.json()).error||"could not start", true); return; }
+  POLL=setInterval(pollFetch, 2000);
+  pollFetch();
+});
+
 fetch("/api/jobs?t="+T).then(r=>r.json()).then(d=>{
   JOBS=d.jobs; STATUSES=d.statuses; FILTERS=buildFilters(); render();
+  // A fetch started before this page loaded may still be running.
+  fetch("/api/fetch/status?t="+T).then(r=>r.json()).then(s=>{
+    if(s.running){ document.getElementById("fetch").disabled=true; POLL=setInterval(pollFetch,2000); }
+  });
 });
 </script></body></html>
 """

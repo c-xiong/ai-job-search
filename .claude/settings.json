@@ -9,7 +9,8 @@
       "Bash(python3 tools/jobs_md.py:*)",
       "Bash(python tools/jobs_md.py:*)",
       "Bash(python3 tools/jobs_board.py:*)",
-      "Bash(python3 tools/scrape_cron.py:*)"
+      "Bash(python3 tools/scrape_cron.py:*)",
+      "Bash(python3 tools/fetch_jobs.py:*)"
     ]
   }
 }

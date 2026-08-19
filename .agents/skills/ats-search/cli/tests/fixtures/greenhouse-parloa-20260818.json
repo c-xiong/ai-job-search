@@ -1,0 +1,71 @@
+{
+  "_capture": {
+    "endpoint": "GET https://boards-api.greenhouse.io/v1/boards/parloa/jobs?content=true",
+    "captured": "2026-08-18",
+    "provenance": "Field names, types and nesting were read off the live endpoint on 2026-08-18. The posting CONTENT here is minimized and synthetic - real boards run to hundreds of postings and 300 KB, and a parser fixture needs neither. Refresh with capture.sh.",
+    "minimization": "3 of 48 postings: one that should pass every filter, one excluded on title, and one multi-location posting with NO first_published (the null-date case) whose `offices` array holds entity names rather than places - the live shape that must be ignored."
+  },
+  "jobs": [
+    {
+      "id": 4635890101,
+      "internal_job_id": 4123401,
+      "title": "Machine Learning Engineer",
+      "company_name": "Parloa",
+      "absolute_url": "https://job-boards.eu.greenhouse.io/parloa/jobs/4635890101",
+      "requisition_id": "85",
+      "updated_at": "2026-08-15T09:26:20-04:00",
+      "first_published": "2026-08-12T17:48:58-04:00",
+      "application_deadline": "2026-09-30",
+      "location": {
+        "name": "Berlin"
+      },
+      "metadata": [],
+      "language": "en",
+      "content": "&lt;p&gt;You will build &lt;strong&gt;LLM&lt;/strong&gt; and RAG systems in PyTorch, with a FastAPI service around them.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Evaluation harnesses&lt;/li&gt;&lt;/ul&gt;"
+    },
+    {
+      "id": 4635890102,
+      "internal_job_id": 4123402,
+      "title": "Senior Sales Manager DACH",
+      "company_name": "Parloa",
+      "absolute_url": "https://job-boards.eu.greenhouse.io/parloa/jobs/4635890102",
+      "requisition_id": "86",
+      "updated_at": "2026-08-14T09:26:20-04:00",
+      "first_published": "2026-08-01T17:48:58-04:00",
+      "application_deadline": null,
+      "location": {
+        "name": "Berlin"
+      },
+      "metadata": [],
+      "language": "en",
+      "content": "&lt;p&gt;Own the DACH pipeline.&lt;/p&gt;"
+    },
+    {
+      "id": 4635890103,
+      "internal_job_id": 4123403,
+      "title": "Backend Engineer",
+      "company_name": "Parloa",
+      "absolute_url": "https://job-boards.eu.greenhouse.io/parloa/jobs/4635890103",
+      "requisition_id": "87",
+      "updated_at": "2026-08-10T09:26:20-04:00",
+      "application_deadline": null,
+      "location": {
+        "name": "Paris; Munich Office"
+      },
+      "offices": [
+        {
+          "name": "Parloa Inc."
+        },
+        {
+          "name": "Berlin HQ"
+        }
+      ],
+      "metadata": [],
+      "language": "en",
+      "content": "&lt;p&gt;Go and Python services.&lt;/p&gt;"
+    }
+  ],
+  "meta": {
+    "total": 3
+  }
+}

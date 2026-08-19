@@ -1,0 +1,57 @@
+{
+  "_capture": {
+    "endpoint": "GET https://api.smartrecruiters.com/v1/companies/nexthink/postings?limit=2&offset=2",
+    "captured": "2026-08-18",
+    "provenance": "Field names, types and nesting were read off the live endpoint on 2026-08-18. The posting CONTENT here is minimized and synthetic - real boards run to hundreds of postings and 300 KB, and a parser fixture needs neither. Refresh with capture.sh.",
+    "minimization": "page 2 of the same 3-posting board."
+  },
+  "offset": 2,
+  "limit": 2,
+  "totalFound": 3,
+  "content": [
+    {
+      "id": "744000144073603",
+      "uuid": "u-744000144073603",
+      "name": "Machine Learning Engineer",
+      "refNumber": "REF744000144073603",
+      "releasedDate": "2026-08-17T10:00:00.000Z",
+      "company": {
+        "identifier": "Nexthink",
+        "name": "Nexthink"
+      },
+      "location": {
+        "city": "Lausanne",
+        "region": "",
+        "country": "ch",
+        "remote": false,
+        "hybrid": false
+      },
+      "typeOfEmployment": {
+        "id": "permanent",
+        "label": "Full-time"
+      },
+      "experienceLevel": {
+        "id": "entry_level",
+        "label": "Entry level"
+      },
+      "industry": {
+        "id": "computer_software",
+        "label": "Computer Software"
+      },
+      "department": {
+        "id": "1",
+        "label": "Engineering"
+      },
+      "function": {
+        "id": "engineering",
+        "label": "Engineering"
+      },
+      "language": {
+        "code": "en",
+        "label": "English",
+        "labelNative": "English (US)"
+      },
+      "ref": "https://api.smartrecruiters.com/v1/companies/nexthink/postings/744000144073603"
+    }
+  ]
+}

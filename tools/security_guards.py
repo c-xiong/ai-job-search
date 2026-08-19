@@ -53,6 +53,10 @@ ALLOWED_PERMISSIONS = {
     # covers, and writes only job_scraper/.
     "Bash(python3 tools/jobs_board.py:*)",
     "Bash(python3 tools/scrape_cron.py:*)",
+    # fetch_jobs.py is the on-demand collector the job board's Fetch button calls.
+    # Same shape as scrape_cron.py: it shells out to the portal CLIs that
+    # `Bash(bun run:*)` already covers and writes only job_scraper/.
+    "Bash(python3 tools/fetch_jobs.py:*)",
 }
 
 # Personal-data ignore rules that must never disappear from .gitignore.
@@ -69,6 +73,13 @@ REQUIRED_IGNORE_RULES = [
     ".claude/skills/job-application-assistant/07-interview-prep.md",
     ".claude/skills/job-scraper/search-queries.md",
     "job_scraper/scrape_config.json",
+    # The ats-search target-company list and the cached board payloads it pulls.
+    "job_scraper/companies.json",
+    "job_scraper/ats_cache/",
+    "**/job_scraper/ats_cache/",
+    "job_scraper/fetch_status.json",
+    "job_scraper/.fetch.lock",
+    "job_scraper/.board.lock",
     "cv/my_cv.tex",
     "cv/variants/",
     "docs/",

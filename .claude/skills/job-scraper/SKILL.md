@@ -75,6 +75,8 @@ For each **enabled** portal skill:
 4. Cap results to ~20 per call using the portal's limit flag.
 5. Use `--format json` for machine-readable output.
 
+**A portal whose `SKILL.md` states a single-call rule gets exactly one invocation per run.** Not every source is keyword-driven: a whole-board source (`ats-search`) fetches complete job boards and filters locally, so translating each query category into its own invocation multiplies real HTTP requests by the number of categories and returns the same rows every time. Where the portal's docs say "call this once per run", step 2 above does not apply to it — pass its own selection flags instead, and use `-q` (if it has one) as a local filter on what came back.
+
 Run all portal CLI calls in parallel where possible using the Agent tool. Collect all `results` arrays into a single pool for Step 2, keeping each result tagged with its source portal skill (for Step 2 `detail` lookups).
 
 If a CLI tool exits with a non-zero code, log the error message and continue — do not abort the whole search.

@@ -1,0 +1,79 @@
+{
+  "https://boards-api.greenhouse.io/v1/boards/parloa/jobs?content=true": {
+    "file": "greenhouse-parloa-20260818.json"
+  },
+  "https://boards-api.greenhouse.io/v1/boards/brokenco/jobs?content=true": {
+    "file": "greenhouse-broken-20260818.json"
+  },
+  "https://boards-api.greenhouse.io/v1/boards/downco/jobs?content=true": {
+    "status": 503,
+    "body": ""
+  },
+  "https://api.ashbyhq.com/posting-api/job-board/deepjudge": {
+    "file": "ashby-deepjudge-20260818.json"
+  },
+  "https://merantix.jobs.personio.de/xml": {
+    "file": "personio-merantix-20260818.xml"
+  },
+  "https://nosuchcompany.jobs.personio.de/xml": {
+    "status": 307,
+    "body": ""
+  },
+  "https://api.lever.co/v0/postings/sonarsource?mode=json": {
+    "file": "lever-sonarsource-20260818.json"
+  },
+  "https://api.lever.co/v0/postings/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c381?mode=json": {
+    "body": "{\"id\": \"54743786-1ad7-4be7-bcbe-67f660e9c381\", \"text\": \"Graduate Software Engineer\", \"createdAt\": 1786608000000, \"country\": \"CH\", \"workplaceType\": \"onsite\", \"categories\": {\"commitment\": \"Employee / Full-Time\", \"department\": \"Engineering\", \"location\": \"Geneva\", \"team\": \"Analysis\", \"allLocations\": [\"Geneva\"]}, \"descriptionPlain\": \"Static analysis in Java and TypeScript.\", \"description\": \"<p>Static analysis.</p>\", \"lists\": [{\"text\": \"Requirements\", \"content\": \"<li>Python or Java</li><li>Docker</li>\"}], \"additionalPlain\": \"Graduate programme.\", \"additional\": \"<p>Graduate programme.</p>\", \"hostedUrl\": \"https://jobs.lever.co/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c381\", \"applyUrl\": \"https://jobs.lever.co/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c381/apply\"}"
+  },
+  "https://api.smartrecruiters.com/v1/companies/nexthink/postings?limit=2&offset=0": {
+    "file": "smartrecruiters-nexthink-p1-20260818.json"
+  },
+  "https://api.smartrecruiters.com/v1/companies/nexthink/postings?limit=2&offset=2": {
+    "file": "smartrecruiters-nexthink-p2-20260818.json"
+  },
+  "https://api.smartrecruiters.com/v1/companies/halfnexthink/postings?limit=2&offset=0": {
+    "file": "smartrecruiters-nexthink-p1-20260818.json"
+  },
+  "https://api.smartrecruiters.com/v1/companies/halfnexthink/postings?limit=2&offset=2": {
+    "status": 503,
+    "body": ""
+  },
+  "https://api.smartrecruiters.com/v1/companies/zzz-not-a-real-company-xyz/postings?limit=2&offset=0": {
+    "file": "smartrecruiters-garbage-20260818.json"
+  },
+  "https://api.smartrecruiters.com/v1/companies/zzz-not-a-real-company-xyz/postings?limit=100&offset=0": {
+    "file": "smartrecruiters-garbage-20260818.json"
+  },
+  "https://resolve-ashby.test/careers": {
+    "file": "careers-ashby.html"
+  },
+  "https://resolve-conflict.test/careers": {
+    "file": "careers-conflict.html"
+  },
+  "https://job-boards.greenhouse.io/parloa": {
+    "status": 200,
+    "body": ""
+  },
+  "https://resolve-workday.test/careers": {
+    "file": "careers-workday.html"
+  },
+  "https://resolve-none.test/careers": {
+    "file": "careers-empty.html"
+  },
+  "https://resolve-none.test/jobs": {
+    "file": "careers-empty.html"
+  },
+  "https://resolve-none.test": {
+    "file": "careers-empty.html"
+  },
+  "https://resolve-sr.test/careers": {
+    "file": "careers-smartrecruiters.html"
+  },
+  "https://boards-api.greenhouse.io/v1/boards/slugco/jobs?content=true": {
+    "file": "greenhouse-slugco-20260818.json"
+  },
+  "https://boards-api.greenhouse.io/v1/boards/throttled/jobs?content=true": {
+    "status": 429,
+    "body": ""
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "_capture": {
+    "endpoint": "shape of GET https://api.ashbyhq.com/posting-api/job-board/{token}",
+    "captured": "2026-08-18",
+    "provenance": "Hand-built from the live Ashby field shape. One posting whose secondary locations sit in other countries - the case where spreading the primary's address across all of them drops a valid European location."
+  },
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "title": "Machine Learning Engineer",
+      "department": "Engineering",
+      "team": "ML",
+      "employmentType": "FullTime",
+      "location": "New York",
+      "secondaryLocations": [
+        {
+          "location": "Berlin",
+          "address": {
+            "postalAddress": {
+              "addressCountry": "Germany",
+              "addressLocality": "Berlin"
+            }
+          }
+        },
+        {
+          "location": "Somewhere"
+        }
+      ],
+      "publishedAt": "2026-08-16T09:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": false,
+      "workplaceType": "Onsite",
+      "address": {
+        "postalAddress": {
+          "addressCountry": "United States",
+          "addressLocality": "New York"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/multi/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "applyUrl": "https://jobs.ashbyhq.com/multi/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/application",
+      "descriptionHtml": "<p>ML.</p>",
+      "descriptionPlain": "PyTorch and evaluation."
+    }
+  ]
+}

@@ -221,6 +221,7 @@ jobs:
           check cover_letters/cover_example.tex '\[YOUR NAME\]'
           check .claude/skills/job-application-assistant/01-candidate-profile.example.md '<!-- SETUP'
           check .claude/skills/job-application-assistant/04-job-evaluation.example.md '\[YOUR_PRIMARY_SKILLS\]'
+          check job_scraper/companies.example.json '\[YOUR_TARGET_COMPANY\]'
           exit $fail
       - name: Personalized files must not be tracked
         run: |
@@ -240,6 +241,7 @@ jobs:
           .claude/skills/job-application-assistant/07-interview-prep.md
           .claude/skills/job-scraper/search-queries.md
           job_scraper/scrape_config.json
+          job_scraper/companies.json
           job_scraper/jobs.md
           cv/my_cv.tex
           PATHS

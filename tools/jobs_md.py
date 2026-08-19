@@ -25,10 +25,19 @@ Stdlib only, Python 3.9+.
 
 import csv
 import json
+import os
 import re
 import sys
+import tempfile
+import threading
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None
 
 ROOT = Path(__file__).resolve().parent.parent
 SEEN = ROOT / "job_scraper" / "seen_jobs.json"
@@ -49,6 +58,22 @@ STATUS_HELP = [
     ("expired", "posting is dead"),
 ]
 FIT_ORDER = {"high": 0, "medium": 1, "low": 2, "": 3, None: 3}
+
+# Display priority, 0-100, high first. Three sources, in order of authority:
+# `/rank`'s LLM score when it has run, the collector's deterministic `prefit_score`
+# when it has not, and the coarse `fit` band for entries that predate both.
+# Without this a freshly collected batch sinks to the bottom of the board - a
+# collector cannot fill `fit`, and an empty fit is the lowest bucket.
+FIT_SCORE = {"high": 80, "medium": 55, "low": 30, "": 0, None: 0}
+
+
+def priority_score(entry):
+    """0-100 display priority. rank_score > prefit_score > the fit band."""
+    for key in ("rank_score", "prefit_score"):
+        value = entry.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return float(FIT_SCORE.get((entry.get("fit") or "").lower(), 0))
 
 # A section heading is built from the statuses it holds, not hand-written next to
 # them: `## `gate` / `expired` - excluded automatically`. Naming a bucket something
@@ -71,6 +96,26 @@ def section_heading(gloss, statuses):
 COLUMNS = ["Status", "Fit", "Role", "Company", "Location", "Posted", "Link", "Why", "My notes"]
 
 
+# One posting, many URL spellings - per vendor. Each rule maps a match onto the
+# single form the board keys on. `ats-search` composite ids are NOT used as keys:
+# the key is the URL, so a posting first seen through LinkedIn and later through
+# its own ATS board can be recognised as the same row (tools/ats_fetch.py).
+_ATS_RULES = [
+    # Greenhouse serves the same board on three hosts (US, EU, and the legacy
+    # boards.greenhouse.io); all three fold onto one.
+    (re.compile(r"(?:job-boards(?:\.eu)?|boards)\.greenhouse\.io/([^/?#]+)/jobs/(\d+)", re.I),
+     "https://job-boards.greenhouse.io/%s/jobs/%s"),
+    (re.compile(r"jobs\.ashbyhq\.com/([^/?#]+)/([0-9a-f-]{16,})", re.I),
+     "https://jobs.ashbyhq.com/%s/%s"),
+    (re.compile(r"([a-z0-9-]+)\.jobs\.personio\.(?:de|com)/job/(\d+)", re.I),
+     "https://%s.jobs.personio.de/job/%s"),
+    (re.compile(r"jobs\.(?:eu\.)?lever\.co/([^/?#]+)/([0-9a-f-]{16,})", re.I),
+     "https://jobs.lever.co/%s/%s"),
+    (re.compile(r"jobs\.smartrecruiters\.com/([^/?#]+)/(\d+)", re.I),
+     "https://jobs.smartrecruiters.com/%s/%s"),
+]
+
+
 def canonical_url(url):
     """Collapse the many URL spellings of one posting onto a single key.
 
@@ -78,6 +123,11 @@ def canonical_url(url):
     (`ch.linkedin.com/jobs/view/ai-engineer-at-foo-4451224579`), which differ per
     query and per locale for the same job. Keying state on the raw URL therefore
     re-adds jobs that are already known. The numeric job id is the stable part.
+
+    The ATS boards have the same problem in a different shape: an EU Greenhouse
+    tenant answers on `job-boards.eu.greenhouse.io` while the same posting is
+    linked as `boards.greenhouse.io`, and every vendor appends tracking params
+    (`?gh_src=`, `utm_*`). One rule per vendor, all keyed on the posting id.
     """
     if not url:
         return url
@@ -87,7 +137,161 @@ def canonical_url(url):
     m = re.search(r"freehire\.me/jobs/([^/?#]+)", url)
     if m:
         return "https://freehire.me/jobs/%s" % m.group(1)
+    for pattern, template in _ATS_RULES:
+        m = pattern.search(url)
+        if m:
+            return template % m.groups()
     return url.split("?")[0].rstrip("/")
+
+
+# The vendor each URL rule belongs to, in the same order as _ATS_RULES, so a
+# canonical ATS URL can be turned back into the `vendor:token:posting_id` the CLI
+# uses as an id.
+_ATS_VENDORS = ["greenhouse", "ashby", "personio", "lever", "smartrecruiters"]
+
+
+def composite_id_for_url(url):
+    """`vendor:token:posting_id` for an ATS posting URL, else None.
+
+    Rows collected before composite ids existed carry only a URL. Deriving the id
+    from it is what lets them count as "already known" - otherwise a board full of
+    postings you have had for weeks looks entirely new, and eats the click's
+    new-row budget before reaching a company that had something.
+    """
+    if not url:
+        return None
+    for vendor, (pattern, _template) in zip(_ATS_VENDORS, _ATS_RULES):
+        m = pattern.search(url)
+        if m:
+            return "%s:%s:%s" % (vendor, m.group(1), m.group(2))
+    return None
+
+
+def write_json_atomic(path, data):
+    """Write JSON through a temp file in the same directory, then rename.
+
+    `seen_jobs.json` is the only copy of every status and note you have set. A
+    process killed halfway through a plain write leaves a truncated file and
+    loses all of it, so the write is never partial: either the old file or the
+    new one, never half of either.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def save_seen(seen):
+    """Persist the board state atomically. The one writer every tool goes through."""
+    write_json_atomic(SEEN, {"seen": seen})
+
+
+# Every read-modify-write of seen_jobs.json goes through board_lock(). Three
+# processes touch it - the board's HTTP handler, tools/fetch_jobs.py, and
+# tools/scrape_cron.py - and a fetch takes a minute or two while you keep
+# pressing `s` and `n` in the table. Without a lock spanning the *read* as well
+# as the write, whichever process saves last silently reverts the other's work.
+#
+# An in-process lock is not enough: `python3 tools/fetch_jobs.py` in a terminal
+# and an open board are two processes. flock is the portable-enough answer
+# (POSIX; on a platform without fcntl this degrades to the in-process lock and
+# says so rather than pretending).
+_BOARD_LOCK_LOCAL = threading.RLock()
+_BOARD_LOCK_DEPTH = 0
+
+
+def board_lock_path():
+    return SEEN.parent / ".board.lock"
+
+
+@contextmanager
+def board_lock():
+    """Hold the board-state lock for a read-modify-write.
+
+    Re-entrant. The nesting matters: `flock` is per open file description, not
+    per process, so a nested `open()` + `LOCK_EX` on the same file would block
+    on a lock this very thread already holds. The depth counter takes the flock
+    once, at the outermost entry.
+    """
+    global _BOARD_LOCK_DEPTH
+    with _BOARD_LOCK_LOCAL:
+        if fcntl is None or _BOARD_LOCK_DEPTH > 0:
+            # Already inside the flock (or on a platform without one, where the
+            # in-process lock is all there is - single-process safety only).
+            _BOARD_LOCK_DEPTH += 1
+            try:
+                yield
+            finally:
+                _BOARD_LOCK_DEPTH -= 1
+            return
+        path = board_lock_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a+")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            _BOARD_LOCK_DEPTH += 1
+            try:
+                yield
+            finally:
+                _BOARD_LOCK_DEPTH -= 1
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def primary_url(entry):
+    """The link to click: the first-party ATS posting when the row has one.
+
+    A row first seen on LinkedIn and later found on the company's own board keeps
+    its original key - nothing is ever re-keyed (§11.5) - so the preferred link
+    lives in `sources`, not in `url`.
+    """
+    preferred = entry.get("primary_source")
+    if preferred:
+        for source in entry.get("sources") or []:
+            if source.get("portal") == preferred and source.get("url"):
+                return source["url"]
+    return entry.get("url", "")
+
+
+def key_for_url(seen, url):
+    """Map any URL a row is known by back onto that row's key.
+
+    A row's key is what jobs.md's first link carries, so this is a safety net for
+    the other spellings a row is known by (its `sources`). It **fails closed**:
+    when two rows claim the same URL there is no honest way to choose, and
+    guessing applies one job's status to another while the intended edit
+    disappears. Ambiguity returns None, and the caller reports it.
+    """
+    if url in seen:
+        return url
+    canonical = canonical_url(url)
+    if canonical in seen:
+        return canonical
+    matches = set()
+    for key, entry in seen.items():
+        if entry.get("url") in (url, canonical):
+            matches.add(key)
+            continue
+        for source in entry.get("sources") or []:
+            if source.get("url") in (url, canonical):
+                matches.add(key)
+                break
+    if len(matches) == 1:
+        return matches.pop()
+    return None  # nothing matched, or several did
 
 
 def _cell(text):
@@ -126,8 +330,25 @@ def parse_md(path=MD):
 
 
 def merge(seen, edits):
-    """Fold hand edits into the scraper state. Returns (state, added_by_hand)."""
+    """Fold hand edits into the scraper state. Returns (state, added_by_hand).
+
+    An edit whose URL matches several rows is left out entirely and reported by
+    the caller: applying it to whichever row happened to come first would move a
+    status onto the wrong job, silently.
+    """
     added = 0
+    resolved, ambiguous = {}, []
+    for url, edit in edits.items():
+        key = key_for_url(seen, url)
+        if key is None and any(
+            url in {e.get("url")} | {s.get("url") for s in (e.get("sources") or [])}
+            for e in seen.values()
+        ):
+            ambiguous.append(url)
+            continue
+        resolved[key or url] = edit
+    merge.ambiguous = ambiguous
+    edits = resolved
     for url, entry in seen.items():
         edit = edits.get(url)
         if edit:
@@ -150,9 +371,15 @@ def merge(seen, edits):
 
 
 def sort_key(entry):
+    """Your status first, then display priority, then newest.
+
+    Priority is `rank_score` once `/rank` has run, the collector's `prefit_score`
+    before that, and the `fit` band for entries that predate both - so a batch
+    that has only just been collected still reads top-down.
+    """
     status = entry.get("user_status", "new")
     rank = STATUSES.index(status) if status in STATUSES else len(STATUSES)
-    return (rank, FIT_ORDER.get((entry.get("fit") or "").lower(), 3),
+    return (rank, -priority_score(entry),
             _neg_date(entry.get("posted") or entry.get("first_seen") or ""))
 
 
@@ -208,7 +435,17 @@ def render(seen):
         L.append("|" + "|".join(["--------"] * len(COLUMNS)) + "|")
         for e in sorted(rows, key=sort_key):
             fit = (e.get("fit") or "").capitalize()
-            link = "[open](%s)" % e.get("url", "") if e.get("url") else ""
+            # The FIRST link in this cell is the row's key, always: parse_md
+            # reads it back to decide which row an edit belongs to, and a cell
+            # whose first URL is not the key turns an edit into a duplicate row -
+            # or, when two rows prefer the same URL, into an edit applied to the
+            # wrong job. The first-party posting is the second link, one click
+            # away, which is what `primary_source` is for.
+            key_link = e.get("url", "")
+            preferred = primary_url(e)
+            link = "[open](%s)" % key_link if key_link else ""
+            if preferred and preferred != key_link:
+                link += " · [first-party](%s)" % preferred
             L.append("| `%s` | %s | %s | %s | %s | %s | %s | %s | %s |" % (
                 e.get("user_status", "new"), fit, _cell(e.get("title")), _cell(e.get("company")),
                 _cell(e.get("location")), _cell(e.get("posted") or e.get("first_seen")),
@@ -235,7 +472,7 @@ def write_csv(seen):
         buckets[target].append([
             e.get("user_status", "new"), e.get("fit", ""), e.get("title", ""),
             e.get("company", ""), e.get("location", ""),
-            e.get("posted") or e.get("first_seen", ""), e.get("url", ""),
+            e.get("posted") or e.get("first_seen", ""), primary_url(e),
             e.get("note", ""), e.get("user_note", ""), e.get("portal", ""),
         ])
     for path, rows in buckets.items():
@@ -255,16 +492,25 @@ def main(argv):
     if not SEEN.exists():
         print("no %s yet - run /scrape first" % SEEN.relative_to(ROOT))
         return 1
-    seen = json.loads(SEEN.read_text(encoding="utf-8")).get("seen", {})
-    edits = parse_md()
-    seen, added = merge(seen, edits)
     if mode == "check":
+        seen = json.loads(SEEN.read_text(encoding="utf-8")).get("seen", {})
+        edits = parse_md()
+        seen, added = merge(seen, edits)
         print("%d jobs in state, %d rows parsed from jobs.md, %d added by hand"
               % (len(seen), len(edits), added))
         return 0
-    SEEN.write_text(json.dumps({"seen": seen}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    MD.write_text(render(seen), encoding="utf-8")
-    counts = write_csv(seen)
+    # A sync is a read-modify-write like any other, and the board or a fetch may
+    # be writing the same file right now.
+    with board_lock():
+        seen = json.loads(SEEN.read_text(encoding="utf-8")).get("seen", {})
+        edits = parse_md()
+        seen, added = merge(seen, edits)
+        for url in getattr(merge, "ambiguous", []):
+            print("! skipped an edit: %s matches more than one row, so there is no "
+                  "safe way to tell which job you meant. Edit it in the board instead." % url)
+        save_seen(seen)
+        MD.write_text(render(seen), encoding="utf-8")
+        counts = write_csv(seen)
     print("synced: %d jobs -> %s (%d hand-added)" % (len(seen), MD.relative_to(ROOT), added))
     print("exported: " + ", ".join("%s (%d rows)" % (n, c) for n, c in sorted(counts.items())))
     return 0

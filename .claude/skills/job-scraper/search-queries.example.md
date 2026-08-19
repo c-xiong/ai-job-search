@@ -84,6 +84,30 @@ Your working languages and levels are in CLAUDE.md's Languages table. When filte
 
 Only include jobs posted within the last 14 days, or with an application deadline that has not yet passed. If a posting date cannot be determined, include it but flag as "date unknown".
 
+## First-party ATS boards (`ats-search`)
+
+`ats-search` is a **target-company monitor**, not a keyword source, so nothing in
+this file applies to it. It reads `job_scraper/companies.json`, fetches the boards
+whose cadence is up, and filters locally.
+
+> **Call it exactly once per run.** `search` takes no required query; `-q` is a
+> local filter over results already fetched and never issues an extra request.
+> Do not translate the query categories above into per-query invocations of this
+> CLI - that multiplies requests by the number of categories for zero extra
+> coverage.
+
+```bash
+bun run .agents/skills/ats-search/cli/src/cli.ts search --max-companies 8 --format json
+```
+
+Which companies to watch is a registry question, not a query question: add rows to
+`companies.json` and run `resolve --all-unresolved`. `companies --suggest` reads
+the board and names employers you have starred that are not in the registry yet.
+
+Collection is on demand: `python3 tools/fetch_jobs.py` (or the **Fetch new jobs**
+button in `python3 tools/jobs_board.py`) runs ATS, freehire and LinkedIn in one
+bounded, locked run.
+
 ## Adapting Queries
 
 If the user specifies a focus area, select queries from the matching category and also generate 2-3 custom queries for that focus. For example:

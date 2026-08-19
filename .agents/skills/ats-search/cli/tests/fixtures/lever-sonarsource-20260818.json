@@ -1,0 +1,76 @@
+[
+  {
+    "id": "54743786-1ad7-4be7-bcbe-67f660e9c381",
+    "text": "Graduate Software Engineer",
+    "createdAt": 1786608000000,
+    "country": "CH",
+    "workplaceType": "onsite",
+    "categories": {
+      "commitment": "Employee / Full-Time",
+      "department": "Engineering",
+      "location": "Geneva",
+      "team": "Analysis",
+      "allLocations": [
+        "Geneva"
+      ]
+    },
+    "descriptionPlain": "Static analysis in Java and TypeScript.",
+    "description": "<p>Static analysis.</p>",
+    "lists": [
+      {
+        "text": "Requirements",
+        "content": "<li>Python or Java</li><li>Docker</li>"
+      }
+    ],
+    "additionalPlain": "Graduate programme.",
+    "additional": "<p>Graduate programme.</p>",
+    "hostedUrl": "https://jobs.lever.co/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c381",
+    "applyUrl": "https://jobs.lever.co/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c381/apply"
+  },
+  {
+    "id": "54743786-1ad7-4be7-bcbe-67f660e9c382",
+    "text": "Staff Engineer, Platform",
+    "createdAt": 1786435200000,
+    "country": "CH",
+    "workplaceType": "hybrid",
+    "categories": {
+      "commitment": "Employee / Full-Time",
+      "department": "Engineering",
+      "location": "Geneva",
+      "team": "Platform",
+      "allLocations": [
+        "Geneva"
+      ]
+    },
+    "descriptionPlain": "Platform.",
+    "description": "<p>Platform.</p>",
+    "lists": [],
+    "additionalPlain": "",
+    "additional": "",
+    "hostedUrl": "https://jobs.lever.co/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c382",
+    "applyUrl": "https://jobs.lever.co/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c382/apply"
+  },
+  {
+    "id": "54743786-1ad7-4be7-bcbe-67f660e9c383",
+    "text": "Software Engineer, Cloud",
+    "createdAt": 1786262400000,
+    "country": "US",
+    "workplaceType": "onsite",
+    "categories": {
+      "commitment": "Employee / Full-Time",
+      "department": "Engineering",
+      "location": "Austin",
+      "team": "Cloud",
+      "allLocations": [
+        "Austin"
+      ]
+    },
+    "descriptionPlain": "Cloud.",
+    "description": "<p>Cloud.</p>",
+    "lists": [],
+    "additionalPlain": "",
+    "additional": "",
+    "hostedUrl": "https://jobs.lever.co/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c383",
+    "applyUrl": "https://jobs.lever.co/sonarsource/54743786-1ad7-4be7-bcbe-67f660e9c383/apply"
+  }
+]

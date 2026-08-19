@@ -1,0 +1,570 @@
+{
+  "_comment": "Fixture registry for the ats-search tests. Never read at runtime.",
+  "defaults": {
+    "allowed_countries": [
+      "CH",
+      "DE",
+      "AT"
+    ],
+    "remote_regions": [
+      "europe",
+      "eu",
+      "dach",
+      "emea"
+    ],
+    "cities": [
+      "Zurich",
+      "Zug",
+      "Geneva",
+      "Lausanne",
+      "Berlin",
+      "Munich",
+      "Vienna"
+    ],
+    "title_include": [
+      "engineer",
+      "developer",
+      "scientist",
+      "ml",
+      "machine learning",
+      "ai",
+      "nlp",
+      "llm",
+      "software",
+      "backend",
+      "full stack",
+      "data",
+      "research",
+      "intern"
+    ],
+    "title_exclude": [
+      "principal",
+      "staff",
+      "director",
+      "head of",
+      "vp",
+      "chief",
+      "thesis",
+      "apprentice",
+      "ausbildung",
+      "sales",
+      "recruiter"
+    ],
+    "conditional_exclude": [
+      {
+        "pattern": "werkstudent|working student|studentische",
+        "unless_country": [
+          "CH"
+        ],
+        "why": "Swiss working-student roles are viable; DE/AT ones need local enrolment."
+      }
+    ],
+    "cadence_days": {
+      "1": 1,
+      "2": 1,
+      "3": 3,
+      "4": 7,
+      "5": 14
+    },
+    "min_interval_minutes": 0,
+    "vendor_access": {
+      "smartrecruiters": {
+        "enabled": true,
+        "robots": "test-override"
+      }
+    }
+  },
+  "companies": [
+    {
+      "name": "Parloa",
+      "domain": "parloa.com",
+      "tier": 3,
+      "vendor": "greenhouse",
+      "token": "parloa",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "DeepJudge",
+      "domain": "deepjudge.com",
+      "tier": 2,
+      "vendor": "ashby",
+      "token": "deepjudge",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "Merantix",
+      "domain": "merantix.com",
+      "tier": 3,
+      "vendor": "personio",
+      "token": "merantix",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "Sonar",
+      "domain": "sonar.com",
+      "tier": 2,
+      "vendor": "lever",
+      "token": "sonarsource",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "Nexthink",
+      "domain": "nexthink.com",
+      "tier": 2,
+      "vendor": "smartrecruiters",
+      "token": "nexthink",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "HalfNexthink",
+      "domain": "halfnexthink.com",
+      "tier": 4,
+      "vendor": "smartrecruiters",
+      "token": "halfnexthink",
+      "status": "verified",
+      "route": "ats",
+      "countries": [
+        "CH",
+        "DE",
+        "AT"
+      ],
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "BrokenCo",
+      "domain": "brokenco.com",
+      "tier": 3,
+      "vendor": "greenhouse",
+      "token": "brokenco",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "DownCo",
+      "domain": "downco.com",
+      "tier": 3,
+      "vendor": "greenhouse",
+      "token": "downco",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "NoBoardCo",
+      "domain": "noboardco.com",
+      "tier": 3,
+      "vendor": "personio",
+      "token": "nosuchcompany",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "GarbageCo",
+      "domain": "garbageco.com",
+      "tier": 3,
+      "vendor": "smartrecruiters",
+      "token": "zzz-not-a-real-company-xyz",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "PausedCo",
+      "domain": "pausedco.com",
+      "tier": 1,
+      "vendor": "greenhouse",
+      "token": "parloa",
+      "status": "verified",
+      "route": "ats",
+      "cadence_days": 0,
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "LinkedInOnlyCo",
+      "domain": "linkedinonlyco.com",
+      "tier": 2,
+      "vendor": null,
+      "token": null,
+      "status": "unresolved",
+      "route": "linkedin",
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "ResolveAshby",
+      "domain": "resolve-ashby.test",
+      "tier": 3,
+      "vendor": null,
+      "token": null,
+      "status": "unresolved",
+      "route": "ats",
+      "identity": null,
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "ResolveConflict",
+      "domain": "resolve-conflict.test",
+      "tier": 3,
+      "vendor": null,
+      "token": null,
+      "status": "unresolved",
+      "route": "ats",
+      "identity": null,
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "ResolveWorkday",
+      "domain": "resolve-workday.test",
+      "tier": 3,
+      "vendor": null,
+      "token": null,
+      "status": "unresolved",
+      "route": "ats",
+      "identity": null,
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "ResolveNone",
+      "domain": "resolve-none.test",
+      "tier": 3,
+      "vendor": null,
+      "token": null,
+      "status": "unresolved",
+      "route": "ats",
+      "identity": null,
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "SlugCo",
+      "domain": "slugco.test",
+      "tier": 3,
+      "vendor": null,
+      "token": null,
+      "status": "unresolved",
+      "route": "ats",
+      "identity": null,
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "ResolveSr",
+      "domain": "resolve-sr.test",
+      "tier": 3,
+      "vendor": null,
+      "token": null,
+      "status": "unresolved",
+      "route": "ats",
+      "identity": null,
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    },
+    {
+      "name": "ResolveDemote",
+      "domain": "resolve-none.test",
+      "tier": 3,
+      "vendor": "greenhouse",
+      "token": "parloa",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "vendor_identifier",
+        "evidence": "stale",
+        "verified_at": "2026-01-01"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": [],
+      "candidates": [
+        {
+          "vendor": "greenhouse",
+          "token": "parloa",
+          "note": "leftover"
+        }
+      ]
+    },
+    {
+      "name": "UnverifiedCo",
+      "domain": "unverified.test",
+      "tier": 3,
+      "vendor": "greenhouse",
+      "token": "parloa",
+      "status": "ambiguous",
+      "route": "ats",
+      "identity": null,
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": [],
+      "candidates": [
+        {
+          "vendor": "greenhouse",
+          "token": "parloa",
+          "note": "identity not confirmed"
+        }
+      ]
+    },
+    {
+      "name": "ThrottledCo",
+      "domain": "throttled.test",
+      "tier": 3,
+      "vendor": "greenhouse",
+      "token": "throttled",
+      "status": "verified",
+      "route": "ats",
+      "identity": {
+        "evidence_kind": "human_confirmed",
+        "evidence": "fixture registry",
+        "verified_at": "2026-08-18"
+      },
+      "last_attempt_at": null,
+      "last_success_at": null,
+      "last_status": null,
+      "stats": {
+        "jobs_seen": 0,
+        "german_gated": 0,
+        "eligible_jobs": 0,
+        "last_eligible_at": null
+      },
+      "flags": []
+    }
+  ]
+}

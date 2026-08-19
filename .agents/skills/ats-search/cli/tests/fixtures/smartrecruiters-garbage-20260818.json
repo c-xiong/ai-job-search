@@ -1,0 +1,12 @@
+{
+  "_capture": {
+    "endpoint": "GET https://api.smartrecruiters.com/v1/companies/zzz-not-a-real-company-xyz/postings?limit=2&offset=0",
+    "captured": "2026-08-18",
+    "provenance": "Field names, types and nesting were read off the live endpoint on 2026-08-18. The posting CONTENT here is minimized and synthetic - real boards run to hundreds of postings and 300 KB, and a parser fixture needs neither. Refresh with capture.sh.",
+    "minimization": "VERBATIM live response for a nonsense slug on 2026-08-18. HTTP 200. This is the whole false-200 trap: it is byte-identical to a genuinely empty board."
+  },
+  "offset": 0,
+  "limit": 2,
+  "totalFound": 0,
+  "content": []
+}

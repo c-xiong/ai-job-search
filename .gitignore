@@ -29,6 +29,10 @@ venv/
 #   cp CLAUDE.example.md CLAUDE.md
 #   for f in .claude/skills/*/*.example.md; do cp "$f" "${f%.example.md}.md"; done
 #   cp job_scraper/scrape_config.example.json job_scraper/scrape_config.json
+# The ats-search target list: who you are watching, at what cadence, plus your
+# private notes about each one ("go through the institute, do not cold-apply").
+# Same split as scrape_config.json - only companies.example.json is tracked.
+job_scraper/companies.json
 #
 # CI enforces the split: the placeholder-integrity job fails if a tracked
 # *.example file loses its [YOUR_*] tokens, and the leak guard fails if any of
@@ -72,6 +76,15 @@ salary_data.json
 # free, and versioning them would just add noisy diffs alongside jobs.md.
 job_scraper/*.csv
 job_scraper/*.log
+# Cached ATS board payloads (the per-company cooldown backstop). Whole job
+# boards of the companies on your target list - regenerated on demand.
+job_scraper/ats_cache/
+**/job_scraper/ats_cache/
+# Transient state for the board's Fetch button: a pid lock and a status file
+# whose log names the companies being fetched.
+job_scraper/fetch_status.json
+job_scraper/.fetch.lock
+job_scraper/.board.lock
 *_BehavioralReport.pdf
 linkedin_Profile.pdf
 
@@ -152,3 +165,6 @@ upskill/*.md
 
 # Brainstorm mockups (superpowers visual companion) - never ship
 .superpowers/
+
+# ats-search test scratch (bun tests write throwaway registries here)
+.agents/skills/*/cli/.tmp-tests/

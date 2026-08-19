@@ -3,10 +3,25 @@
   "jobage_days": 7,
   "limit_per_query": 10,
   "linkedin": [
-    {"q": "[YOUR_PRIMARY_JOB_TITLE]", "l": "[YOUR_CITY], [YOUR_COUNTRY]"},
-    {"q": "[YOUR_SECONDARY_JOB_TITLE]", "l": "[YOUR_COUNTRY]"}
+    {
+      "q": "[YOUR_PRIMARY_JOB_TITLE]",
+      "l": "[YOUR_CITY], [YOUR_COUNTRY]"
+    },
+    {
+      "q": "[YOUR_SECONDARY_JOB_TITLE]",
+      "l": "[YOUR_COUNTRY]"
+    }
   ],
   "freehire": [
-    {"category": "[YOUR_CATEGORY e.g. ml_ai or backend,fullstack]", "country": "[YOUR_COUNTRY_CODES e.g. CH,DE,AT]"}
-  ]
+    {
+      "category": "[YOUR_CATEGORY e.g. ml_ai or backend,fullstack]",
+      "country": "[YOUR_COUNTRY_CODES e.g. CH,DE,AT]"
+    }
+  ],
+  "ats": {
+    "_comment": "Budgets for the on-demand ATS source. The company list, the per-company cooldown (min_interval_minutes) and every filter live in job_scraper/companies.json - deliberately not duplicated here, because two files disagreeing about a request bound is worse than one file holding it.",
+    "max_companies": 8,
+    "max_new_jobs": 40
+  },
+  "linkedin_max_detail_fetches": 15
 }
