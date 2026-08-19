@@ -494,8 +494,6 @@ def main():
             log("dry run - nothing written")
             return 0
         jobs_md.save_seen(seen)
-        jobs_md.MD.write_text(jobs_md.render(seen), encoding="utf-8")
-        jobs_md.write_csv(seen)
     return 0
 
 

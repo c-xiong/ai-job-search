@@ -42,9 +42,8 @@ ALLOWED_PERMISSIONS = {
     "Bash(python salary_lookup.py:*)",
     "Bash(python3 salary_lookup.py:*)",
     "Bash(pdftotext:*)",
-    # jobs_md.py syncs job_scraper/seen_jobs.json <-> job_scraper/jobs.md. Local,
-    # stdlib-only, no network, writes only those two paths - /scrape calls it on
-    # every run, so prompting each time would be pure friction.
+    # jobs_md.py creates optional read-only Markdown or CSV snapshots from the
+    # canonical seen_jobs.json. It is local, stdlib-only, and has no network.
     "Bash(python3 tools/jobs_md.py:*)",
     "Bash(python tools/jobs_md.py:*)",
     # jobs_board.py serves the triage UI on 127.0.0.1 with a per-run token; it
@@ -136,12 +135,10 @@ ALLOWED_IGNORE_NEGATIONS = {
     "!cv/main_example.tex",
     "!cover_letters/cover_example.tex",
     "!documents/**/.gitkeep",
-    # NOTE: upstream also allows "!job_scraper/jobs.md", re-including the
-    # hand-editable shortlist as a decision record worth versioning - but only,
-    # by its own warning, in a PRIVATE fork. This fork is public, so that
-    # negation is dropped from both .gitignore and this allowlist: jobs.md names
-    # every company considered plus the owner's private notes. Re-adding it here
-    # is the one change to this file that must never be made.
+    # NOTE: upstream also allows "!job_scraper/jobs.md". This fork is public, so
+    # the optional export remains ignored: it can name every company considered
+    # plus the owner's private notes. Re-adding it here is the one change to this
+    # file that must never be made.
 }
 
 # Hook commands the template legitimately ships, as "<Event>:<command>" strings.

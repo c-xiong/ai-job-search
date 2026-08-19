@@ -19,6 +19,8 @@ This skill searches job portals using the **installed portal-search CLIs** in
 It deduplicates against previously seen jobs and the application tracker, and
 presents new matches with a quick fit assessment.
 
+Authenticated LinkedIn job recommendations are an interactive source handled by Codex/ChatGPT App through `.agents/skills/linkedin-browser-import/`; they still enter the unified merge and board-generation workflow.
+
 ## Invocation
 
 The user triggers this skill by saying things like:
@@ -38,14 +40,10 @@ Optional arguments:
 
 ### Step 0: Load State
 
-1. Run `python3 tools/jobs_md.py sync` first, before reading anything. It folds any hand edits
-   the user made in `job_scraper/jobs.md` (the human-editable job list) back into
-   `job_scraper/seen_jobs.json` as `user_status` / `user_note`. Skipping this loses their
-   decisions. If `seen_jobs.json` does not exist yet, the tool exits 1 and there is nothing to
-   fold in - carry on.
-2. Read `job_scraper/seen_jobs.json` (create if missing - start with `{"seen": {}}`)
-3. Read `job_search_tracker.csv` to extract already-applied companies+roles
-4. Read `search-queries.md` (this directory) for the search strategy
+1. Read `job_scraper/seen_jobs.json` (create if missing - start with `{"seen": {}}`). This is
+   the sole job-state source; statuses and notes are edited only through the local board.
+2. Read `job_search_tracker.csv` to extract already-applied companies+roles.
+3. Read `search-queries.md` (this directory) for the search strategy.
 
 ### Step 1: Search
 
@@ -192,12 +190,11 @@ The `portal` field records which CLI skill produced the job (results are already
    user personally - never present it again and never re-score it. `maybe` means keep it, ranked
    lower. `star`, `yes` and `applied` are the user's, not yours: carry them through untouched.
 
-4. **Regenerate the hand-editable list.** Run `python3 tools/jobs_md.py sync` after writing
-   `seen_jobs.json`. This rewrites `job_scraper/jobs.md` with the new jobs added as `new`, rows
-   re-sorted, and every section count refreshed - while preserving the Status and My-notes cells
-   the user edited. Mention the file in the Step 5 summary so they know where their list lives.
-   Every newly scraped job must reach that file: the terminal table is a preview, `jobs.md` is
-   the record.
+4. **Persist only the canonical state.** Write `job_scraper/seen_jobs.json`; the local board
+   reads it directly and is the only editing interface. Do not generate Markdown or CSV during
+   a scrape. `jobs.md` is an optional read-only snapshot created only with
+   `python3 tools/jobs_md.py export-md`; the two CSV snapshots are created independently with
+   `python3 tools/jobs_md.py export-csv`. Neither export is ever read back into state.
 
 ### Step 4.5: Generate Referral Contact Links (High & Medium Fit Only)
 

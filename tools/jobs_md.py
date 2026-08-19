@@ -1,24 +1,12 @@
 #!/usr/bin/env python3
-"""Two-way sync between the scraper's machine state and a hand-editable job list.
+"""Board-state primitives plus explicit, read-only job exports.
 
-`job_scraper/seen_jobs.json` is what /scrape writes and reads for deduplication.
-`job_scraper/jobs.md` is what *you* read and edit: one row per job, grouped into
-sections, with a Status column you own.
+`job_scraper/seen_jobs.json` is the sole state source. The local board is the
+only editing interface for statuses and notes. Markdown and CSV files are
+optional snapshots and are never read back into state.
 
-    python3 tools/jobs_md.py sync     # merge both directions, rewrite jobs.md
-    python3 tools/jobs_md.py check    # parse only, report what would change
-
-Ownership is split so neither side clobbers the other:
-
-  * The scraper owns   - title, company, location, posted/first-seen dates, url,
-                         fit, portal, deadline and the auto "Why" note.
-  * You own            - the Status cell and the "My notes" cell. Sync reads them
-                         out of jobs.md, stores them back into seen_jobs.json as
-                         `user_status` / `user_note`, and never overwrites them.
-
-A row whose URL is not in seen_jobs.json is treated as one you added by hand: it
-is kept and written into seen_jobs.json with portal "manual", so /scrape stops
-re-suggesting it. Delete a row to make it reappear on the next scrape.
+    python3 tools/jobs_md.py export-md   # write job_scraper/jobs.md
+    python3 tools/jobs_md.py export-csv  # write active/excluded CSV snapshots
 
 Stdlib only, Python 3.9+.
 """
@@ -33,6 +21,7 @@ import threading
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 try:
     import fcntl
@@ -115,6 +104,8 @@ _ATS_RULES = [
      "https://jobs.smartrecruiters.com/%s/%s"),
 ]
 
+_TRACKING_QUERY_KEYS = {"trk", "trackingid", "lipi", "refid"}
+
 
 def canonical_url(url):
     """Collapse the many URL spellings of one posting onto a single key.
@@ -141,7 +132,12 @@ def canonical_url(url):
         m = pattern.search(url)
         if m:
             return template % m.groups()
-    return url.split("?")[0].rstrip("/")
+    parts = urlsplit(url)
+    query = urlencode([
+        (key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_") and key.lower() not in _TRACKING_QUERY_KEYS
+    ], doseq=True)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), query, ""))
 
 
 # The vendor each URL rule belongs to, in the same order as _ATS_RULES, so a
@@ -266,108 +262,11 @@ def primary_url(entry):
     return entry.get("url", "")
 
 
-def key_for_url(seen, url):
-    """Map any URL a row is known by back onto that row's key.
-
-    A row's key is what jobs.md's first link carries, so this is a safety net for
-    the other spellings a row is known by (its `sources`). It **fails closed**:
-    when two rows claim the same URL there is no honest way to choose, and
-    guessing applies one job's status to another while the intended edit
-    disappears. Ambiguity returns None, and the caller reports it.
-    """
-    if url in seen:
-        return url
-    canonical = canonical_url(url)
-    if canonical in seen:
-        return canonical
-    matches = set()
-    for key, entry in seen.items():
-        if entry.get("url") in (url, canonical):
-            matches.add(key)
-            continue
-        for source in entry.get("sources") or []:
-            if source.get("url") in (url, canonical):
-                matches.add(key)
-                break
-    if len(matches) == 1:
-        return matches.pop()
-    return None  # nothing matched, or several did
-
-
 def _cell(text):
     """Make a value safe to put inside a markdown table cell."""
     if text is None:
         return ""
     return str(text).replace("|", "\\|").replace("\n", " ").strip()
-
-
-def parse_md(path=MD):
-    """Return {url: {"status": str, "user_note": str}} from a hand-edited jobs.md."""
-    if not path.exists():
-        return {}
-    out = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line.startswith("|") or line.startswith("|---") or line.startswith("| ---"):
-            continue
-        # Split on unescaped pipes only. render() writes a literal "|" inside a
-        # cell as "\|", so a naive split shifts every later column - which would
-        # read some other cell as the Status and silently rewrite the job's state.
-        cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", line.strip("|"))]
-        if len(cells) < len(COLUMNS):
-            continue
-        if cells[0].strip("`").lower() == "status":  # header row
-            continue
-        m = re.search(r"\((https?://[^)\s]+)\)", cells[6])
-        if not m:
-            continue
-        status = cells[0].strip("` ").lower()
-        out[m.group(1)] = {
-            "status": status if status in STATUSES else "new",
-            "user_note": cells[8],
-        }
-    return out
-
-
-def merge(seen, edits):
-    """Fold hand edits into the scraper state. Returns (state, added_by_hand).
-
-    An edit whose URL matches several rows is left out entirely and reported by
-    the caller: applying it to whichever row happened to come first would move a
-    status onto the wrong job, silently.
-    """
-    added = 0
-    resolved, ambiguous = {}, []
-    for url, edit in edits.items():
-        key = key_for_url(seen, url)
-        if key is None and any(
-            url in {e.get("url")} | {s.get("url") for s in (e.get("sources") or [])}
-            for e in seen.values()
-        ):
-            ambiguous.append(url)
-            continue
-        resolved[key or url] = edit
-    merge.ambiguous = ambiguous
-    edits = resolved
-    for url, entry in seen.items():
-        edit = edits.get(url)
-        if edit:
-            entry["user_status"] = edit["status"]
-            entry["user_note"] = edit["user_note"]
-        else:
-            entry.setdefault("user_status", "gate" if entry.get("status") == "skipped" else "new")
-            entry.setdefault("user_note", "")
-    for url, edit in edits.items():
-        if url in seen:
-            continue
-        seen[url] = {
-            "title": "(added by hand)", "company": "", "location": "", "url": url,
-            "first_seen": date.today().isoformat(), "deadline": None, "fit": "",
-            "status": "new", "portal": "manual",
-            "user_status": edit["status"], "user_note": edit["user_note"],
-        }
-        added += 1
-    return seen, added
 
 
 def sort_key(entry):
@@ -396,23 +295,19 @@ def render(seen):
     summary = ", ".join("%s %s" % (counts[s], s) for s in STATUSES if s in counts)
 
     L = []
-    L.append("# Job Shortlist")
+    L.append("# Job Shortlist Export")
     L.append("")
-    L.append("Last synced: **%s** - %d jobs (%s)" % (today, len(seen), summary or "none yet"))
+    L.append("Exported: **%s** - %d jobs (%s)" % (today, len(seen), summary or "none yet"))
     L.append("")
-    L.append("## How to use this file")
+    L.append("## Read-only snapshot")
     L.append("")
-    L.append("Edit the **Status** cell and the **My notes** cell. Save. That is the whole workflow -")
-    L.append("everything else is regenerated. Your edits survive: `/scrape` runs")
-    L.append("`python3 tools/jobs_md.py sync` afterwards, which reads your statuses back, adds newly")
-    L.append("found jobs as `new`, re-sorts, and moves rows into the right section.")
+    L.append("`job_scraper/seen_jobs.json` is the sole state source. Edit statuses and notes in the")
+    L.append("local board. Changes made in this Markdown file are never imported back into state.")
     L.append("")
-    L.append("Two CSV exports sit next to this file - `jobs_active.csv` and `jobs_excluded.csv` - for")
-    L.append("sorting and filtering in a spreadsheet. They are **generated**: edit them and the next sync")
-    L.append("overwrites your changes. Edit here, or in the board (`python3 tools/jobs_board.py`).")
+    L.append("Regenerate this snapshot explicitly with `python3 tools/jobs_md.py export-md`.")
+    L.append("Generate separate spreadsheet snapshots with `python3 tools/jobs_md.py export-csv`.")
     L.append("")
-    L.append("A job you mark `no` never comes back in a future scrape. A job you delete outright *will*")
-    L.append("come back next time it is found - deleting is how you say \"show me this again\".")
+    L.append("This export can become stale; the board always shows the current JSON state.")
     L.append("")
     L.append("| Status | Meaning |")
     L.append("|--------|---------|")
@@ -435,12 +330,8 @@ def render(seen):
         L.append("|" + "|".join(["--------"] * len(COLUMNS)) + "|")
         for e in sorted(rows, key=sort_key):
             fit = (e.get("fit") or "").capitalize()
-            # The FIRST link in this cell is the row's key, always: parse_md
-            # reads it back to decide which row an edit belongs to, and a cell
-            # whose first URL is not the key turns an edit into a duplicate row -
-            # or, when two rows prefer the same URL, into an edit applied to the
-            # wrong job. The first-party posting is the second link, one click
-            # away, which is what `primary_source` is for.
+            # Keep the stable row key visible and offer the preferred first-party
+            # posting as a second link when one has been discovered.
             key_link = e.get("url", "")
             preferred = primary_url(e)
             link = "[open](%s)" % key_link if key_link else ""
@@ -463,7 +354,8 @@ def write_csv(seen):
 
     Kept read-only on purpose: a spreadsheet app on a de-CH locale rewrites
     ISO dates on save, and Excel mangles UTF-8 notes without a BOM. The board
-    and jobs.md are the editable surfaces; these are for sorting and sharing.
+    is the only editable surface; these are optional snapshots for sorting and
+    sharing.
     """
     active_st = {"star", "yes", "new", "maybe", "applied"}
     buckets = {CSV_ACTIVE: [], CSV_EXCLUDED: []}
@@ -485,33 +377,22 @@ def write_csv(seen):
 
 
 def main(argv):
-    mode = argv[1] if len(argv) > 1 else "sync"
-    if mode not in ("sync", "check"):
+    mode = argv[1] if len(argv) > 1 else None
+    if mode not in ("export-md", "export-csv"):
         print(__doc__)
         return 2
     if not SEEN.exists():
         print("no %s yet - run /scrape first" % SEEN.relative_to(ROOT))
         return 1
-    if mode == "check":
-        seen = json.loads(SEEN.read_text(encoding="utf-8")).get("seen", {})
-        edits = parse_md()
-        seen, added = merge(seen, edits)
-        print("%d jobs in state, %d rows parsed from jobs.md, %d added by hand"
-              % (len(seen), len(edits), added))
-        return 0
-    # A sync is a read-modify-write like any other, and the board or a fetch may
-    # be writing the same file right now.
     with board_lock():
         seen = json.loads(SEEN.read_text(encoding="utf-8")).get("seen", {})
-        edits = parse_md()
-        seen, added = merge(seen, edits)
-        for url in getattr(merge, "ambiguous", []):
-            print("! skipped an edit: %s matches more than one row, so there is no "
-                  "safe way to tell which job you meant. Edit it in the board instead." % url)
-        save_seen(seen)
-        MD.write_text(render(seen), encoding="utf-8")
+        if mode == "export-md":
+            MD.parent.mkdir(parents=True, exist_ok=True)
+            MD.write_text(render(seen), encoding="utf-8")
+            print("exported: %d jobs -> %s" % (len(seen), MD))
+            return 0
+        CSV_ACTIVE.parent.mkdir(parents=True, exist_ok=True)
         counts = write_csv(seen)
-    print("synced: %d jobs -> %s (%d hand-added)" % (len(seen), MD.relative_to(ROOT), added))
     print("exported: " + ", ".join("%s (%d rows)" % (n, c) for n, c in sorted(counts.items())))
     return 0
 

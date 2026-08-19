@@ -18,8 +18,7 @@ STATUSES = list(jobs_md.STATUSES)
 LOCK_STATUSES = set(STATUSES)
 
 # The link to click: the first-party ATS posting when the row has one. Shared
-# with jobs_md so the board, jobs.md and the CSV exports all point at the same
-# place.
+# with the optional export helpers so every view points at the same place.
 primary_url = jobs_md.primary_url
 
 
@@ -36,12 +35,9 @@ def save(seen, why=""):
     """
     with activity.Timer() as timer:
         jobs_md.save_seen(seen)
-        jobs_md.MD.write_text(jobs_md.render(seen), encoding="utf-8")
-        jobs_md.write_csv(seen)
     activity.emit(
         "board",
-        (why + " - " if why else "") + "wrote seen_jobs.json (%d entries), jobs.md, "
-        "jobs_active.csv, jobs_excluded.csv" % len(seen),
+        (why + " - " if why else "") + "wrote seen_jobs.json (%d entries)" % len(seen),
         ms=timer.ms)
 
 

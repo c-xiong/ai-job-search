@@ -67,13 +67,11 @@ salary_data.json
 **/job_scraper/seen_jobs.json
 **/job_scraper/notion_sync.json
 **/job_scraper/*.md
-# NOTE: upstream re-includes job_scraper/jobs.md right here (`!job_scraper/jobs.md`),
-# labelled PRIVATE FORKS ONLY, because the shortlist is a useful decision record.
-# This fork is PUBLIC, so that negation is deliberately dropped: jobs.md names every
-# company considered along with the owner's own "no" calls and private notes, and it
-# stays local-only. The `**/job_scraper/*.md` rule above is what keeps it out.
-# The CSV exports are derived from seen_jobs.json on every sync - regenerating them is
-# free, and versioning them would just add noisy diffs alongside jobs.md.
+# NOTE: upstream re-includes job_scraper/jobs.md here (`!job_scraper/jobs.md`). In
+# this fork it is an optional read-only export from the canonical seen_jobs.json,
+# may contain private decisions and notes, and stays local-only. The
+# `**/job_scraper/*.md` rule above keeps it out. CSV snapshots are likewise created
+# only by the explicit export command and are never state inputs.
 job_scraper/*.csv
 job_scraper/*.log
 # Cached ATS board payloads (the per-company cooldown backstop). Whole job

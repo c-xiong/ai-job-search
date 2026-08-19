@@ -335,8 +335,6 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
                 log("dry run - nothing written")
             else:
                 jobs_md.save_seen(seen)
-                jobs_md.MD.write_text(jobs_md.render(seen), encoding="utf-8")
-                jobs_md.write_csv(seen)
                 log("done - %d jobs in the board" % len(seen))
 
     write_status(False, lines, summaries)

@@ -465,6 +465,9 @@ class LostUpdateTest(unittest.TestCase):
         self.assertIn("https://job-boards.greenhouse.io/parloa/jobs/1", seen,
                       "and the new row still landed")
         self.assertEqual(summaries[0]["added"], 1)
+        self.assertFalse(jm.MD.exists())
+        self.assertFalse(jm.CSV_ACTIVE.exists())
+        self.assertFalse(jm.CSV_EXCLUDED.exists())
 
     def test_the_run_lock_is_released_after_a_normal_run(self):
         def collect(_log, **_kw):

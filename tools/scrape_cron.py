@@ -134,8 +134,6 @@ def main():
         log("  %d added (%d auto-gated on German, %d awaiting fit assessment)"
             % (gated + (len(fresh) - gated), gated, len(fresh) - gated))
         jobs_md.save_seen(seen)
-        jobs_md.MD.write_text(jobs_md.render(seen), encoding="utf-8")
-        jobs_md.write_csv(seen)
         log("done - %d jobs in the board" % len(seen))
     return 0
 

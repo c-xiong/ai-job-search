@@ -2,8 +2,7 @@
 
 Three things used to happen silently and are the reason this module exists:
 
-1. Setting a status rewrites four files - `seen_jobs.json`, `jobs.md`, and both
-   CSV exports - and nothing said so.
+1. Setting a status updates the canonical `seen_jobs.json`, and nothing said so.
 2. A collection run can succeed overall while one source fails; that partial
    failure was a banner and nothing more.
 3. An exit code is the difference between "the CV is two pages" and "nobody

@@ -30,6 +30,13 @@ class CanonicalUrlTest(unittest.TestCase):
         self.assertEqual(jobs_md.canonical_url(base + "?utm_source=linkedin&utm_medium=x"), base)
         self.assertEqual(jobs_md.canonical_url(base + "/application"), base)
 
+    def test_unknown_company_url_keeps_identity_query_but_drops_tracking(self):
+        url = "https://careers.example.com/apply?jobId=42&utm_source=linkedin#details"
+        self.assertEqual(
+            jobs_md.canonical_url(url),
+            "https://careers.example.com/apply?jobId=42",
+        )
+
     def test_every_vendor_has_a_rule(self):
         cases = {
             "https://parloa.jobs.personio.de/job/2246041?language=de":
@@ -308,8 +315,8 @@ class AppendOnlyTest(unittest.TestCase):
         self.assertTrue(entry["prefit_reasons"], "a score must never appear without its reasons")
 
 
-class RoundTripTest(unittest.TestCase):
-    """Plan test 21: the new fields survive seen_jobs.json and a jobs.md rebuild."""
+class ExportTest(unittest.TestCase):
+    """Optional exports preserve source history and preferred links."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -345,11 +352,7 @@ class RoundTripTest(unittest.TestCase):
         self.assertEqual(reloaded["possible_duplicate_of"],
                          ["https://job-boards.greenhouse.io/parloa/jobs/2"])
 
-        # A jobs.md sync must not strip them either: parse_md reads only the two
-        # cells you own, and merge writes them back onto the same dict.
-        merged, _added = jobs_md.merge({key: reloaded}, jobs_md.parse_md(jobs_md.MD))
-        self.assertEqual(merged[key]["primary_source"], "ats-search")
-        self.assertEqual(len(merged[key]["sources"]), 2)
+        self.assertIn("Read-only snapshot", jobs_md.MD.read_text(encoding="utf-8"))
 
     def test_markdown_offers_the_first_party_link_without_losing_the_key(self):
         key = "https://www.linkedin.com/jobs/view/4451224579"
@@ -364,9 +367,7 @@ class RoundTripTest(unittest.TestCase):
         jobs_md.write_csv({key: entry})
 
         markdown = jobs_md.MD.read_text(encoding="utf-8")
-        # The FIRST link is the row's key - parse_md reads it back to decide which
-        # row an edit belongs to, and two rows preferring the same first-party URL
-        # would otherwise make that ambiguous.
+        # The stable row key remains visible in the snapshot.
         self.assertIn("[open](%s)" % key, markdown)
         # The first-party posting is one click away all the same.
         self.assertIn("[first-party](%s)" % ats, markdown)
@@ -375,50 +376,10 @@ class RoundTripTest(unittest.TestCase):
         # The CSV is generated and never read back, so it can carry the good link.
         self.assertIn(ats, jobs_md.CSV_ACTIVE.read_text(encoding="utf-8-sig"))
 
-    def test_an_edit_is_skipped_rather_than_applied_to_the_wrong_row(self):
-        """Two rows claiming one URL: there is no honest way to choose."""
-        shared = "https://job-boards.greenhouse.io/parloa/jobs/1"
-        seen = {
-            "https://www.linkedin.com/jobs/view/1": dict(
-                linkedin_entry(), url="https://www.linkedin.com/jobs/view/1",
-                sources=[{"portal": "ats-search", "url": shared, "id": "a"}]),
-            "https://www.linkedin.com/jobs/view/2": dict(
-                linkedin_entry(), url="https://www.linkedin.com/jobs/view/2",
-                sources=[{"portal": "ats-search", "url": shared, "id": "b"}]),
-        }
-        self.assertIsNone(jobs_md.key_for_url(seen, shared))
-        merged, added = jobs_md.merge(seen, {shared: {"status": "no", "user_note": ""}})
-        self.assertEqual(added, 0, "an ambiguous edit must not become a new row")
-        self.assertEqual([e["user_status"] for e in merged.values()], ["star", "star"],
-                         "an ambiguous edit must not land on either row")
-        self.assertEqual(jobs_md.merge.ambiguous, [shared])
-
-    def test_an_edit_made_against_the_first_party_link_lands_on_the_right_row(self):
-        """The hazard the previous test creates: jobs.md no longer shows the key.
-
-        A sync that could not map the ATS link back onto the row's key would read
-        the row as hand-added and create a second, empty duplicate.
-        """
-        key = "https://www.linkedin.com/jobs/view/4451224579"
-        ats = "https://job-boards.greenhouse.io/parloa/jobs/1"
-        entry = linkedin_entry()
-        entry["sources"] = [
-            {"portal": "linkedin-search", "url": key, "id": "4451224579", "first_seen": "2026-08-12"},
-            {"portal": "ats-search", "url": ats, "id": "greenhouse:parloa:1", "first_seen": "2026-08-20"},
-        ]
-        entry["primary_source"] = "ats-search"
-        seen = {key: entry}
-        jobs_md.MD.write_text(jobs_md.render(seen), encoding="utf-8")
-        # Simulate the hand edit: change the Status cell in the job row. (Anchored
-        # on the Fit cell, so the status-legend table at the top is not what gets
-        # edited.)
-        edited = jobs_md.MD.read_text(encoding="utf-8").replace("| `star` | High |", "| `applied` | High |", 1)
-        jobs_md.MD.write_text(edited, encoding="utf-8")
-
-        merged, added = jobs_md.merge(seen, jobs_md.parse_md(jobs_md.MD))
-        self.assertEqual(added, 0, "the ATS link was read as a hand-added row")
-        self.assertEqual(len(merged), 1)
-        self.assertEqual(merged[key]["user_status"], "applied")
+    def test_markdown_sync_is_not_a_public_state_path(self):
+        self.assertFalse(hasattr(jobs_md, "parse_md"))
+        self.assertFalse(hasattr(jobs_md, "merge"))
+        self.assertFalse(hasattr(jobs_md, "key_for_url"))
 
 
 class OrderingTest(unittest.TestCase):

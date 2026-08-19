@@ -1,7 +1,6 @@
 """Every writer of `seen_jobs.json` must hold the board lock.
 
-Four processes can write that file - the board's HTTP handler, the on-demand
-orchestrator, the manual collector, and `jobs_md sync`. A writer that forgets the
+The board's HTTP handler and job import/collection tools can write that file. A writer that forgets the
 lock does not fail loudly; it silently reverts whatever another writer did
 between its read and its write, and the thing most likely to be lost is a status
 you just set by hand.

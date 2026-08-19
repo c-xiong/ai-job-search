@@ -28,7 +28,7 @@ Upstream assumes a *private* fork: `/setup` writes your name, phone, email, empl
 |---|---|---|
 | Files `/setup` personalizes | tracked, filled in place | **gitignored** |
 | What is tracked instead | — | a `*.example` twin holding upstream's placeholders |
-| `job_scraper/jobs.md` shortlist | re-included, "private forks only" | **gitignored** |
+| Optional `jobs.md` / CSV snapshots | `jobs.md` re-included, "private forks only" | **explicit exports, gitignored** |
 | Placeholder-integrity CI job | upstream repo only | **runs here**, plus a leak guard that fails if a personal file is ever staged |
 
 So nothing in this repository describes a real person. Clone it and it behaves like the upstream template — see the bootstrap step below.
