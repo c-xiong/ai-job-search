@@ -65,6 +65,11 @@ def jobs_payload():
             "why": why,
             "note": entry.get("user_note", ""),
             "portal": entry.get("portal", ""),
+            # M2.5's Job panel renders the posting already stored by collectors.
+            # This is payload shaping only; there is deliberately no new fetch
+            # route or server-side reader state.
+            "description": (entry.get("description") or entry.get("job_description")
+                            or entry.get("text") or ""),
             "dupes": entry.get("possible_duplicate_of") or [],
         })
     # Your status first, then display priority (rank_score > prefit_score > fit),

@@ -1,441 +1,311 @@
-const T = document.querySelector('meta[name="board-token"]').content;
-let JOBS=[], STATUSES=[], FILTERS=[], filter="active", q="", sel=0;
+const T=document.querySelector('meta[name="board-token"]').content;
+const el=id=>document.getElementById(id);
+const esc=value=>String(value==null?"":value).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const ACTIVE=["star","yes","new","maybe"];
-// The filter chips are the status vocabulary itself, verbatim: one chip per status
-// in jobs_md.STATUSES, in the same order and spelled with the same word the row's
-// dropdown shows. A chip with a prettier private name ("Excluded" for the `no`
-// status, "Gated" for `gate`) reads like a separate concept - you press `n` and land
-// in a bucket that never says `no` anywhere. A hand-written chip list also silently
-// drops statuses added later, which is how `expired` ended up with no chip at all.
-// `active` and `all` are the only extras, and they are groups, not statuses.
-const buildFilters = () => [["active","active"], ...STATUSES.map(s=>[s,s]), ["all","all"]];
-
-const esc = s => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const el = id => document.getElementById(id);
-// Status changes write through immediately - no modal, no confirm - so `n`
-// (which hides a job from every future scrape) needs a way back. Undo is kept
-// available after the toast fades: the toast is the nudge, `z` is the guarantee.
+const RUNNING=["evaluating","queued","drafting","reviewing","compiling","inspecting"];
+const PHASE_STEP={evaluating:1,awaiting_approval:1,queued:2,drafting:2,reviewing:3,compiling:5,inspecting:6,done:6};
+let JOBS=[],STATUSES=[],FILTERS=[],filter="active",q="",sel=0;
+let RUNS=[],QUEUE=[],LEDGER=null,BUDGET=null,RUNPOLL=null,ACTIVE_RUN=null;
+let EV=[],EPOCH=null,SEQ=0,actFilter="all",COUNTS={};
 const HISTORY=[];
-let toastTimer=null, undoTimer=null;
+let toastTimer=null,undoTimer=null,POLL=null;
 
-function toast(msg, opts){
-  opts = opts || {};
-  const t=el("toast"), btn=el("toastundo");
-  el("toastmsg").textContent=msg;
-  clearTimeout(toastTimer); clearInterval(undoTimer);
-  t.classList.toggle("warn", !!opts.warn);
-  t.classList.add("on");
-  if(opts.undo){
-    let left=opts.seconds||6;
-    btn.hidden=false; el("toastsec").textContent="("+left+")";
-    undoTimer=setInterval(()=>{ left--; el("toastsec").textContent="("+left+")";
-      if(left<=0) clearInterval(undoTimer); },1000);
-    toastTimer=setTimeout(()=>{ t.classList.remove("on"); btn.hidden=true; },(opts.seconds||6)*1000);
-  } else {
-    btn.hidden=true;
-    toastTimer=setTimeout(()=>t.classList.remove("on"), opts.ms||1200);
-  }
+const media=matchMedia("(prefers-color-scheme: dark)");
+const setTheme=()=>el("app").classList.toggle("dark",media.matches);
+setTheme();media.addEventListener("change",setTheme);
+el("buildstamp").textContent="build "+new Date(document.lastModified).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+
+function toast(msg,opts={}){
+  const box=el("toast"),btn=el("toastundo");el("toastmsg").textContent=msg;
+  clearTimeout(toastTimer);clearInterval(undoTimer);box.classList.toggle("warn",!!opts.warn);box.classList.add("on");
+  if(opts.undo){let left=opts.seconds||6;btn.hidden=false;el("toastsec").textContent="("+left+")";
+    undoTimer=setInterval(()=>{left--;el("toastsec").textContent="("+left+")";if(left<=0)clearInterval(undoTimer)},1000);
+    toastTimer=setTimeout(()=>{box.classList.remove("on");btn.hidden=true},left*1000);
+  }else{btn.hidden=true;toastTimer=setTimeout(()=>box.classList.remove("on"),opts.ms||1400)}
 }
 
+const buildFilters=()=>[["active","active"],...STATUSES.map(s=>[s,s]),["all","all"]];
 function match(j){
-  const inFilter = filter==="all" ? true
-    : filter==="active" ? ACTIVE.includes(j.status) : j.status===filter;
-  if(!inFilter) return false;
-  if(!q) return true;
-  const hay=(j.title+" "+j.company+" "+j.location+" "+j.why+" "+j.note).toLowerCase();
-  return q.toLowerCase().split(/\s+/).every(w=>hay.includes(w));
+  const inFilter=filter==="all"||filter==="active"&&ACTIVE.includes(j.status)||j.status===filter;
+  if(!inFilter)return false;if(!q)return true;
+  const hay=[j.title,j.company,j.location,j.why,j.note].join(" ").toLowerCase();
+  return q.toLowerCase().split(/\s+/).every(word=>hay.includes(word));
 }
-const shown = () => JOBS.filter(match);
+const shown=()=>JOBS.filter(match);
+const selectedJob=()=>shown()[sel]||null;
 
 function renderChips(){
-  const counts={all:JOBS.length, active:JOBS.filter(j=>ACTIVE.includes(j.status)).length};
-  for(const s of STATUSES) counts[s]=JOBS.filter(j=>j.status===s).length;
-  el("chips").innerHTML = FILTERS.map(([k,label])=>
-    `<button class="chip ${k===filter?"on":""}" data-f="${k}">${label}<span class="n">${counts[k]||0}</span></button>`
-  ).join("");
+  const counts={all:JOBS.length,active:JOBS.filter(j=>ACTIVE.includes(j.status)).length};
+  STATUSES.forEach(s=>counts[s]=JOBS.filter(j=>j.status===s).length);
+  el("chips").innerHTML=FILTERS.map(([key,label])=>`<button class="chip ${key===filter?"on":""}" data-filter="${esc(key)}">${esc(label)}<span class="n">${counts[key]||0}</span></button>`).join("");
 }
-
 function render(){
-  renderChips();
-  const rows=shown();
-  if(sel>=rows.length) sel=Math.max(0,rows.length-1);
-  el("tb").innerHTML = rows.map((j,i)=>`
-    <tr class="${i===sel?"sel":""}" data-i="${i}">
-      <td><span class="fit ${j.fit}">${esc(j.fit)}</span></td>
-      <td class="role">${esc(j.title)}</td>
-      <td class="co">${esc(j.company)}</td>
-      <td class="co">${esc(j.location)}</td>
-      <td class="co">${esc(j.posted).slice(5)}</td>
-      <td><select data-url="${esc(j.url)}">${STATUSES.map(s=>
-          `<option value="${s}" ${s===j.status?"selected":""}>${s}</option>`).join("")}</select></td>
-      <td class="why" title="${esc(j.why)}">${esc(j.why)}${j.dupes && j.dupes.length
-          ? `<span class="dupe" title="possible duplicate of: ${esc(j.dupes.join(", "))}">· possible dupe</span>` : ""}</td>
-      <td class="note" data-url="${esc(j.url)}" title="click to edit">${esc(j.note)}</td>
-      <td><a class="open" href="${esc(j.open_url || j.url)}" target="_blank" rel="noopener">open ↗</a></td>
-      <td>${runCell(j)}</td>
-    </tr>`).join("");
-  el("empty").hidden = rows.length>0;
-  el("count").textContent = `${rows.length} shown · ${JOBS.length} total`;
-  const s=document.querySelector("tr.sel"); if(s) s.scrollIntoView({block:"nearest"});
+  renderChips();const rows=shown();if(sel>=rows.length)sel=Math.max(0,rows.length-1);
+  el("tb").innerHTML=rows.map((j,i)=>`<tr class="${i===sel?"sel":""}" data-row="${i}">
+    <td><span class="fitword ${esc(j.fit)}">${esc(j.fit||"—")}</span></td>
+    <td class="role" title="${esc(j.title)}">${esc(j.title)}</td><td class="co">${esc(j.company)}</td>
+    <td class="co">${esc(j.location)}</td><td class="co">${esc(j.posted).slice(5)}</td>
+    <td><select data-url="${esc(j.url)}">${STATUSES.map(s=>`<option value="${esc(s)}" ${s===j.status?"selected":""}>${esc(s)}</option>`).join("")}</select></td>
+    <td class="wide-only why" title="${esc(j.why)}">${esc(j.why)}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td>
+    <td class="wide-only note" data-note="${esc(j.url)}">${esc(j.note)}</td></tr>`).join("");
+  el("empty").hidden=rows.length>0;el("count").textContent=`${rows.length} shown · ${JOBS.length} total`;
+  renderJob();document.querySelector("tr.sel")?.scrollIntoView({block:"nearest"});
+}
+function renderJob(){
+  const j=selectedJob(),rows=shown();
+  if(!j){el("jobdetail").innerHTML='<div class="panel-empty">Select a job.</div>';el("jobpos").textContent="";return}
+  el("jobpos").textContent=`${sel+1} of ${rows.length}`;el("jobopen").href=j.open_url||j.url;
+  const statusButtons=["star","yes","maybe","gate","no"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
+  el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitle">${esc(j.title)}</div>
+    <div class="jobmeta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div>
+    <div class="badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge">prefit ${esc(j.score)}</span>`:""}</div></div>
+    <div class="whybox"><span class="label">Why it is here</span>${esc(j.why||"No prefit reason was stored.")}</div>
+    <div class="posting"><span class="label">Posting</span><div class="${j.description?"":"postingempty"}">${esc(j.description||"Posting text is not stored for this row. Open the original posting to read it.")}</div></div>
+    <div class="jobactions"><div class="statusbuttons">${statusButtons}</div>
+      <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
+      <button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button>
+      <div class="hint">runs /apply in the background · you stay on the board</div></div>`;
 }
 
-async function update(url, patch, record){
-  const j = JOBS.find(x=>x.url===url);
-  const prev = j ? j.status : null;
-  const r = await fetch("/api/update?t="+T, {method:"POST",
-    headers:{"Content-Type":"application/json"}, body:JSON.stringify({url, ...patch})});
-  if(!r.ok){ toast("save failed", {warn:true, ms:2500}); return false; }
-  if("status" in patch){
-    if(record!==false && patch.status!==prev)
-      HISTORY.push({url, prev, title:j.title, company:j.company});
-    j.status=patch.status;
-  }
-  if("note" in patch) j.note=patch.note;
-  render(); pollActivity();
-  return true;
+async function update(url,patch,record=true){
+  const j=JOBS.find(x=>x.url===url),prev=j?.status;
+  const response=await fetch("/api/update?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,...patch})});
+  if(!response.ok){toast("save failed",{warn:true,ms:2500});return false}
+  if("status" in patch){if(record&&patch.status!==prev)HISTORY.push({url,prev,title:j.title,company:j.company});j.status=patch.status}
+  if("note" in patch)j.note=patch.note;render();pollActivity();return true;
 }
-
-async function setStatus(s){
-  const j=shown()[sel];
-  if(!j) return;
-  const label = (j.company||j.title||"job");
-  const wasStatus = j.status;
-  if(!await update(j.url,{status:s})) return;
-  if(s==="no")
-    // The only status that removes a job from every future scrape.
-    toast(label+" -> no - it will not come back in a scrape", {undo:true, seconds:8, warn:true});
-  else if(s!==wasStatus)
-    toast(label+" -> "+s);
+async function setStatus(status){
+  const j=selectedJob();if(!j)return;const before=j.status;
+  if(!await update(j.url,{status}))return;
+  if(status==="no")toast((j.company||j.title)+" → no — it will not return in a scrape",{undo:true,seconds:8,warn:true});
+  else if(status!==before)toast((j.company||j.title)+" → "+status);
 }
-
 async function undo(){
-  const last = HISTORY.pop();
-  if(!last){ toast("nothing to undo", {ms:1400}); return; }
-  if(await update(last.url,{status:last.prev}, false))
-    toast("undone: "+(last.company||last.title)+" back to "+last.prev);
+  const last=HISTORY.pop();if(!last){toast("nothing to undo");return}
+  if(await update(last.url,{status:last.prev},false))toast("undone: "+(last.company||last.title)+" back to "+last.prev);
 }
-function editNote(){ const j=shown()[sel]; if(!j) return;
-  const v=prompt("Note for "+j.company+" — "+j.title, j.note||"");
-  if(v!==null) update(j.url,{note:v}).then(ok=>{ if(ok) toast("note saved"); }); }
-
-document.addEventListener("click", e=>{
-  if(e.target.closest("#toastundo")){ undo(); return; }
-  if(e.target.closest("#striptoggle")){ toggleDrawer(); return; }
-  if(e.target.closest("#copylog")){ copyLog(); return; }
-  const actchip=e.target.closest("#actchips .chip");
-  if(actchip){ actFilter=actchip.dataset.f; renderActivity(); return; }
-  const chip=e.target.closest("#chips .chip");
-  if(chip){ filter=chip.dataset.f; sel=0; render(); return; }
-  const note=e.target.closest(".note");
-  if(note){ const j=JOBS.find(x=>x.url===note.dataset.url);
-    const v=prompt("Note for "+j.company+" — "+j.title, j.note||"");
-    if(v!==null) update(j.url,{note:v}).then(ok=>{ if(ok) toast("note saved"); }); return; }
-  const tr=e.target.closest("tr[data-i]");
-  if(tr && !e.target.closest("a")){ sel=+tr.dataset.i; render(); }
-});
-document.addEventListener("change", e=>{
-  if(e.target.tagName==="SELECT" && e.target.dataset.url)
-    update(e.target.dataset.url,{status:e.target.value});
-});
-document.addEventListener("keydown", e=>{
-  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
-  if(e.key==="/" && !typing){ e.preventDefault(); el("q").focus(); return; }
-  if(typing){ if(e.key==="Escape") e.target.blur(); return; }
-  if(e.key==="Escape" && !el("drawer").hidden){ toggleDrawer(); return; }
-  const rows=shown();
-  const K={j:1,ArrowDown:1,k:-1,ArrowUp:-1};
-  if(e.key in K){ e.preventDefault(); sel=Math.min(rows.length-1,Math.max(0,sel+K[e.key])); render(); return; }
-  if(e.key==="Enter"){ const j=rows[sel]; if(j) window.open(j.open_url||j.url,"_blank","noopener"); return; }
-  if(e.key==="e"){ e.preventDefault(); editNote(); return; }
-  if(e.key==="z"){ e.preventDefault(); undo(); return; }
-  const M={s:"star",y:"yes",m:"maybe",n:"no",a:"applied",u:"new",g:"gate"};
-  if(e.key in M){ e.preventDefault(); setStatus(M[e.key]); }
-});
-el("q").addEventListener("input", e=>{ q=e.target.value; sel=0; render(); });
-
-// ---------------------------------------------------------------- fetching
-// One button drives every source. The run happens in a background thread on the
-// server and this polls a status endpoint, rather than holding an HTTP request
-// open for the two minutes a five-vendor sweep can take.
-let POLL=null;
-
-const chosenSources = () =>
-  ["ats","freehire","linkedin"].filter(s=>el("s-"+s).checked);
-
-function fstat(msg, bad){
-  const e=el("fstat");
-  e.textContent=msg||""; e.classList.toggle("bad", !!bad);
+function editNote(j=selectedJob()){
+  if(!j)return;const value=prompt("Note for "+j.company+" — "+j.title,j.note||"");
+  if(value!==null)update(j.url,{note:value}).then(ok=>ok&&toast("note saved"));
 }
 
-async function reloadJobs(){
-  const d = await (await fetch("/api/jobs?t="+T)).json();
-  JOBS=d.jobs; STATUSES=d.statuses; FILTERS=buildFilters(); render();
+function money(value){return "$"+(Math.round((value||0)*100)/100).toFixed(2)}
+function elapsed(run){
+  if(!run.started_at)return "";const end=run.ended_at?new Date(run.ended_at):new Date();
+  const seconds=Math.max(0,Math.round((end-new Date(run.started_at))/1000));
+  if(seconds<90)return seconds+" s";return Math.round(seconds/60)+" min";
 }
-
-async function pollFetch(){
-  const s = await (await fetch("/api/fetch/status?t="+T)).json();
-  pollActivity();
-  if(s.running){
-    const tail=(s.log||[]).slice(-1)[0]||"working…";
-    fstat(tail.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d\s+/,""));
-    return;
-  }
-  clearInterval(POLL); POLL=null;
-  el("fetch").disabled=false;
-  await reloadJobs();
-  const banner=el("degraded");
-  const failed=(s.sources||[]).flatMap(x=>x.failed||[]);
-  if(s.error){ fstat(s.error, true); }
-  else{
-    const added=(s.sources||[]).reduce((n,x)=>n+(x.added||0),0);
-    const gated=(s.sources||[]).reduce((n,x)=>n+(x.gated||0),0);
-    fstat(added+" new · "+gated+" auto-gated on German");
-  }
-  if(failed.length){
-    banner.hidden=false;
-    banner.textContent="Degraded run: "+failed.join(", ")+
-      " did not answer. Their results are missing, everything else was kept, and they are retried first next time.";
-  } else { banner.hidden=true; }
-}
-
-el("fetch").addEventListener("click", async ()=>{
-  const sources=chosenSources();
-  if(!sources.length){ fstat("select at least one source", true); return; }
-  const btn=el("fetch");
-  btn.disabled=true; fstat("starting…");
-  const body={sources,
-    max_companies:+el("mc").value||8,
-    max_new_jobs:+el("mn").value||40,
-    linkedin_detail_fetches:+el("md").value};
-  const r=await fetch("/api/fetch?t="+T,{method:"POST",
-    headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
-  if(!r.ok){ btn.disabled=false; fstat((await r.json()).error||"could not start", true); return; }
-  POLL=setInterval(pollFetch, 2000);
-  pollFetch();
-});
-
-// ---------------------------------------------------------------- activity
-// What the system just did, with the command and the exit code. `(epoch, seq)`
-// is what lets this survive a server restart: a new epoch means the counter
-// reset, so the client takes the whole ring instead of silently suppressing
-// every event whose seq looks older than the one it remembers.
-let EV=[], EPOCH=null, SEQ=0, actFilter="all", COUNTS={};
-
-async function pollActivity(){
-  const url = "/api/activity?t="+T+"&since="+SEQ+(EPOCH?"&epoch="+EPOCH:"");
-  let d;
-  try { d = await (await fetch(url)).json(); } catch(_) { return; }
-  if(d.reset || EPOCH===null){ EV=[]; }
-  EPOCH=d.epoch; SEQ=d.seq; COUNTS=d.counts||{};
-  if(d.events && d.events.length){
-    EV = EV.concat(d.events);
-    if(EV.length>500) EV = EV.slice(-500);
-  }
-  renderStrip();
-  if(!el("drawer").hidden) renderActivity();
-}
-
-function renderStrip(){
-  const last = EV[EV.length-1];
-  el("stripcount").textContent = COUNTS.all || 0;
-  if(!last) return;
-  el("striptag").textContent = last.source;
-  el("striptag").className = "tag "+last.source;
-  el("striptime").textContent = (last.ts||"").slice(11,19);
-  el("stripmsg").textContent = last.cmd ? "$ "+last.cmd : last.msg;
-  el("stripdur").textContent = last.ms!=null ? (last.ms>=1000
-    ? (last.ms/1000).toFixed(2)+" s" : last.ms+" ms") : "";
-  el("strip").classList.toggle("err", last.level==="error");
-}
-
-function renderActivity(){
-  const cats = ["all","collect","board","claude","latex","verify","errors"];
-  el("actchips").innerHTML = cats
-    .filter(c => c==="all" || COUNTS[c])
-    .map(c=>`<button class="chip ${c===actFilter?"on":""}" data-f="${c}">${c}<span class="n">${COUNTS[c]||0}</span></button>`)
-    .join("");
-  const rows = EV.filter(e => actFilter==="all" ? true
-    : actFilter==="errors" ? e.level==="error" : e.source===actFilter);
-  el("actlog").innerHTML = rows.map(e=>{
-    const head = `<div class="ln ${e.level} ${e.cmd?"cmd":""}">`
-      + `<span class="t">${esc((e.ts||"").slice(11,19))}</span>`
-      + `<span class="s ${e.source}">${esc(e.source)}</span>`
-      + `<span class="m">${esc(e.cmd ? "$ "+e.cmd : e.msg)}`
-      + (e.exit!=null && !e.cmd ? "" : "")
-      + (e.ms!=null ? `   ${e.ms} ms` : "") + `</span></div>`;
-    const sub = (e.detail||[]).map(d=>`<div class="ln sub"><span class="m">${esc(d)}</span></div>`).join("");
-    const tail = e.cmd && e.msg ? `<div class="ln ${e.level}"><span class="t"></span>`
-      + `<span class="s"></span><span class="m">${esc(e.msg)}</span></div>` : "";
-    return head + tail + sub;
-  }).join("");
-  if(el("follow").checked) el("actlog").scrollTop = el("actlog").scrollHeight;
-}
-
-function toggleDrawer(){
-  const d=el("drawer");
-  d.hidden = !d.hidden;
-  el("stripcaret").textContent = d.hidden ? "⌃" : "⌄";
-  if(!d.hidden) renderActivity();
-}
-
-function copyLog(){
-  const text = EV.slice(-200).map(e =>
-    [(e.ts||"").slice(11,19), e.source, e.cmd ? "$ "+e.cmd : e.msg,
-     e.exit!=null ? "exit="+e.exit : "", e.ms!=null ? e.ms+"ms" : ""]
-    .filter(Boolean).join("  ")).join("\n");
-  navigator.clipboard.writeText(text).then(
-    ()=>toast("copied "+Math.min(EV.length,200)+" lines"),
-    ()=>toast("could not copy", {warn:true}));
-}
-
-// -------------------------------------------------------------------- runs
-// Tailoring a CV costs money and takes minutes, so the panel never hides what
-// stage a run is in, what it has spent, or what it is about to spend. Pass A
-// evaluates and stops; you approve; pass B drafts. The approve button carries
-// the pass-B figure because that is the only moment the number can change a
-// decision.
-let RUNS=[], QUEUE=[], LEDGER=null, BUDGET=null, RUNPOLL=null;
-
-const RUNNING = ["evaluating","queued","drafting","reviewing","compiling","inspecting"];
-const runByUrl = url => RUNS.find(r => r.job_url===url
-  && (RUNNING.includes(r.phase) || r.phase==="awaiting_approval"));
-
-function runCell(j){
-  const r = runByUrl(j.url);
-  if(!r) return `<button class="linkish tailor" data-url="${esc(j.url)}">Tailor</button>`;
-  if(r.phase==="awaiting_approval")
-    return `<span class="ph await" title="waiting for your approval">approve →</span>`;
-  return `<span class="ph run" title="${esc(r.phase)}">${esc(r.phase.slice(0,6))}…</span>`;
-}
-
-function money(n){ return "$"+(Math.round((n||0)*100)/100).toFixed(2); }
-
-function elapsed(r){
-  if(!r.started_at) return null;
-  const end = r.ended_at ? new Date(r.ended_at) : new Date();
-  const secs = Math.max(0, Math.round((end - new Date(r.started_at))/1000));
-  if(!secs) return null;
-  return secs < 90 ? secs+" s" : Math.round(secs/60)+" min";
-}
-
+function activeRuns(){return RUNS.filter(r=>RUNNING.includes(r.phase)||r.phase==="awaiting_approval"||r.phase==="orphaned")}
 function renderRuns(){
-  const live = RUNS.filter(r => RUNNING.includes(r.phase)
-    || ["awaiting_approval","orphaned"].includes(r.phase));
-  const recent = RUNS.filter(r => !live.includes(r)).slice(0,3);
-  const rows = live.concat(recent);
-  el("runs").hidden = rows.length===0;
-  if(!rows.length) return;
-
-  el("runqueue").textContent = QUEUE.length ? QUEUE.length+" queued" : "";
-  el("runledger").textContent = LEDGER
-    ? money(LEDGER.spent_today_usd)+" spent today of "+money(LEDGER.daily_budget_usd)
-      + (LEDGER.reserved_usd ? " · "+money(LEDGER.reserved_usd)+" committed" : "")
-    : "";
-
-  el("runlist").innerHTML = rows.map(r=>{
-    const fit = r.fit;
-    const head = `<span class="ph ${r.phase}">${esc(r.phase)}</span>`
-      + `<span class="who">${esc(r.role)} · ${esc(r.company)}</span>`;
-    // The brief's transparency requirement, stated for a run: what it cost, how
-    // long it took, and what its process exited with - not just a phase word.
-    // The real argv and the per-tool trace are one click away in the activity
-    // drawer, filtered to `claude`.
-    const facts = [
-      (r.cost && r.cost.total_usd) ? money(r.cost.total_usd) : null,
-      elapsed(r),
-      r.exit_code != null ? "exit "+r.exit_code : null,
-    ].filter(Boolean).join(" · ");
-    const cost = facts ? `<span class="muted">${esc(facts)}</span>` : "";
-    let body = "", actions = "";
-
-    if(r.phase==="awaiting_approval" && fit){
-      const gates = ["language_gate","location_gate"].map(g =>
-        `<span class="gate ${esc(fit[g]||"")}">${g.split("_")[0]} ${esc(fit[g]||"")}</span>`).join("");
-      body = `<div class="fit">`
-        + `<span class="score">${esc(String(fit.overall))}</span>`
-        + `<span class="verdict">${esc(fit.verdict)}</span>${gates}`
-        + `<div class="lists"><div><b>matches</b>${(fit.matches||[]).slice(0,4)
-            .map(m=>`<div>${esc(m)}</div>`).join("")}</div>`
-        + `<div><b>gaps</b>${(fit.gaps||[]).slice(0,4)
-            .map(m=>`<div>${esc(m)}</div>`).join("")}</div></div>`
-        + (fit.language_note ? `<div class="muted">${esc(fit.language_note)}</div>` : "")
-        + `</div>`;
-      actions = `<button class="go approve" data-run="${esc(r.id)}" data-phase="${esc(r.phase)}">`
-        + `Draft it — stops at about ${money(BUDGET && BUDGET.pass_b)}</button>`
-        + `<button class="linkish cancelrun" data-run="${esc(r.id)}">Discard</button>`;
-    } else if(r.phase==="orphaned"){
-      body = `<div class="muted">${esc(r.error||"")}</div>`;
-      actions = `<button class="linkish killrun" data-run="${esc(r.id)}">Kill it</button>`;
-    } else if(RUNNING.includes(r.phase)){
-      actions = `<button class="linkish cancelrun" data-run="${esc(r.id)}">Cancel</button>`;
-    } else if(r.error){
-      body = `<div class="muted">${esc(r.error)}</div>`;
-    } else if(r.artefacts && Object.keys(r.artefacts).length){
-      body = `<div class="muted">${esc(Object.values(r.artefacts).join("  ·  "))}</div>`;
-    }
-    if(RUNNING.includes(r.phase) && r.targets)
-      body += `<div class="muted">→ ${esc(r.targets.cv)}  ·  ${esc(r.targets.cover)}</div>`;
-    return `<div class="run ${esc(r.phase)}"><div class="runrow">${head}`
-      + `<span style="flex:1"></span>${cost}${actions}</div>${body}</div>`;
-  }).join("");
+  const live=activeRuns(),recent=RUNS.filter(r=>!live.includes(r)).slice(0,4),rows=live.concat(recent);
+  el("runqueue").textContent=QUEUE.length?QUEUE.length+" queued":(live.length?live.length+" active":"");
+  el("runledger").textContent=LEDGER?money(LEDGER.spent_today_usd)+" / "+money(LEDGER.daily_budget_usd):"";
+  el("runlist").innerHTML=rows.length?rows.map(r=>{
+    const step=PHASE_STEP[r.phase]||1,pct=Math.round(step/6*100),bad=["failed","orphaned"].includes(r.phase);
+    return `<div class="runitem ${RUNNING.includes(r.phase)?"live":""} ${ACTIVE_RUN===r.id?"selected":""}" data-run="${esc(r.id)}">
+      <div class="runwho"><strong>${esc(r.company)}</strong><span class="runrole">${esc(r.role)}</span></div>
+      <div class="runmeta ${bad?"runerror":""}"><span>${esc(r.phase.replaceAll("_"," "))}</span><span>·</span><span>step ${step}/6</span>${elapsed(r)?`<span>·</span><span>${elapsed(r)}</span>`:""}</div>
+      ${RUNNING.includes(r.phase)?`<div class="runprogress"><span style="width:${pct}%"></span></div>`:""}</div>`;
+  }).join(""):'<div class="panel-empty">No runs yet.</div>';
+  const active=live.find(r=>RUNNING.includes(r.phase))||live[0];el("striprunning").textContent=live.length?live.length+" running":"";
+  if(active){el("runpill").hidden=false;el("runpill").innerHTML=`<span>Tailoring <strong>${esc(active.company)}</strong> · step ${PHASE_STEP[active.phase]||1} of 6</span><span class="elapsed">${elapsed(active)}</span>`;el("runpill").dataset.run=active.id}
+  else el("runpill").hidden=true;
+  renderApplications();
+  if(el("app").classList.contains("tailor-mode")&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
 }
-
+function renderApplications(){
+  const rows=RUNS.slice(0,20);el("applicationcount").textContent=`${rows.filter(r=>r.phase==="done").length} drafted · ${activeRuns().length} active`;
+  el("applicationlist").innerHTML=rows.length?rows.map(r=>`<tr data-run="${esc(r.id)}"><td><span class="role">${esc(r.company)}</span> <span class="co">· ${esc(r.role)}</span></td><td><span class="phase ${esc(r.phase)}">${esc(r.phase.replaceAll("_"," "))}</span></td><td class="co">${r.cost?.total_usd?money(r.cost.total_usd):"—"}</td><td class="co">${esc((r.started_at||"").slice(0,16).replace("T"," "))}</td><td><button class="linkish">Watch run</button></td></tr>`).join(""):'<tr><td colspan="5" class="panel-empty">No applications yet.</td></tr>';
+}
 async function pollRuns(){
-  let d;
-  try { d = await (await fetch("/api/runs?t="+T)).json(); } catch(_) { return; }
-  const before = JSON.stringify(RUNS.map(r=>[r.id,r.phase]));
-  RUNS=d.runs||[]; QUEUE=d.queue||[]; LEDGER=d.ledger; BUDGET=d.budget_usd;
-  renderRuns();
-  // The Tailor cell mirrors run state, so a phase change has to redraw the
-  // table too - otherwise the button stays clickable for a run already going.
-  if(JSON.stringify(RUNS.map(r=>[r.id,r.phase]))!==before) render();
-  const busy = RUNS.some(r=>RUNNING.includes(r.phase)||r.phase==="awaiting_approval");
-  if(busy && !RUNPOLL) RUNPOLL=setInterval(pollRuns, 2000);
-  if(!busy && RUNPOLL){ clearInterval(RUNPOLL); RUNPOLL=null; }
+  let data;try{data=await(await fetch("/api/runs?t="+T)).json()}catch(_){return}
+  const before=JSON.stringify(RUNS.map(r=>[r.id,r.phase]));RUNS=data.runs||[];QUEUE=data.queue||[];LEDGER=data.ledger;BUDGET=data.budget_usd;renderRuns();
+  if(JSON.stringify(RUNS.map(r=>[r.id,r.phase]))!==before)render();
+  const busy=activeRuns().length>0;if(busy&&!RUNPOLL)RUNPOLL=setInterval(pollRuns,2000);if(!busy&&RUNPOLL){clearInterval(RUNPOLL);RUNPOLL=null}
+}
+async function postRun(path,body){
+  const response=await fetch(path+"?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  let data={};try{data=await response.json()}catch(_){}
+  if(!response.ok)toast(data.error||("request failed ("+response.status+")"),{warn:true,ms:6000});
+  await pollRuns();pollActivity();return response.ok;
+}
+function startTailor(url){
+  const j=JOBS.find(x=>x.url===url);if(!j)return;
+  const note=prompt("Anything to tell the drafter about "+j.company+"? (optional — leave empty for none)","");
+  if(note===null)return;
+  postRun("/api/runs",{job_url:url,kind:"apply",note}).then(ok=>ok&&toast("evaluating — you will be asked before it drafts",{ms:3000}));
 }
 
-async function postRun(path, body){
-  const r = await fetch(path+"?t="+T, {method:"POST",
-    headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
-  let d={}; try { d = await r.json(); } catch(_){}
-  if(!r.ok) toast(d.error||("request failed ("+r.status+")"), {warn:true, ms:6000});
-  await pollRuns(); pollActivity();
-  return r.ok;
+const STEPS=[
+  ["Evaluate fit","Posting fetched and scored against your profile. Pauses for your go-ahead."],
+  ["Draft CV + cover letter","Tailors both documents and audits every factual claim."],
+  ["Reviewer critique","A second pass attacks grounding first, then style."],
+  ["Revise","Structured edits are applied; invented facts are skipped."],
+  ["Compile PDFs","Runs the registered document toolchains and page checks."],
+  ["Verify","ATS text extraction and the final verification checklist."]
+];
+function renderTailor(run){
+  if(!run){restoreWorkspace();return}ACTIVE_RUN=run.id;const current=PHASE_STEP[run.phase]||1,fit=run.fit||{};
+  const steps=STEPS.map((s,i)=>{const n=i+1,state=n<current||run.phase==="done"?"done":n===current?"live":"todo";return `<div class="step ${state}"><div class="steprow"><span class="stepdot">${n}</span><div><div class="steptitle">${s[0]}</div><div class="stepdetail">${s[1]}</div></div><span class="steptime">${state==="live"?esc(run.phase.replaceAll("_"," ")):""}</span></div></div>`}).join("");
+  const matches=(fit.matches||[]).map(x=>`<div>${esc(x)}</div>`).join("")||"<div>No structured match list yet.</div>";
+  const gaps=(fit.gaps||[]).map(x=>`<div>${esc(x)}</div>`).join("")||"<div>No structured gap list yet.</div>";
+  const logs=EV.filter(e=>e.source==="claude"||e.source==="latex"||e.source==="verify").slice(-100).map(e=>`<div><span>${esc((e.ts||"").slice(11,19))}</span>&nbsp; ${esc(e.cmd?"$ "+e.cmd:e.msg)}</div>`).join("")||"<div>Waiting for run activity…</div>";
+  el("tailor-view").innerHTML=`<div class="tailor-shell"><section class="pipeline"><div class="panelhead"><span class="label">Pipeline</span><span class="spacer"></span><span class="dim">step ${current} of 6</span></div>${steps}<div class="writing"><div class="label">Writing to</div><div>${esc(run.targets?.cv||"CV target pending")}</div><div>${esc(run.targets?.cover||"Cover-letter target pending")}</div></div></section>
+    <section class="runoutput"><div class="panelhead"><span class="label">Run output</span><span class="spacer"></span><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
+      <div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Fit evaluation — ${esc(fit.verdict||"pending")}${fit.overall!=null?", "+esc(fit.overall):""}</strong><span class="spacer"></span><span class="dim">${run.phase==="awaiting_approval"?"waiting for your approval":""}</span></div>
+      <div class="fitgrid"><div><span class="label">Matches</span>${matches}</div><div><span class="label">Gaps, stated not smoothed</span>${gaps}</div></div></div>
+      <div class="runlog">${logs}</div><div class="runfooter"><button class="secondary" data-restore>Back to board</button><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>
+      ${run.phase==="awaiting_approval"?`<button class="primary approve" data-run-id="${esc(run.id)}" data-phase="${esc(run.phase)}">Draft it — stops at about ${money(BUDGET?.pass_b)}</button>`:""}${RUNNING.includes(run.phase)?`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`:""}</div></section></div>`;
+  openView("tailor",run.company+" · "+run.role);
 }
 
-document.addEventListener("click", e=>{
-  const tailor=e.target.closest(".tailor");
-  if(tailor){
-    const j=JOBS.find(x=>x.url===tailor.dataset.url);
-    const note=prompt("Anything to tell the drafter about "+(j?j.company:"this role")+"? "
-      + "(optional — leave empty for none)", "");
-    if(note===null) return;
-    tailor.disabled=true;
-    postRun("/api/runs", {job_url:tailor.dataset.url, kind:"apply", note})
-      .then(ok=>{ if(ok) toast("evaluating — you will be asked before it drafts", {ms:3000});
-                  else tailor.disabled=false; });
-    return;
-  }
-  const approve=e.target.closest(".approve");
-  if(approve){ approve.disabled=true;
-    postRun("/api/runs/"+approve.dataset.run+"/approve", {phase:approve.dataset.phase})
-      .then(ok=>{ if(!ok) approve.disabled=false; });
-    return; }
-  const cancelrun=e.target.closest(".cancelrun");
-  if(cancelrun){ postRun("/api/runs/"+cancelrun.dataset.run+"/cancel"); return; }
-  const killrun=e.target.closest(".killrun");
-  if(killrun && confirm("Kill the model process this run left behind?"))
-    postRun("/api/runs/"+killrun.dataset.run+"/kill");
+function openView(kind,title=""){
+  const app=el("app");app.classList.remove("expanded-board","expanded-applications","expanded-job","tailor-mode");app.classList.add("expanded",kind==="tailor"?"tailor-mode":"expanded-"+kind);
+  el("tailor-view").hidden=kind!=="tailor";
+  layout.expanded=kind;saveLayout();el("restore").hidden=false;el("brand").textContent=kind==="tailor"?(RUNS.find(r=>r.id===ACTIVE_RUN)?.company||"Tailoring"):"JobFlow";el("local").textContent=title||kind;
+}
+function restoreWorkspace(){
+  const app=el("app");app.classList.remove("expanded","expanded-board","expanded-applications","expanded-job","tailor-mode");el("tailor-view").hidden=true;layout.expanded=null;saveLayout();el("restore").hidden=true;el("brand").textContent="JobFlow";el("local").textContent="local · 127.0.0.1:8765";
+}
+
+// Layout state: user collapses and automatic narrow-window collapses stay distinct.
+const LAYOUT_KEY="jobflow.layout.v1";
+const DEFAULT_LAYOUT={version:1,left:264,right:452,collect:300,applications:208,leftCollapsed:false,rightCollapsed:false,autoLeft:false,autoRight:false,expanded:null};
+function loadLayout(){try{const value=JSON.parse(localStorage.getItem(LAYOUT_KEY));if(value?.version===1)return {...DEFAULT_LAYOUT,...value};localStorage.removeItem(LAYOUT_KEY)}catch(_){try{localStorage.removeItem(LAYOUT_KEY)}catch(__){}}return {...DEFAULT_LAYOUT}}
+let layout=loadLayout();
+function saveLayout(){try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(layout))}catch(_){}}
+function applyLayout(){
+  const app=el("app");app.style.setProperty("--left",layout.left+"px");app.style.setProperty("--right",layout.right+"px");app.style.setProperty("--collect",layout.collect+"px");app.style.setProperty("--applications",layout.applications+"px");
+  app.classList.toggle("left-collapsed",layout.leftCollapsed||layout.autoLeft);app.classList.toggle("right-collapsed",layout.rightCollapsed||layout.autoRight);
+  el("left-rail").classList.toggle("collapsed",layout.leftCollapsed||layout.autoLeft);el("right-rail").classList.toggle("collapsed",layout.rightCollapsed||layout.autoRight);
+  document.querySelector('[data-collapse="left"]').setAttribute("aria-expanded",String(!(layout.leftCollapsed||layout.autoLeft)));document.querySelector('[data-collapse="right"]').setAttribute("aria-expanded",String(!(layout.rightCollapsed||layout.autoRight)));
+  updateSeparatorAria();
+}
+function toggleCollapse(side){
+  const key=side+"Collapsed",auto="auto"+side[0].toUpperCase()+side.slice(1);layout[key]=!layout[key];layout[auto]=false;applyLayout();saveLayout();autoCollapse();
+}
+function resetLayout(){layout={...DEFAULT_LAYOUT};applyLayout();autoCollapse();saveLayout();toast("layout reset")}
+function autoCollapse(){
+  const width=el("workspace").clientWidth||innerWidth;
+  layout.autoRight=!layout.rightCollapsed&&width<layout.left+layout.right+482;
+  layout.autoLeft=!layout.leftCollapsed&&width<(layout.rightCollapsed||layout.autoRight?28:layout.right)+layout.left+482;
+  applyLayout();saveLayout();
+}
+function updateSeparatorAria(){
+  const specs={"left-split":[layout.left,200,420],"right-split":[layout.right,320,640],"left-row-split":[layout.collect,120,Math.max(120,el("left-rail").clientHeight-120)],"centre-row-split":[layout.applications,96,Math.max(96,el("centre").clientHeight-200)]};
+  Object.entries(specs).forEach(([id,[now,min,max]])=>{const node=el(id);node.setAttribute("aria-valuenow",Math.round(now));node.setAttribute("aria-valuemin",min);node.setAttribute("aria-valuemax",Math.round(max))});
+}
+const splitSpecs={
+  "left-split":{key:"left",axis:"x",sign:1,min:200,max:420,def:264},
+  "right-split":{key:"right",axis:"x",sign:-1,min:320,max:640,def:452},
+  "left-row-split":{key:"collect",axis:"y",sign:1,min:120,def:300,max:()=>Math.max(120,el("left-rail").clientHeight-120)},
+  "centre-row-split":{key:"applications",axis:"y",sign:-1,min:96,def:208,max:()=>Math.max(96,el("centre").clientHeight-200)}
+};
+function clampSplit(spec,value){
+  let max=typeof spec.max==="function"?spec.max():spec.max;
+  if(spec.key==="left"){const right=layout.rightCollapsed||layout.autoRight?28:layout.right;max=Math.min(max,el("workspace").clientWidth-right-482)}
+  if(spec.key==="right"){const left=layout.leftCollapsed||layout.autoLeft?28:layout.left;max=Math.min(max,el("workspace").clientWidth-left-482)}
+  return Math.max(spec.min,Math.min(max,value));
+}
+Object.entries(splitSpecs).forEach(([id,spec])=>{
+  const node=el(id);node.addEventListener("pointerdown",event=>{event.preventDefault();node.setPointerCapture(event.pointerId);node.classList.add("dragging");const start=event[spec.axis==="x"?"clientX":"clientY"],before=layout[spec.key];
+    const move=e=>{layout[spec.key]=clampSplit(spec,before+(e[spec.axis==="x"?"clientX":"clientY"]-start)*spec.sign);applyLayout()};
+    const up=()=>{node.classList.remove("dragging");node.removeEventListener("pointermove",move);saveLayout()};
+    node.addEventListener("pointermove",move);node.addEventListener("pointerup",up,{once:true});node.addEventListener("pointercancel",up,{once:true});
+  });
+  node.addEventListener("dblclick",()=>{layout[spec.key]=spec.def;applyLayout();saveLayout()});
+  node.addEventListener("keydown",event=>{const vertical=spec.axis==="x",minus=vertical?"ArrowLeft":"ArrowUp",plus=vertical?"ArrowRight":"ArrowDown";
+    if(event.key==="Home"){event.preventDefault();layout[spec.key]=spec.def}
+    else if(event.key===minus||event.key===plus){event.preventDefault();layout[spec.key]=clampSplit(spec,layout[spec.key]+(event.key===plus?1:-1)*(event.shiftKey?64:16))}
+    else return;applyLayout();saveLayout();
+  });
+});
+applyLayout();autoCollapse();addEventListener("resize",autoCollapse);
+
+// Fetching
+const chosenSources=()=>["ats","freehire","linkedin"].filter(s=>el("s-"+s).checked);
+async function reloadJobs(){const data=await(await fetch("/api/jobs?t="+T)).json();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();render()}
+function renderFetchLog(status){
+  const lines=status.log||[];el("collectlog").innerHTML=lines.length?lines.slice(-12).map(line=>`<div class="${/403|error|failed/i.test(line)?"bad":""}">${esc(line)}</div>`).join(""):'<span class="dim">Collection is running…</span>';
+}
+async function pollFetch(){
+  const status=await(await fetch("/api/fetch/status?t="+T)).json();renderFetchLog(status);pollActivity();
+  if(status.running)return;clearInterval(POLL);POLL=null;el("fetch").disabled=false;await reloadJobs();
+  const failed=(status.sources||[]).flatMap(x=>x.failed||[]),banner=el("degraded");
+  if(failed.length){banner.hidden=false;banner.textContent="Degraded run: "+failed.join(", ")+" did not answer. Everything else was kept."}else banner.hidden=true;
+  el("collectlast").textContent=status.finished_at?"last run "+String(status.finished_at).slice(11,16):"";
+}
+el("fetch").addEventListener("click",async()=>{
+  const sources=chosenSources();if(!sources.length){toast("select at least one source",{warn:true});return}
+  el("fetch").disabled=true;const body={sources,max_companies:+el("mc").value||8,max_new_jobs:+el("mn").value||40,linkedin_detail_fetches:+el("md").value};
+  const response=await fetch("/api/fetch?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!response.ok){el("fetch").disabled=false;toast((await response.json()).error||"could not start",{warn:true});return}
+  POLL=setInterval(pollFetch,2000);pollFetch();
 });
 
-setInterval(pollActivity, 3000);
-setInterval(pollRuns, 6000);
+// Activity strip and drawer
+async function pollActivity(){
+  const url="/api/activity?t="+T+"&since="+SEQ+(EPOCH?"&epoch="+EPOCH:"");let data;try{data=await(await fetch(url)).json()}catch(_){return}
+  if(data.reset||EPOCH===null)EV=[];EPOCH=data.epoch;SEQ=data.seq;COUNTS=data.counts||{};if(data.events?.length)EV=EV.concat(data.events).slice(-500);
+  renderStrip();if(!el("drawer").hidden)renderActivity();if(el("app").classList.contains("tailor-mode")&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
+}
+function renderStrip(){
+  const last=EV.at(-1);el("stripcount").textContent=COUNTS.all||0;if(!last)return;
+  el("striptag").textContent=last.source;el("striptag").className="tag "+last.source;el("striptime").textContent=(last.ts||"").slice(11,19);el("stripmsg").textContent=last.cmd?"$ "+last.cmd:last.msg;el("stripdur").textContent=last.ms!=null?(last.ms>=1000?(last.ms/1000).toFixed(2)+" s":last.ms+" ms"):"";
+}
+function renderActivity(){
+  const cats=["all","collect","board","claude","latex","verify","errors"];el("actchips").innerHTML=cats.filter(c=>c==="all"||COUNTS[c]).map(c=>`<button class="chip ${c===actFilter?"on":""}" data-act-filter="${c}">${c}<span class="n">${COUNTS[c]||0}</span></button>`).join("");
+  const rows=EV.filter(e=>actFilter==="all"||actFilter==="errors"&&e.level==="error"||e.source===actFilter);
+  el("actlog").innerHTML=rows.map(e=>`<div class="ln ${esc(e.level)}"><span class="t">${esc((e.ts||"").slice(11,19))}</span><span class="s">${esc(e.source)}</span><span class="m">${esc(e.cmd?"$ "+e.cmd:e.msg)}${e.ms!=null?"  "+e.ms+" ms":""}</span></div>`).join("");
+  if(el("follow").checked)el("actlog").scrollTop=el("actlog").scrollHeight;
+}
+function toggleDrawer(){el("drawer").hidden=!el("drawer").hidden;el("stripcaret").textContent=el("drawer").hidden?"⌃":"⌄";if(!el("drawer").hidden)renderActivity()}
+function copyLog(){const text=EV.slice(-200).map(e=>[(e.ts||"").slice(11,19),e.source,e.cmd?"$ "+e.cmd:e.msg].join("  ")).join("\n");navigator.clipboard.writeText(text).then(()=>toast("copied "+Math.min(EV.length,200)+" lines"),()=>toast("could not copy",{warn:true}))}
 
-fetch("/api/jobs?t="+T).then(r=>r.json()).then(d=>{
-  JOBS=d.jobs; STATUSES=d.statuses; FILTERS=buildFilters(); render();
-  pollActivity(); pollRuns();
-  // A fetch started before this page loaded may still be running.
-  fetch("/api/fetch/status?t="+T).then(r=>r.json()).then(s=>{
-    if(s.running){ el("fetch").disabled=true; POLL=setInterval(pollFetch,2000); }
-  });
+document.addEventListener("click",event=>{
+  if(event.target.closest("#toastundo"))return void undo();
+  if(event.target.closest("#striptoggle"))return void toggleDrawer();
+  if(event.target.closest("#copylog"))return void copyLog();
+  if(event.target.closest("#restore,[data-restore]"))return void restoreWorkspace();
+  const collapse=event.target.closest("[data-collapse]");if(collapse)return void toggleCollapse(collapse.dataset.collapse);
+  const expand=event.target.closest("[data-expand]");if(expand){const kind=expand.dataset.expand;if(kind==="board"||kind==="applications"||kind==="job")openView(kind);return}
+  const chip=event.target.closest("[data-filter]");if(chip){filter=chip.dataset.filter;sel=0;render();return}
+  const act=event.target.closest("[data-act-filter]");if(act){actFilter=act.dataset.actFilter;renderActivity();return}
+  const status=event.target.closest("[data-status]");if(status)return void setStatus(status.dataset.status);
+  const note=event.target.closest("[data-note]");if(note)return void editNote(JOBS.find(j=>j.url===note.dataset.note));
+  const tailor=event.target.closest("[data-tailor]");if(tailor)return void startTailor(tailor.dataset.tailor);
+  const runNode=event.target.closest("[data-run]");if(runNode){const run=RUNS.find(r=>r.id===runNode.dataset.run);if(run)renderTailor(run);return}
+  const pill=event.target.closest("#runpill");if(pill){const run=RUNS.find(r=>r.id===pill.dataset.run);if(run)renderTailor(run);return}
+  const approve=event.target.closest(".approve");if(approve){approve.disabled=true;postRun("/api/runs/"+approve.dataset.runId+"/approve",{phase:approve.dataset.phase});return}
+  const cancel=event.target.closest(".cancelrun");if(cancel){postRun("/api/runs/"+cancel.dataset.runId+"/cancel");return}
+  const row=event.target.closest("tr[data-row]");if(row&&!event.target.closest("select")){sel=+row.dataset.row;render()}
+});
+document.addEventListener("change",event=>{
+  if(event.target.matches("select[data-url]"))update(event.target.dataset.url,{status:event.target.value});
+  if(event.target.matches("[data-note-input]"))update(event.target.dataset.noteInput,{note:event.target.value}).then(ok=>ok&&toast("note saved"));
+});
+document.addEventListener("keydown",event=>{
+  const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
+  if(event.key==="/"&&!typing){event.preventDefault();el("q").focus();return}
+  if(typing){if(event.key==="Escape")event.target.blur();return}
+  if(event.key==="Escape"&&!el("drawer").hidden){toggleDrawer();return}
+  if(event.key==="Escape"&&el("app").classList.contains("expanded")){restoreWorkspace();return}
+  if(event.key==="["){event.preventDefault();toggleCollapse("left");return}
+  if(event.key==="]"){event.preventDefault();toggleCollapse("right");return}
+  if(event.key==="\\"){event.preventDefault();resetLayout();return}
+  const rows=shown(),move={j:1,ArrowDown:1,k:-1,ArrowUp:-1};
+  if(event.key in move){event.preventDefault();sel=Math.min(rows.length-1,Math.max(0,sel+move[event.key]));render();return}
+  if(event.key==="Enter"){const j=selectedJob();if(j)open(j.open_url||j.url,"_blank","noopener");return}
+  if(event.key==="e"){event.preventDefault();editNote();return}if(event.key==="t"){event.preventDefault();const j=selectedJob();if(j)startTailor(j.url);return}
+  if(event.key==="z"){event.preventDefault();undo();return}
+  const map={s:"star",y:"yes",m:"maybe",n:"no",a:"applied",u:"new",g:"gate"};if(event.key in map){event.preventDefault();setStatus(map[event.key])}
+});
+el("q").addEventListener("input",event=>{q=event.target.value;sel=0;render()});
+
+setInterval(pollActivity,3000);setInterval(pollRuns,6000);
+Promise.all([reloadJobs(),pollActivity(),pollRuns()]).then(()=>{
+  if(layout.expanded==="board"||layout.expanded==="applications"||layout.expanded==="job")openView(layout.expanded);
+  else if(layout.expanded==="tailor"&&activeRuns()[0])renderTailor(activeRuns()[0]);
+  else if(layout.expanded){layout.expanded=null;saveLayout()}
+  fetch("/api/fetch/status?t="+T).then(r=>r.json()).then(status=>{renderFetchLog(status);if(status.running){el("fetch").disabled=true;POLL=setInterval(pollFetch,2000)}});
 });

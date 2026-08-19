@@ -2,85 +2,94 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="board-token" content="__TOKEN__">
-<title>Job Board</title>
+<title>JobFlow</title>
 <link rel="stylesheet" href="/static/app.css">
 </head><body>
-<div class="banner" id="degraded" hidden></div>
-<header>
-  <div class="row1">
-    <h1>Job Board</h1>
-    <div class="chips" id="chips"></div>
-    <input type="search" id="q" placeholder="filter by role, company, location…">
-  </div>
-  <div class="row2">
-    <button class="go" id="fetch">Fetch new jobs</button>
-    <label class="src"><input type="checkbox" id="s-ats" checked> ATS boards</label>
-    <label class="src"><input type="checkbox" id="s-freehire" checked> freehire</label>
-    <label class="src"><input type="checkbox" id="s-linkedin" checked> LinkedIn</label>
-    <details class="adv"><summary style="cursor:pointer">advanced</summary>
-      <span class="adv" style="margin-left:8px">
-        companies <input type="number" id="mc" value="8" min="1" max="20">
-        rows <input type="number" id="mn" value="40" min="1" max="200">
-        LinkedIn details <input type="number" id="md" value="15" min="0" max="20">
-      </span>
-    </details>
-    <span id="fstat"></span>
-  </div>
-</header>
-<!-- Runs. Hidden until there is something to say, because an empty panel above
-     the table costs the triage view screen space it needs more. -->
-<section id="runs" hidden>
-  <div class="runshead">
-    <span class="lab">Runs</span>
-    <span id="runqueue" class="muted"></span>
-    <span style="flex:1"></span>
-    <span id="runledger" class="muted"></span>
-  </div>
-  <div id="runlist"></div>
-</section>
+<div class="app" id="app">
+  <div class="banner" id="degraded" hidden></div>
+  <header class="appbar">
+    <button class="back" id="restore" hidden aria-label="Restore workspace">← <span>Board</span></button>
+    <div class="brand" id="brand">JobFlow</div>
+    <div class="local" id="local">local · 127.0.0.1:8765</div>
+    <div class="spacer"></div>
+    <button class="runpill" id="runpill" hidden></button>
+    <div class="build" id="buildstamp"></div>
+  </header>
 
-<table><thead><tr>
-  <th style="width:52px">Fit</th><th>Role</th><th style="width:15%">Company</th>
-  <th style="width:11%">Location</th><th style="width:74px">Posted</th>
-  <th style="width:96px">Status</th><th>Why</th><th style="width:16%">My notes</th>
-  <th style="width:46px"></th><th style="width:62px"></th>
-</tr></thead><tbody id="tb"></tbody></table>
-<div class="empty" id="empty" hidden>Nothing here.</div>
+  <main class="workspace" id="workspace">
+    <aside class="rail left-rail" id="left-rail">
+      <button class="spine" data-collapse="left" aria-expanded="true"><span>Collect · Runs</span><b>›</b></button>
+      <section class="panel collect-panel" id="collect-panel">
+        <div class="panelhead"><span class="label">Collect</span><span class="spacer"></span><span id="collectlast" class="dim"></span></div>
+        <div class="collectbody">
+          <label class="source"><input type="checkbox" id="s-ats" checked> <span>ATS boards</span></label>
+          <label class="source"><input type="checkbox" id="s-freehire" checked> <span>freehire</span></label>
+          <label class="source"><input type="checkbox" id="s-linkedin" checked> <span>LinkedIn</span></label>
+          <div class="collectopts">
+            <label>companies / click <input type="number" id="mc" value="8" min="1" max="20"></label>
+            <label>new rows cap <input type="number" id="mn" value="40" min="1" max="200"></label>
+            <label>LinkedIn details <input type="number" id="md" value="15" min="0" max="20"></label>
+          </div>
+          <button class="primary" id="fetch">↻&nbsp; Fetch new jobs</button>
+        </div>
+        <div class="collectlog" id="collectlog"><span class="dim">No collection run in this session.</span></div>
+      </section>
+      <div class="splitter horizontal" id="left-row-split" role="separator" tabindex="0" aria-label="Resize Collect and Runs" aria-orientation="horizontal"></div>
+      <section class="panel runs-panel" id="runs">
+        <div class="panelhead"><span class="label">Runs</span><span id="runqueue" class="count"></span><span class="spacer"></span><span id="runledger" class="dim"></span></div>
+        <div id="runlist" class="runlist"><div class="panel-empty">No runs yet.</div></div>
+      </section>
+    </aside>
+    <div class="splitter vertical" id="left-split" role="separator" tabindex="0" aria-label="Resize Collect and Runs" aria-orientation="vertical"></div>
+    <div class="centre" id="centre">
+      <section class="panel board-panel" id="board-panel">
+        <div class="panelhead">
+          <span class="label">Board</span><span class="count" id="count"></span><span class="spacer"></span>
+          <label class="search"><span>⌕</span><input type="search" id="q" placeholder="filter by role, company…"></label>
+          <button class="secondary expand" data-expand="board">↗ Expand</button>
+        </div>
+        <div class="chips" id="chips"></div>
+        <div class="tablewrap">
+          <table class="jobtable"><thead><tr>
+            <th class="fitcol">Fit</th><th>Role</th><th class="companycol">Company</th>
+            <th class="locationcol">Location</th><th class="postedcol">Posted</th><th class="statuscol">Status</th>
+            <th class="wide-only whycol">Why</th><th class="wide-only notescol">My notes</th>
+          </tr></thead><tbody id="tb"></tbody></table>
+          <div class="panel-empty" id="empty" hidden>Nothing here.</div>
+        </div>
+        <div class="keybar">
+          <span><kbd>j</kbd><kbd>k</kbd> move</span>
+          <span><kbd>s</kbd> star <kbd>y</kbd> yes <kbd>m</kbd> maybe <kbd>n</kbd> no <kbd>g</kbd> gate <kbd>a</kbd> applied <kbd>u</kbd> new</span>
+          <span><kbd>e</kbd> note</span><span><kbd>t</kbd> tailor</span><span><kbd>z</kbd> undo</span><span><kbd>enter</kbd> open</span><span><kbd>/</kbd> search</span>
+        </div>
+      </section>
+      <div class="splitter horizontal" id="centre-row-split" role="separator" tabindex="0" aria-label="Resize Board and Applications" aria-orientation="horizontal"></div>
+      <section class="panel applications-panel" id="applications-panel">
+        <div class="panelhead"><span class="label">Applications</span><span class="count" id="applicationcount"></span><span class="spacer"></span><button class="secondary expand" data-expand="applications">↗ Expand</button></div>
+        <div class="tablewrap"><table class="apptable"><thead><tr><th>Company · Role</th><th>Phase</th><th>Cost</th><th>Started</th><th></th></tr></thead><tbody id="applicationlist"></tbody></table></div>
+      </section>
+    </div>
+    <div class="splitter vertical" id="right-split" role="separator" tabindex="0" aria-label="Resize Job" aria-orientation="vertical"></div>
+    <aside class="rail right-rail" id="right-rail">
+      <button class="spine" data-collapse="right" aria-expanded="true"><b>‹</b><span>Job</span></button>
+      <section class="panel job-panel" id="job-panel">
+        <div class="panelhead"><span class="label">Job</span><span class="count" id="jobpos"></span><span class="spacer"></span><a class="open" id="jobopen" target="_blank" rel="noopener">open posting ↗</a><button class="secondary expand" data-expand="job">↗ Expand</button></div>
+        <div id="jobdetail" class="jobdetail"><div class="panel-empty">Select a job.</div></div>
+      </section>
+    </aside>
+  </main>
 
-<!-- The activity drawer, collapsed. What the system just did, with the command
-     and the exit code, so a wrong answer is debuggable rather than mysterious. -->
-<section id="drawer" hidden>
-  <div class="drawerhead">
-    <span class="lab">Activity</span>
-    <div class="chips" id="actchips"></div>
-    <span style="flex:1"></span>
-    <label class="src"><input type="checkbox" id="follow" checked> follow</label>
-    <button class="linkish" id="copylog">Copy last 200</button>
+  <section id="tailor-view" class="parked-view" hidden></section>
+  <section id="drawer" hidden>
+    <div class="drawerhead"><span class="label">Activity</span><div class="chips" id="actchips"></div><span class="spacer"></span><label class="source"><input type="checkbox" id="follow" checked> follow</label><button class="linkish" id="copylog">Copy last 200</button></div>
+    <div id="actlog"></div>
+    <div class="drawerfoot"><span>job_scraper/activity.jsonl</span><span>job_scraper/scrape.log</span><span>job_scraper/fetch_status.json</span><span class="spacer"></span><span>a tail of those files — nothing is invented for the UI</span></div>
+  </section>
+  <div id="strip">
+    <span class="tag" id="striptag">server</span><span class="time" id="striptime"></span><span class="msg" id="stripmsg">starting…</span><span class="spacer"></span><span id="striprunning"></span><span class="dur" id="stripdur"></span>
+    <button class="linkish" id="striptoggle">Activity <span class="n" id="stripcount">0</span> <span id="stripcaret">⌃</span></button>
   </div>
-  <div id="actlog"></div>
-  <div class="drawerfoot">
-    <span>job_scraper/activity.jsonl</span><span>job_scraper/scrape.log</span>
-    <span>job_scraper/fetch_status.json</span>
-    <span style="margin-left:auto">a tail of those files — nothing is invented for the UI</span>
-  </div>
-</section>
-
-<footer>
-  <span><kbd>j</kbd><kbd>k</kbd> move</span>
-  <span><kbd>s</kbd> star <kbd>y</kbd> yes <kbd>m</kbd> maybe <kbd>n</kbd> no <kbd>g</kbd> gate <kbd>a</kbd> applied <kbd>u</kbd> new</span>
-  <span><kbd>e</kbd> note</span><span><kbd>z</kbd> undo</span><span><kbd>enter</kbd> open posting</span>
-  <span><kbd>/</kbd> search</span><span id="count"></span>
-</footer>
-
-<div id="strip">
-  <span class="tag" id="striptag">server</span>
-  <span class="time" id="striptime"></span>
-  <span class="msg" id="stripmsg">starting…</span>
-  <span style="flex:1"></span>
-  <span class="dur" id="stripdur"></span>
-  <button class="linkish" id="striptoggle">Activity <span class="n" id="stripcount">0</span> <span id="stripcaret">⌃</span></button>
 </div>
-
 <div id="toast"><span id="toastmsg"></span><button id="toastundo" hidden>Undo <span id="toastsec"></span></button></div>
 <script src="/static/app.js"></script>
 </body></html>
