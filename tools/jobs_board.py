@@ -179,8 +179,10 @@ def start_fetch(payload):
             except (TypeError, ValueError):
                 return default
 
-        max_companies = bounded("max_companies", 8, 1, 20)
-        max_new_jobs = bounded("max_new_jobs", 40, 1, 200)
+        max_companies = bounded("max_companies", fetch_jobs.ATS_COMPANY_DEFAULT,
+                                1, fetch_jobs.ATS_COMPANY_CEILING)
+        max_new_jobs = bounded("max_new_jobs", fetch_jobs.ATS_NEW_JOBS_DEFAULT,
+                               1, fetch_jobs.ATS_NEW_JOBS_CEILING)
         detail_fetches = bounded("linkedin_detail_fetches", fetch_jobs.LINKEDIN_DETAIL_DEFAULT,
                                  0, fetch_jobs.LINKEDIN_DETAIL_CEILING)
         FETCH.update({"running": True, "log": [], "sources": [], "error": None, "finished_at": None})

@@ -1,5 +1,6 @@
 ---
 name: jobindex-search
+enabled: false  # Denmark-only portal; disabled for the current DACH/EU search market
 version: 1.0.0
 description: >
   Make sure to use this skill whenever the user wants to search for jobs in Denmark,

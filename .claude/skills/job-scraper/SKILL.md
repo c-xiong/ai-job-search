@@ -51,6 +51,35 @@ Optional arguments:
 
 Read `search-queries.md` (this directory) for the search strategy. By default, run the top 3 priority query categories. If the user said "broad", run all categories. If the user specified a focus area (e.g. "data science"), prioritize queries from that category.
 
+#### Binding run budget
+
+The search should be broad enough to find work, but one invocation must never grow
+with the number of installed portals, queries, or hits without a ceiling. Unless the
+user explicitly supplies a different numeric budget, every normal, focused, and `broad`
+run uses these hard limits:
+
+- **12 keyword-search calls total** across all portals, plus the one permitted
+  whole-board `ats-search` call. WebSearch fallbacks and health probes count against
+  the same 12-call budget; a failed CLI does not create a free extra search.
+- **15 results per keyword-search call.** An explicitly requested `broad` run may use
+  20 per call, but does not lift any other ceiling.
+- **60 deduplicated, previously unseen candidates** may enter Steps 2 and 3. Select
+  them using target-company priority, title relevance, and recency; report the number
+  deferred. Deferred candidates are not marked seen, so a later focused run can still
+  evaluate them.
+- **15 `detail` / WebFetch calls total**, after deduplication and only for candidates
+  likely to be high or medium fit. Inline descriptions cost no extra request but do
+  not lift the 60-candidate assessment ceiling.
+- **30 jobs presented maximum.** Store assessed overflow normally, but keep the user
+  report compact and state how many additional new rows were stored.
+- **At most 3 Agent tasks**, partitioned by portal batch. Never spawn an Agent per
+  query or per posting.
+
+Reaching a ceiling is a normal bounded result, not a failure: stop that class of work,
+keep completed results, and report `budget reached` with used/deferred counts. Only an
+explicit numeric instruction from the user may change these limits; the word `broad`
+alone never means unbounded.
+
 **Use the installed CLI tools as the primary search mechanism.** Fall back to `WebSearch` only for portals that do not have a CLI skill, or if `bun` is unavailable on the system.
 
 #### 1a. Check bun availability
@@ -72,7 +101,7 @@ For each **enabled** portal skill:
 1. Read its `SKILL.md` to find the correct `bun run …` invocation and supported flags.
 2. Translate the query terms from `search-queries.md` into that portal's flag format (e.g. `--key`, `--search-string`, `--query`, filter codes — whatever the portal's SKILL.md specifies).
 3. Scope to the last 14 days using the portal's supported recency flag (`--jobage`, `--since <YYYY-MM-DD>`, `--order PublicationDate`, etc. — as documented per portal).
-4. Cap results to ~20 per call using the portal's limit flag.
+4. Cap results to 15 per call (20 only for an explicitly requested `broad` run) using the portal's limit flag.
 5. Use `--format json` for machine-readable output.
 
 **A portal whose `SKILL.md` states a single-call rule gets exactly one invocation per run.** Not every source is keyword-driven: a whole-board source (`ats-search`) fetches complete job boards and filters locally, so translating each query category into its own invocation multiplies real HTTP requests by the number of categories and returns the same rows every time. Where the portal's docs say "call this once per run", step 2 above does not apply to it — pass its own selection flags instead, and use `-q` (if it has one) as a local filter on what came back.

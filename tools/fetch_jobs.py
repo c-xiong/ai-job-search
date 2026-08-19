@@ -45,6 +45,11 @@ STATUS = ROOT / "job_scraper" / "fetch_status.json"
 
 SOURCES = ("ats", "freehire", "linkedin")
 
+ATS_COMPANY_DEFAULT = 8
+ATS_COMPANY_CEILING = 20
+ATS_NEW_JOBS_DEFAULT = 40
+ATS_NEW_JOBS_CEILING = 200
+
 # LinkedIn is the one source that costs a request per new posting, to read the
 # description the German screen needs. 15 per run by default, and never more
 # than 20 - the ceiling is not configurable upward on purpose.
@@ -200,19 +205,22 @@ def _screened_rows(found, budget, log, known_urls):
     return rows
 
 
-def _bound(explicit, cfg_block, key, default):
+def _bound(explicit, cfg_block, key, default, low=None, high=None):
     """Explicit argument first, then config, then the built-in default.
 
     The other order is a trap: the UI sends "fetch 1 company", config says 8, and
     eight boards get fetched while the response reports 1.
     """
-    if explicit is not None:
-        return int(explicit)
-    value = (cfg_block or {}).get(key)
+    value = explicit if explicit is not None else (cfg_block or {}).get(key, default)
     try:
-        return int(value)
+        value = int(value)
     except (TypeError, ValueError):
-        return default
+        value = default
+    if low is not None:
+        value = max(low, value)
+    if high is not None:
+        value = min(value, high)
+    return value
 
 
 def load_seen():
@@ -252,8 +260,10 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
             ats_cfg = cfg.get("ats", {}) or {}
             ats_rows, ats_meta = ats_fetch.collect(
                 log,
-                max_companies=_bound(max_companies, ats_cfg, "max_companies", 8),
-                max_new_jobs=_bound(max_new_jobs, ats_cfg, "max_new_jobs", 40),
+                max_companies=_bound(max_companies, ats_cfg, "max_companies",
+                                     ATS_COMPANY_DEFAULT, 1, ATS_COMPANY_CEILING),
+                max_new_jobs=_bound(max_new_jobs, ats_cfg, "max_new_jobs",
+                                    ATS_NEW_JOBS_DEFAULT, 1, ATS_NEW_JOBS_CEILING),
                 dry_run=dry_run,
                 known_ids=ats_fetch.known_ids_from(load_seen()),
             )

@@ -90,6 +90,12 @@ class ExplicitBoundsTest(unittest.TestCase):
         self.assertEqual(fetch_jobs._bound(None, {}, "max_companies", 8), 8)
         self.assertEqual(fetch_jobs._bound(None, {"max_companies": "many"}, "max_companies", 8), 8)
 
+    def test_core_bounds_cannot_be_bypassed_from_terminal_or_config(self):
+        self.assertEqual(fetch_jobs._bound(9999, {}, "max_companies", 8, 1, 20), 20)
+        self.assertEqual(fetch_jobs._bound(None, {"max_new_jobs": 9999},
+                                           "max_new_jobs", 40, 1, 200), 200)
+        self.assertEqual(fetch_jobs._bound(0, {}, "max_companies", 8, 1, 20), 1)
+
     def test_the_ui_asking_for_one_company_gets_one(self):
         asked = {}
         real_collect = fetch_jobs.ats_fetch.collect

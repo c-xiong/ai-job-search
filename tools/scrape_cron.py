@@ -71,9 +71,9 @@ def collect(cfg):
     return found
 
 
-def screen(record):
+def screen(record, budget=None):
     """Fetch the posting and apply the German screen. Returns (status, note)."""
-    return collectors.screen(record, log)
+    return collectors.screen(record, log, budget)
 
 
 def main():
@@ -94,7 +94,15 @@ def main():
     fresh = {u: r for u, r in found.items() if u not in known}
     log("  %d results, %d already known, %d new"
         % (len(found), len(found) - len(fresh), len(fresh)))
-    screened = {url: screen(rec) for url, rec in fresh.items()}
+    try:
+        detail_limit = int(cfg.get("linkedin_max_detail_fetches", 15))
+    except (TypeError, ValueError):
+        detail_limit = 15
+    detail_budget = collectors.Budget(max(0, min(detail_limit, 20)))
+    screened = {url: screen(rec, detail_budget) for url, rec in fresh.items()}
+    if detail_budget.deferred:
+        log("  %d LinkedIn postings deferred after the detail budget (%d) was spent"
+            % (detail_budget.deferred, detail_budget.limit))
 
     if args.dry_run:
         gated = sum(1 for status, _ in screened.values() if status == "gate")
