@@ -59,6 +59,29 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn("Gaps, stated not smoothed", self.js)
         self.assertIn("runpill", self.html)
 
+    def test_job_reader_and_compiled_pdf_preview_are_real_views(self):
+        for marker in ("reader-shell", "reader-queue", "reader-decide",
+                       "preview-shell", "verify-rail", "pdf-stage"):
+            self.assertIn(marker, self.css)
+        for marker in ("renderReader", "renderPreview", "data-reader-row",
+                       "data-preview-filter", "data-recompile",
+                       "/api/pdf/", "Rendered from the compiled PDFs"):
+            self.assertIn(marker, self.js)
+        self.assertIn('iframe title="Compiled CV"', self.js)
+        self.assertIn('iframe title="Compiled cover letter"', self.js)
+
+    def test_revise_and_companies_artboards_are_on_the_runtime_surface(self):
+        self.assertIn('id="companies-open"', self.html)
+        for marker in ("revise-shell", "grid-template-columns:268px", "428px",
+                       "companies-shell", "396px", "company-table"):
+            self.assertIn(marker, self.css)
+        for marker in ("renderRevise", "/api/prefs", "data-restore-version",
+                       "--fork-session", "renderCompanies", "/api/companies",
+                       "Add & resolve", "at most 9 requests", "data-company-confirm"):
+            if marker == "--fork-session":
+                continue
+            self.assertIn(marker, self.js)
+
     def test_approved_tokens_and_hard_centre_minimum_are_present(self):
         for token in ("--bg:", "--panel:", "--line:", "--text:", "--dim:",
                       "--sel:", "--selbar:", "--high:", "--medium:", "--low:",

@@ -67,10 +67,12 @@ OWNER = uuid.uuid4().hex[:12]
 DEFAULT_CONFIG = {
     # "stops at about", not "will not exceed": `--max-budget-usd` stops the run
     # after the turn that crosses the line, ~1.75x over in the measured sample.
-    "budget_usd": {"pass_a": 0.40, "pass_b": 2.00, "revise": 1.00, "redraft": 1.50},
+    "budget_usd": {"pass_a": 0.40, "pass_b": 2.00, "pass_c": 0.35,
+                   "revise": 1.00, "redraft": 1.50},
     "daily_budget_usd": 10.0,
     "session_budget_usd": 6.0,
-    "timeout_s": {"pass_a": 300, "pass_b": 900},
+    "timeout_s": {"pass_a": 300, "pass_b": 900, "pass_c": 300},
+    "inspection_enabled": True,
     "canary_timeout_s": 120,
     "queue_depth": 5,
     "claude_bin": "claude",
@@ -282,6 +284,10 @@ def reserved(data=None):
         if run.get("phase") in TERMINAL:
             continue
         budget = run.get("budget_usd") or {}
+        if run.get("kind") in ("revise", "redraft"):
+            spent = float((run.get("cost") or {}).get("total_usd", 0.0))
+            total += max(0.0, sum(float(v or 0) for v in budget.values()) - spent)
+            continue
         pass_b = float(budget.get("pass_b", 0.0))
         if run.get("fit"):
             total += pass_b

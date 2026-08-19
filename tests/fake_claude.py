@@ -33,6 +33,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 RUN_DIR = Path(os.environ.get("JOBFLOW_RUN_DIR", "."))
@@ -51,7 +52,13 @@ def mode(argv):
     chosen = os.environ.get("FAKE_MODE", "auto")
     if chosen != "auto":
         return chosen
-    return "draft" if "Continue from Step 2" in prompt_of(argv) else "fit"
+    prompt = prompt_of(argv)
+    if "Inspect the two compiled PDFs" in prompt:
+        return "inspect"
+    if "Apply only the following verified visual-layout repairs" in prompt:
+        return "repair"
+    return "draft" if ("Continue from Step 2" in prompt or
+                       "Resume this application" in prompt) else "fit"
 
 
 def prompt_of(argv):
@@ -107,6 +114,8 @@ def main():
     for flag in ("--session-id", "--resume"):
         if flag in argv:
             session = argv[argv.index(flag) + 1]
+    if "--fork-session" in argv:
+        session = str(uuid.uuid4())
     emit({"type": "system", "subtype": "init", "session_id": session,
           "tools": ["Read", "Write"]})
 
@@ -127,12 +136,48 @@ def main():
     write_through_guard(found.group(1) if found else RUN_DIR / ".guard-probe-missing",
                         "probe")
 
+    if chosen == "inspect":
+        paths = re.findall(r"- (?:CV|Cover): `([^`]+)`", prompt)
+        if os.environ.get("FAKE_INSPECT") == "noread":
+            paths = []
+        for index, path in enumerate(paths):
+            ident = "read-%d" % index
+            emit({"type": "assistant", "message": {"content": [{
+                "type": "tool_use", "id": ident, "name": "Read",
+                "input": {"file_path": path}}]}})
+            emit({"type": "user", "message": {"content": [{
+                "type": "tool_result", "tool_use_id": ident, "is_error": False,
+                "content": "PDF rendered"}]}})
+        verdict = os.environ.get("FAKE_INSPECT", "clean")
+        if verdict == "noread":
+            verdict = "clean"
+        issues = [] if verdict == "clean" else [{
+            "doc": "cv", "page": 2, "kind": "orphaned heading",
+            "fix_hint": "add needspace"}]
+        write_through_guard(RUN_DIR / "inspect.json", json.dumps({
+            "schema": "jobflow.inspect/1", "verdict": verdict, "issues": issues}))
+        emit({"type": "result", "subtype": "success", "is_error": False,
+              "result": "inspected", "total_cost_usd": 0.08, "session_id": session})
+        return 0
+
+    if chosen == "repair":
+        for path in (os.environ["JOBFLOW_CV_TARGET"], os.environ["JOBFLOW_COVER_TARGET"]):
+            write_through_guard(path, "%% repaired at %s\n" % time.time())
+        emit({"type": "result", "subtype": "success", "is_error": False,
+              "result": "repaired", "total_cost_usd": 0.08, "session_id": session})
+        return 0
+
     if chosen == "draft":
         cv = os.environ["JOBFLOW_CV_TARGET"]
         cover = os.environ["JOBFLOW_COVER_TARGET"]
         emit({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Task", "input": {"description": "reviewer"}}]}})
-        for path in (cv, cover):
+        selected = (cv, cover)
+        if "Scope: cv." in prompt:
+            selected = (cv,)
+        elif "Scope: cover." in prompt:
+            selected = (cover,)
+        for path in selected:
             if not write_through_guard(path, "%% draft for %s at %s\n" % (path, time.time())):
                 emit({"type": "result", "subtype": "success", "is_error": True,
                       "result": "guard refused %s" % path, "total_cost_usd": 0.5,

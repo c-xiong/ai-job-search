@@ -71,3 +71,7 @@ a hard no, not a gap to smooth over. -->
 - [NAME], [TITLE], [COMPANY] ([EMAIL], [PHONE])
 
 More references available upon request.
+
+<!-- JOBFLOW-PREFS:BEGIN -->
+<!-- Standing application preferences added explicitly through the JobFlow board. -->
+<!-- JOBFLOW-PREFS:END -->

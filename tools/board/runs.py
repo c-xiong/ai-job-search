@@ -64,7 +64,7 @@ except ImportError:  # pragma: no cover - Windows
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import jobs_md  # noqa: E402
 
-from . import activity, run_guard, run_proc, run_registry, templates  # noqa: E402
+from . import activity, docs, run_guard, run_proc, run_registry, templates  # noqa: E402
 from .run_guard import PreflightError, preflight, validate_fit  # noqa: F401,E402
 from .run_proc import RunFailure, terminate  # noqa: F401,E402
 # Functions and immutable constants only. The path constants stay behind
@@ -179,16 +179,10 @@ class Supervisor:
             return 400, {"error": "job_url must be an http(s) URL"}
         if kind not in KINDS:
             return 400, {"error": "kind must be one of %s" % list(KINDS)}
-        if kind != "apply":
-            # Revise and redraft are M4; they need fork-resume and the version
-            # store, and half of that is worse than none.
-            return 501, {"error": "%s re-entry lands in M4; use Tailor for now" % kind}
-        if (payload.get("remember") or "").strip():
-            # The run would have to write `01-candidate-profile.md`, which is not
-            # on this milestone's allowlist. Refusing is better than sending an
-            # instruction the guard will deny halfway through a paid run.
-            return 501, {"error": "standing preferences land in M4 - the profile file is "
-                                  "not writable by a run yet, so this would fail mid-draft"}
+        scope = payload.get("scope") or "both"
+        if scope not in ("cv", "cover", "both"):
+            return 400, {"error": "scope must be cv, cover or both"}
+        remember = (payload.get("remember") or "").strip()[:1000]
 
         try:
             preflight()
@@ -197,6 +191,15 @@ class Supervisor:
             return 503, {"error": "preflight failed: %s" % exc}
 
         entry = self._board_entry(job_url)
+        parent = None
+        if kind != "apply":
+            parent = get(payload.get("parent"))
+            if parent is None or parent.get("phase") != "done":
+                return 409, {"error": "revise/redraft needs a completed parent run"}
+            if parent.get("job_url") != job_url:
+                return 409, {"error": "parent belongs to a different posting"}
+            if not parent.get("session_id"):
+                return 409, {"error": "the parent session is not resumable; use a full re-run"}
         company = (payload.get("company") or entry.get("company") or "").strip()
         role = (payload.get("role") or entry.get("title") or "").strip()
         if not company or not role:
@@ -208,9 +211,19 @@ class Supervisor:
         if problems:
             return 503, {"error": " / ".join(problems)}
 
-        budget = {"pass_a": settings["budget_usd"]["pass_a"],
-                  "pass_b": settings["budget_usd"]["pass_b"]}
-        worst_case = budget["pass_a"] + budget["pass_b"]
+        if kind == "apply":
+            budget = {"pass_a": settings["budget_usd"]["pass_a"],
+                      "pass_b": settings["budget_usd"]["pass_b"],
+                      "pass_c": (settings["budget_usd"]["pass_c"] * 5
+                                 if settings.get("inspection_enabled", True) else 0.0)}
+        else:
+            budget = {kind: settings["budget_usd"][kind],
+                      "pass_c": (settings["budget_usd"]["pass_c"] * 5
+                                 if settings.get("inspection_enabled", True) else 0.0)}
+            if session_spent(parent) + sum(budget.values()) > settings["session_budget_usd"]:
+                return 429, {"error": "this session lineage would exceed the $%.2f cap; "
+                                      "use a full re-run" % settings["session_budget_usd"]}
+        worst_case = sum(budget.values())
         slug = slugify(company, role)
 
         with self._cv:
@@ -244,25 +257,30 @@ class Supervisor:
                     run_id = new_run_id(company)
                 record = {
                     "id": run_id,
-                    "session_id": str(uuid.uuid4()),
+                    "session_id": str(uuid.uuid4()) if kind == "apply" else None,
+                    "resume_session_id": parent.get("session_id") if parent else None,
                     "job_url": job_url,
                     "company": company,
                     "role": role,
                     "slug": slug,
                     "kind": kind,
-                    "parent": payload.get("parent"),
+                    "parent": parent.get("id") if parent else None,
                     "phase": "queued",
                     "owner": run_registry.OWNER,
                     "owner_pid": os.getpid(),
                     "owner_started": self._owner_started,
                     "note": (payload.get("note") or "")[:1000],
+                    "scope": scope,
+                    "remember": remember,
                     "started_at": datetime.now().isoformat(timespec="seconds"),
                     "ended_at": None,
-                    "approved_at": None,
+                    "approved_at": (datetime.now().isoformat(timespec="seconds")
+                                    if kind != "apply" else None),
                     "pid": None, "pgid": None, "exit_code": None,
                     "error": None,
-                    "targets": {"cv": "cv/main_%s%s" % (slug, cv_ext),
-                                "cover": "cover_letters/cover_%s%s" % (slug, cover_ext)},
+                    "targets": (dict(parent["targets"]) if parent else
+                                {"cv": "cv/main_%s%s" % (slug, cv_ext),
+                                 "cover": "cover_letters/cover_%s%s" % (slug, cover_ext)}),
                     "artefacts": {},
                     "budget_usd": budget,
                     "cost": {"total_usd": 0.0},
@@ -569,14 +587,17 @@ class Supervisor:
             settings = config()
             state_dir(run_id).mkdir(parents=True, exist_ok=True)
             run_dir(run_id).mkdir(parents=True, exist_ok=True)
-            if record.get("approved_at"):
+            if record.get("kind") in ("revise", "redraft"):
+                self._reentry(record, settings)
+            elif record.get("approved_at"):
                 self._pass_b(record, settings)
             else:
                 self._pass_a(record, settings)
 
     # -- the two passes -----------------------------------------------------
 
-    def _spawn(self, record, label, prompt_builder, budget, timeout, targets=(), resume=False):
+    def _spawn(self, record, label, prompt_builder, budget, timeout, targets=(), resume=False,
+               fork=False):
         """Preflight, allowlist, spawn, stream. Returns the `Pass`.
 
         `prompt_builder` is a callable rather than a string because the prompt
@@ -610,8 +631,11 @@ class Supervisor:
         # Verified against CLI 2.1.159: this order parses, reaching session-id
         # validation (and erroring there on a bad uuid) before any API call.
         argv = [settings["claude_bin"]]
-        argv += ["--resume", record["session_id"]] if resume else \
+        resume_id = record.get("resume_session_id") if fork else record.get("session_id")
+        argv += ["--resume", resume_id] if resume else \
                 ["--session-id", record["session_id"]]
+        if fork:
+            argv.append("--fork-session")
         argv += ["--output-format", "stream-json", "--verbose",
                  "--permission-mode", "acceptEdits",
                  "--settings", str(run_guard.SETTINGS),
@@ -651,6 +675,14 @@ class Supervisor:
                                                ("evaluating", "drafting")),
                     expected_writes=[str(Path(t).relative_to(run_registry.ROOT))
                                      for t in targets])
+            if fork:
+                try:
+                    child = str(uuid.UUID(str(job.session_id)))
+                except (ValueError, TypeError, AttributeError):
+                    raise RunFailure("forked run produced no valid child session id")
+                if child == resume_id:
+                    raise RunFailure("forked run reused the parent session id")
+                update(run_id, session_id=child)
             return job
         finally:
             self._active = None
@@ -673,6 +705,53 @@ class Supervisor:
         self._read_fit(run_id)
 
     def _pass_b(self, record, settings):
+        # The same document-set lock later guards recompile and restore. Model
+        # writes, compile and publication are one serial document transaction.
+        try:
+            with docs.document_lock(record["slug"]):
+                self._pass_b_locked(record, settings)
+        except docs.DocumentError as exc:
+            self._fail(record["id"], str(exc))
+
+    def _reentry(self, record, settings):
+        """Fork a completed application session and publish a new immutable version."""
+        run_id = record["id"]
+        try:
+            with docs.document_lock(record["slug"]):
+                parent = get(record["parent"])
+                if not parent:
+                    raise docs.DocumentError("parent run disappeared")
+                parent_posting = run_dir(parent["id"]) / "posting.md"
+                if not parent_posting.is_file():
+                    raise docs.DocumentError("parent posting snapshot is missing")
+                (run_dir(run_id) / "posting.md").write_bytes(parent_posting.read_bytes())
+                update(run_id, phase="drafting")
+                scope = record.get("scope") or "both"
+                selected = ("cv", "cover") if scope == "both" else (scope,)
+                targets = [run_registry.ROOT / record["targets"][kind] for kind in selected]
+                if record.get("remember"):
+                    targets.append(docs.PROFILE)
+                self._spawn(
+                    record, "%s (forked re-entry)" % record["kind"],
+                    lambda nonce: self._prompt_reentry(record, nonce),
+                    settings["budget_usd"][record["kind"]],
+                    settings["timeout_s"]["pass_b"], targets=targets,
+                    resume=True, fork=True)
+                update(run_id, phase="compiling")
+                pdfs, _verify, produced = docs.compile_record(get(run_id) or record)
+                current = get(run_id) or record
+                if settings.get("inspection_enabled", True):
+                    self._inspect(current, settings, pdfs)
+                    current = get(run_id) or current
+                    if current["phase"] in TERMINAL:
+                        return
+                produced["posting"] = docs.archive_posting(current)
+                docs.merge_tracker(current)
+                self._settle_ok(run_id, produced)
+        except (RunFailure, PreflightError, docs.DocumentError) as exc:
+            self._fail(run_id, str(exc))
+
+    def _pass_b_locked(self, record, settings):
         run_id = record["id"]
         if run_id in self._cancelled:
             self._settle(run_id, "cancelled", "cancelled before pass B started")
@@ -680,6 +759,8 @@ class Supervisor:
         update(run_id, phase="drafting")
         targets = [run_registry.ROOT / record["targets"]["cv"],
                    run_registry.ROOT / record["targets"]["cover"]]
+        if record.get("remember"):
+            targets.append(docs.PROFILE)
         # Snapshotted before the run, because "the file exists" is not evidence
         # that *this* run wrote it: re-applying to the same company and role
         # finds last month's CV sitting at exactly the expected path.
@@ -712,8 +793,145 @@ class Supervisor:
         if problems:
             self._fail(run_id, "; ".join(problems))
             return
-        produced = {name: path for name, path in record["targets"].items()}
+        update(run_id, phase="compiling")
+        try:
+            pdfs, _verify, produced = docs.compile_record(get(run_id) or record)
+        except docs.DocumentError as exc:
+            self._fail(run_id, str(exc))
+            return
+
+        current = get(run_id) or record
+        if settings.get("inspection_enabled", True):
+            self._inspect(current, settings, pdfs)
+            current = get(run_id) or current
+            if current["phase"] in TERMINAL:
+                return
+
+        try:
+            posting = docs.archive_posting(current)
+            docs.merge_tracker(current)
+            produced["posting"] = posting
+        except docs.DocumentError as exc:
+            self._fail(run_id, str(exc))
+            return
         self._settle_ok(run_id, produced)
+
+    def _inspect(self, record, settings, pdfs):
+        """Evidence-backed visual inspection, with at most two LaTeX repairs."""
+        run_id = record["id"]
+        repairs = 0
+        while True:
+            update(run_id, phase="inspecting")
+            inspect_path = run_dir(run_id) / "inspect.json"
+            try:
+                inspect_path.unlink()
+            except FileNotFoundError:
+                pass
+            try:
+                stream_path = run_dir(run_id) / "stream.jsonl"
+                stream_offset = stream_path.stat().st_size if stream_path.exists() else 0
+                job = self._spawn(
+                    get(run_id) or record, "pass C (inspect PDFs)",
+                    lambda nonce: self._prompt_c(get(run_id) or record, pdfs, nonce),
+                    settings["budget_usd"]["pass_c"], settings["timeout_s"]["pass_c"],
+                    resume=True)
+            except (RunFailure, PreflightError) as exc:
+                # Nobody proved they looked: preserve the machine checks and
+                # publish a loud unverified visual state rather than a green tick.
+                verify_path = run_dir(run_id) / "verify.json"
+                try:
+                    verify = json.loads(verify_path.read_text(encoding="utf-8"))
+                    for check in verify.get("checks", []):
+                        if check.get("id") == "visual_layout":
+                            check.update(state="unverified", detail=str(exc), evidence={})
+                    jobs_md.write_json_atomic(verify_path, verify)
+                except (OSError, ValueError):
+                    pass
+                activity.emit("verify", "%s visual inspection unverified: %s"
+                              % (run_id, exc), level="error", run_id=run_id)
+                return
+
+            payload, problem = self._read_json(run_id, "inspect.json")
+            if problem:
+                payload = None
+            verify, proven = docs.apply_inspection(
+                get(run_id) or record, pdfs, payload, normal_success=True,
+                stream_path=stream_path, stream_offset=stream_offset)
+            if not proven:
+                activity.emit("verify", "%s visual inspection is unverified" % run_id,
+                              level="error", run_id=run_id)
+                return
+            verdict = payload["verdict"]
+            if verdict != "fixable" or repairs >= 2:
+                activity.emit("verify", "%s inspection: %s" % (run_id, verdict),
+                              level="info" if verdict == "clean" else "warn", run_id=run_id)
+                return
+            toolchains = {docs.resolve_toolchain(kind)["kind"] for kind in ("cv", "cover")}
+            if toolchains != {"latex"}:
+                activity.emit("verify", "%s has fixable issues, but automatic repair is "
+                              "disabled for non-LaTeX toolchains" % run_id,
+                              level="warn", run_id=run_id)
+                return
+
+            targets = [run_registry.ROOT / record["targets"]["cv"],
+                       run_registry.ROOT / record["targets"]["cover"]]
+            try:
+                self._spawn(
+                    get(run_id) or record, "pass C (repair %d)" % (repairs + 1),
+                    lambda nonce: self._prompt_repair(
+                        get(run_id) or record, payload.get("issues", []), nonce),
+                    settings["budget_usd"]["pass_c"], settings["timeout_s"]["pass_c"],
+                    targets=targets, resume=True)
+                update(run_id, phase="compiling")
+                pdfs, _verify, produced = docs.compile_record(get(run_id) or record)
+                update(run_id, artefacts=produced)
+            except (RunFailure, PreflightError, docs.DocumentError) as exc:
+                self._fail(run_id, str(exc))
+                return
+            repairs += 1
+
+    def compile(self, run_id):
+        """Recompile a finished run without spending on another model call."""
+        record = get(run_id)
+        if record is None:
+            return 404, {"error": "unknown run"}
+        if record["phase"] not in TERMINAL:
+            return 409, {"error": "run is %s" % record["phase"]}
+        try:
+            with docs.document_lock(record["slug"], blocking=False):
+                pdfs, verify, artefacts = docs.compile_record(record)
+                update(run_id, artefacts=artefacts, error=None)
+        except docs.DocumentBusy as exc:
+            return 409, {"error": str(exc)}
+        except docs.DocumentError as exc:
+            return 422, {"error": str(exc)}
+        activity.emit("latex", "%s recompiled without a model call" % run_id,
+                      run_id=run_id)
+        return 200, {"ok": True, "artefacts": artefacts, "verify": verify}
+
+    def restore(self, run_id):
+        """Restore this version onto its application's live sources and recompile."""
+        version = get(run_id)
+        if version is None:
+            return 404, {"error": "unknown run"}
+        if version.get("phase") != "done":
+            return 409, {"error": "only a completed version can be restored"}
+        candidates = [r for r in load()["runs"]
+                      if r.get("slug") == version.get("slug") and r.get("phase") == "done"]
+        current = max(candidates, key=lambda r: r.get("ended_at") or "")
+        try:
+            with docs.document_lock(version["slug"], blocking=False):
+                _pdfs, verify, artefacts = docs.restore_record(version, current)
+                update(current["id"], artefacts=artefacts, restored_from=version["id"],
+                       error=None)
+        except docs.DocumentBusy as exc:
+            return 409, {"error": str(exc)}
+        except docs.DocumentError as exc:
+            return 422, {"error": str(exc)}
+        activity.emit("latex", "%s restored onto %s" % (version["id"], current["id"]),
+                      run_id=current["id"])
+        return 200, {"ok": True, "current": current["id"],
+                     "restored_from": version["id"], "verify": verify}
 
     def _settle_ok(self, run_id, produced):
         if not transition(run_id, "done", ("drafting", "reviewing", "compiling", "inspecting"),
@@ -894,11 +1112,56 @@ class Supervisor:
                      "not edit `job_search_tracker.csv`.\n\n")
         if record.get("note"):
             parts.append("The owner added: %s\n\n" % record["note"])
-        # `REMEMBER:` is deliberately absent. A standing preference is written
-        # into `01-candidate-profile.md` by the run itself (§5), and that file is
-        # not on this milestone's allowlist - so sending the instruction would
-        # produce a guard denial rather than a preference. It lands in M4 with
-        # the allowlist entry that makes it possible.
+        if record.get("remember"):
+            parts.append("REMEMBER: %s\nWrite this standing preference only inside the "
+                         "managed JOBFLOW-PREFS block in `%s`.\n" %
+                         (record["remember"], docs.PROFILE.relative_to(run_registry.ROOT)))
+        return "".join(parts)
+
+    def _prompt_reentry(self, record, nonce):
+        parts = [self._canary(record, nonce)]
+        step = "Step 4 (revision)" if record["kind"] == "revise" else "Step 2 (fresh redraft)"
+        parts.append("Resume this application in a forked child session at %s.\n\n" % step)
+        parts.append("Scope: %s. The only live document sources you may edit are:\n" %
+                     record.get("scope", "both"))
+        if record.get("scope") in ("cv", "both"):
+            parts.append("- CV: `%s`\n" % record["targets"]["cv"])
+        if record.get("scope") in ("cover", "both"):
+            parts.append("- Cover: `%s`\n" % record["targets"]["cover"])
+        parts.append("Write `$JOBFLOW_RUN_DIR/verify_request.json` for the supervisor, "
+                     "then stop without compiling or touching the tracker.\n\n")
+        if record.get("note"):
+            parts.append("One-off instruction: %s\n\n" % record["note"])
+        if record.get("remember"):
+            parts.append("REMEMBER: %s\nWrite this standing preference only inside the managed "
+                         "JOBFLOW-PREFS block in `%s`.\n" %
+                         (record["remember"], docs.PROFILE.relative_to(run_registry.ROOT)))
+        return "".join(parts)
+
+    def _prompt_c(self, record, pdfs, nonce):
+        parts = [self._canary(record, nonce)]
+        parts.append(
+            "Inspect the two compiled PDFs below with the Read tool. You must Read both "
+            "exact paths even when the first one has an issue:\n- CV: `%s`\n- Cover: `%s`\n\n"
+            % (Path(pdfs["cv"]).resolve(), Path(pdfs["cover"]).resolve()))
+        parts.append(
+            "Do not edit source files in this inspection turn. Check page composition, "
+            "orphaned headings or entries, clipped content, bullet/body-font mismatch, "
+            "signature placement and other visible layout defects. Atomically write "
+            "`$JOBFLOW_RUN_DIR/inspect.json` with schema `jobflow.inspect/1`, verdict "
+            "`clean`, `fixable`, or `blocked`, and `issues` as objects containing `doc` "
+            "(`cv` or `cover`), positive integer `page`, string `kind`, and string "
+            "`fix_hint`. Use an empty issues list only when both PDFs are visually clean.")
+        return "".join(parts)
+
+    def _prompt_repair(self, record, issues, nonce):
+        parts = [self._canary(record, nonce)]
+        parts.append(
+            "Apply only the following verified visual-layout repairs to the two exact "
+            "source files. Do not compile; the supervisor recompiles after this turn. "
+            "Do not invent content or change factual claims.\n\n%s\n\nCV: `%s`\nCover: `%s`"
+            % (json.dumps(issues, ensure_ascii=False, indent=2),
+               record["targets"]["cv"], record["targets"]["cover"]))
         return "".join(parts)
 
 

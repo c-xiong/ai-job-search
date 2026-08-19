@@ -35,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collectors  # noqa: E402
 import jobs_md  # noqa: E402
+from company_lock import registry_lock  # noqa: E402
 
 ROOT = jobs_md.ROOT
 REGISTRY = ROOT / "job_scraper" / "companies.json"
@@ -311,23 +312,24 @@ def bump_german_gated(counts, log):
     """Record the German-gate yield per company, for the §18 revisit triggers."""
     if not counts or not REGISTRY.exists():
         return
-    try:
-        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
-    except ValueError:
-        log("  ! companies.json is unreadable - german_gated counters not updated")
-        return
-    by_name = {c.get("name"): c for c in registry.get("companies", [])}
-    touched = 0
-    for name, count in counts.items():
-        company = by_name.get(name)
-        if not company:
-            continue
-        stats = company.setdefault(
-            "stats", {"jobs_seen": 0, "german_gated": 0, "eligible_jobs": 0, "last_eligible_at": None})
-        stats["german_gated"] = stats.get("german_gated", 0) + count
-        touched += 1
-    if touched:
-        jobs_md.write_json_atomic(REGISTRY, registry)
+    with registry_lock(REGISTRY):
+        try:
+            registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        except ValueError:
+            log("  ! companies.json is unreadable - german_gated counters not updated")
+            return
+        by_name = {c.get("name"): c for c in registry.get("companies", [])}
+        touched = 0
+        for name, count in counts.items():
+            company = by_name.get(name)
+            if not company:
+                continue
+            stats = company.setdefault(
+                "stats", {"jobs_seen": 0, "german_gated": 0, "eligible_jobs": 0, "last_eligible_at": None})
+            stats["german_gated"] = stats.get("german_gated", 0) + count
+            touched += 1
+        if touched:
+            jobs_md.write_json_atomic(REGISTRY, registry)
 
 
 def to_rows(payload):

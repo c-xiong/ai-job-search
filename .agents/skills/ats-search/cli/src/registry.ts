@@ -7,8 +7,8 @@
 // at what cadence, with what identity evidence - is yours, and a run that touched
 // it would be a bug.
 
-import { existsSync, readFileSync } from "fs"
-import { join } from "path"
+import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from "fs"
+import { dirname, join } from "path"
 import { RegistryError, ROOT, writeJsonAtomic } from "./helpers.ts"
 import type { CompanyStatus, VendorName } from "./types.ts"
 import { VENDORS } from "./types.ts"
@@ -26,6 +26,27 @@ export type ResolutionStatus = (typeof RESOLUTION_STATUSES)[number]
 
 export const ROUTES = ["ats", "linkedin", "manual"] as const
 export type Route = (typeof ROUTES)[number]
+
+/** The Python board uses this same O_EXCL lease; flock and O_EXCL do not interoperate. */
+function withRegistryLock(path: string, action: () => void): void {
+  const lock = join(dirname(path), ".companies.lock")
+  const deadline = Date.now() + 30_000
+  let fd: number | undefined
+  while (fd === undefined) {
+    try {
+      fd = openSync(lock, "wx", 0o600)
+      writeFileSync(fd, `${process.pid}\n`)
+    } catch (error: any) {
+      if (error?.code !== "EEXIST") throw error
+      if (Date.now() >= deadline) throw new RegistryError("company registry is busy")
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
+    }
+  }
+  try { action() } finally {
+    closeSync(fd)
+    try { unlinkSync(lock) } catch (error: any) { if (error?.code !== "ENOENT") throw error }
+  }
+}
 
 /** Evidence hierarchy from §8. Only these two promote a board to `verified`. */
 export const PROMOTING_EVIDENCE = ["company_site_link", "vendor_identifier", "human_confirmed"] as const
@@ -344,6 +365,7 @@ export interface Bookkeeping {
  */
 export function writeBookkeeping(entries: Bookkeeping[], path = registryPath()): void {
   if (!entries.length) return
+  withRegistryLock(path, () => {
   const raw = JSON.parse(readFileSync(path, "utf-8")) as Registry
   const byName = new Map(entries.map((e) => [e.name, e]))
   for (const company of raw.companies) {
@@ -359,6 +381,7 @@ export function writeBookkeeping(entries: Bookkeeping[], path = registryPath()):
     company.stats = stats
   }
   writeJsonAtomic(path, raw)
+  })
 }
 
 /**
@@ -376,6 +399,7 @@ export function writeResolution(
   path = registryPath(),
 ): void {
   if (!updates.length) return
+  withRegistryLock(path, () => {
   const raw = JSON.parse(readFileSync(path, "utf-8")) as Registry
   const defaults: RegistryDefaults = { ...DEFAULT_DEFAULTS, ...(raw.defaults ?? {}) }
   const byName = new Map(updates.map((u) => [u.name, u.patch]))
@@ -398,4 +422,5 @@ export function writeResolution(
     }
   }
   writeJsonAtomic(path, raw)
+  })
 }

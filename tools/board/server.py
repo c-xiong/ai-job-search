@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_jobs  # noqa: E402
 import jobs_md  # noqa: E402
 
-from . import activity, runs, state  # noqa: E402
+from . import activity, companies, docs, run_registry, runs, state  # noqa: E402
 
 TOKEN = secrets.token_urlsafe(16)
 STATIC = Path(__file__).resolve().parent / "static"
@@ -144,12 +144,16 @@ def fetch_status():
 # pattern is a validator as well as a parser: a path segment that is not a run
 # id never reaches the supervisor.
 RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
-                      r"(?:/(?P<action>approve|cancel|kill|fit))?$")
+                      r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore))?$")
+PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
+                      r"/(?P<kind>cv|cover)$")
+COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
+                          r"(?:/(?P<action>resolve|identity))?$")
 
 
 def run_route(path):
     """(run_id, action) or (None, None) when this is not a run path."""
-    match = RUN_PATH.match(path)
+    match = RUN_PATH.fullmatch(path)
     if not match:
         return None, None
     return match.group("id"), match.group("action")
@@ -180,11 +184,13 @@ class Handler(BaseHTTPRequestHandler):
     def _authed(self, query):
         return secrets.compare_digest((query.get("t") or [""])[0], TOKEN)
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+    def _send(self, code, body, ctype="application/json; charset=utf-8", headers=None):
         payload = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -219,6 +225,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if parts.path == "/api/jobs":
             return self._send(200, json.dumps(state.jobs_payload(), ensure_ascii=False))
+        if parts.path == "/api/job":
+            row = state.job_payload((query.get("url") or [""])[0])
+            if row is None:
+                return self._send(404, json.dumps({"error": "unknown job"}))
+            return self._send(200, json.dumps(row, ensure_ascii=False))
         if parts.path == "/api/fetch/status":
             return self._send(200, json.dumps(fetch_status(), ensure_ascii=False))
         if parts.path == "/api/activity":
@@ -230,9 +241,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(activity.since(seq, epoch), ensure_ascii=False))
         if parts.path == "/api/runs":
             return self._send(200, json.dumps(runs.supervisor().snapshot(), ensure_ascii=False))
+        if parts.path == "/api/prefs":
+            return self._send(200, json.dumps(docs.standing_preferences(), ensure_ascii=False))
+        if parts.path == "/api/companies":
+            try:
+                body = companies.listing()
+            except companies.CompanyError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+        if parts.path == "/api/companies/suggest":
+            return self._send(200, json.dumps(companies.suggestions(), ensure_ascii=False))
 
         run_id, action = run_route(parts.path)
-        if run_id and action in (None, "fit"):
+        if run_id and action in (None, "fit", "verify"):
             record = runs.get(run_id)
             if record is None:
                 return self._send(404, json.dumps({"error": "unknown run"}))
@@ -242,15 +263,48 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, json.dumps(
                         {"error": "this run has no evaluation yet", "phase": record["phase"]}))
                 return self._send(200, json.dumps(fit, ensure_ascii=False))
+            if action == "verify":
+                path = run_registry.run_dir(run_id) / "verify.json"
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except FileNotFoundError:
+                    return self._send(404, json.dumps(
+                        {"error": "this run has no verification yet", "phase": record["phase"]}))
+                except (OSError, ValueError):
+                    return self._send(500, json.dumps({"error": "verification is unreadable"}))
+                return self._send(200, json.dumps(payload, ensure_ascii=False))
             return self._send(200, json.dumps(record, ensure_ascii=False))
+
+        pdf_match = PDF_PATH.fullmatch(parts.path)
+        if pdf_match:
+            record = runs.get(pdf_match.group("id"))
+            if record is None:
+                return self._send(404, json.dumps({"error": "unknown run"}))
+            relative = (record.get("artefacts") or {}).get(pdf_match.group("kind") + "_pdf")
+            if not relative:
+                return self._send(404, json.dumps({"error": "PDF is not available"}))
+            path = (run_registry.ROOT / relative).resolve()
+            expected = run_registry.run_dir(record["id"]).resolve()
+            try:
+                path.relative_to(expected)
+            except ValueError:
+                return self._send(403, json.dumps({"error": "PDF path escaped its run"}))
+            if not path.is_file():
+                return self._send(404, json.dumps({"error": "PDF is missing"}))
+            return self._send(200, path.read_bytes(), "application/pdf",
+                              {"Content-Disposition": "inline; filename=%s.pdf"
+                               % pdf_match.group("kind")})
 
         self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
         parts = urlparse(self.path)
         run_id, action = run_route(parts.path)
-        known = parts.path in ("/api/update", "/api/fetch", "/api/runs") or \
-            (run_id and action in ("approve", "cancel", "kill"))
+        company_match = COMPANY_PATH.fullmatch(parts.path)
+        known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/companies") or \
+            (run_id and action in ("approve", "cancel", "kill", "compile", "restore"))
+        known = known or bool(company_match and company_match.group("action") in
+                              ("resolve", "identity"))
         if not known or not self._authed(parse_qs(parts.query)):
             # The token is what stops any web page you happen to have open from
             # POSTing to localhost - and for /api/fetch that means it is what
@@ -274,6 +328,24 @@ class Handler(BaseHTTPRequestHandler):
             code, body = runs.supervisor().start(payload)
             return self._send(code, json.dumps(body, ensure_ascii=False))
 
+        if parts.path == "/api/companies":
+            try:
+                body = companies.never(payload) if payload.get("decision") == "never" \
+                    else companies.add(payload)
+            except companies.CompanyError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+
+        if company_match:
+            try:
+                if company_match.group("action") == "resolve":
+                    body = companies.resolve(company_match.group("slug"), payload)
+                else:
+                    body = companies.identity(company_match.group("slug"), payload)
+            except companies.CompanyError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+
         if run_id:
             supervisor = runs.supervisor()
             if action == "approve":
@@ -282,6 +354,10 @@ class Handler(BaseHTTPRequestHandler):
                 code, body = supervisor.approve(run_id, payload.get("phase"))
             elif action == "cancel":
                 code, body = supervisor.cancel(run_id)
+            elif action == "compile":
+                code, body = supervisor.compile(run_id)
+            elif action == "restore":
+                code, body = supervisor.restore(run_id)
             else:
                 code, body = supervisor.kill(run_id)
             return self._send(code, json.dumps(body, ensure_ascii=False))
@@ -306,6 +382,23 @@ class Handler(BaseHTTPRequestHandler):
                 why.append("note on %s" % (seen[url].get("company") or "job"))
             state.save(seen, "; ".join(why))
         self._send(200, json.dumps({"ok": True}))
+
+    def do_PATCH(self):
+        parts = urlparse(self.path)
+        match = COMPANY_PATH.fullmatch(parts.path)
+        if not match or match.group("action") or not self._authed(parse_qs(parts.query)):
+            return self._send(403, json.dumps({"error": "forbidden"}))
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(payload, dict):
+                raise ValueError()
+            body = companies.patch_company(match.group("slug"), payload)
+        except (ValueError, TypeError):
+            return self._send(400, json.dumps({"error": "bad json"}))
+        except companies.CompanyError as exc:
+            return self._send(exc.status, json.dumps({"error": str(exc)}))
+        return self._send(200, json.dumps(body, ensure_ascii=False))
 
 
 def main(argv=None):

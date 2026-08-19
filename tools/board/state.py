@@ -80,3 +80,8 @@ def jobs_payload():
                              -r["score"],
                              jobs_md._neg_date(r["posted"])))
     return {"jobs": rows, "statuses": STATUSES}
+
+
+def job_payload(url):
+    """One shaped board row, including the stored posting body."""
+    return next((row for row in jobs_payload()["jobs"] if row["url"] == url), None)

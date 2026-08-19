@@ -79,6 +79,8 @@ REQUIRED_IGNORE_RULES = [
     "job_scraper/fetch_status.json",
     "job_scraper/.fetch.lock",
     "job_scraper/.board.lock",
+    "job_scraper/.companies.lock",
+    ".tracker.lock",
     "cv/my_cv.tex",
     "cv/variants/",
     "docs/",

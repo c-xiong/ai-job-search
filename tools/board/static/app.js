@@ -6,6 +6,9 @@ const RUNNING=["evaluating","queued","drafting","reviewing","compiling","inspect
 const PHASE_STEP={evaluating:1,awaiting_approval:1,queued:2,drafting:2,reviewing:3,compiling:5,inspecting:6,done:6};
 let JOBS=[],STATUSES=[],FILTERS=[],filter="active",q="",sel=0;
 let RUNS=[],QUEUE=[],LEDGER=null,BUDGET=null,RUNPOLL=null,ACTIVE_RUN=null;
+let PREVIEW_RUN=null;
+let REVISE_RUN=null;
+let COMPANIES=null,COMPANY_FILTER="all",COMPANY_SELECTED=null,SUGGESTIONS=[];
 let EV=[],EPOCH=null,SEQ=0,actFilter="all",COUNTS={};
 const HISTORY=[];
 let toastTimer=null,undoTimer=null,POLL=null;
@@ -111,11 +114,11 @@ function renderRuns(){
   if(active){el("runpill").hidden=false;el("runpill").innerHTML=`<span>Tailoring <strong>${esc(active.company)}</strong> · step ${PHASE_STEP[active.phase]||1} of 6</span><span class="elapsed">${elapsed(active)}</span>`;el("runpill").dataset.run=active.id}
   else el("runpill").hidden=true;
   renderApplications();
-  if(el("app").classList.contains("tailor-mode")&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
+  if(el("app").classList.contains("tailor-mode")&&!el("app").classList.contains("reader-mode")&&!el("app").classList.contains("preview-mode")&&!el("app").classList.contains("revise-mode")&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
 }
 function renderApplications(){
   const rows=RUNS.slice(0,20);el("applicationcount").textContent=`${rows.filter(r=>r.phase==="done").length} drafted · ${activeRuns().length} active`;
-  el("applicationlist").innerHTML=rows.length?rows.map(r=>`<tr data-run="${esc(r.id)}"><td><span class="role">${esc(r.company)}</span> <span class="co">· ${esc(r.role)}</span></td><td><span class="phase ${esc(r.phase)}">${esc(r.phase.replaceAll("_"," "))}</span></td><td class="co">${r.cost?.total_usd?money(r.cost.total_usd):"—"}</td><td class="co">${esc((r.started_at||"").slice(0,16).replace("T"," "))}</td><td><button class="linkish">Watch run</button></td></tr>`).join(""):'<tr><td colspan="5" class="panel-empty">No applications yet.</td></tr>';
+  el("applicationlist").innerHTML=rows.length?rows.map(r=>`<tr data-run="${esc(r.id)}"><td><span class="role">${esc(r.company)}</span> <span class="co">· ${esc(r.role)}</span></td><td><span class="phase ${esc(r.phase)}">${esc(r.phase.replaceAll("_"," "))}</span></td><td class="co">${r.cost?.total_usd?money(r.cost.total_usd):"—"}</td><td class="co">${esc((r.started_at||"").slice(0,16).replace("T"," "))}</td><td>${r.phase==="done"?`<button class="linkish previewrun" data-preview="${esc(r.id)}">Preview</button> <button class="linkish" data-revise="${esc(r.id)}">Revise</button>`:`<button class="linkish">Watch run</button>`}</td></tr>`).join(""):'<tr><td colspan="5" class="panel-empty">No applications yet.</td></tr>';
 }
 async function pollRuns(){
   let data;try{data=await(await fetch("/api/runs?t="+T)).json()}catch(_){return}
@@ -155,17 +158,64 @@ function renderTailor(run){
       <div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Fit evaluation — ${esc(fit.verdict||"pending")}${fit.overall!=null?", "+esc(fit.overall):""}</strong><span class="spacer"></span><span class="dim">${run.phase==="awaiting_approval"?"waiting for your approval":""}</span></div>
       <div class="fitgrid"><div><span class="label">Matches</span>${matches}</div><div><span class="label">Gaps, stated not smoothed</span>${gaps}</div></div></div>
       <div class="runlog">${logs}</div><div class="runfooter"><button class="secondary" data-restore>Back to board</button><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>
-      ${run.phase==="awaiting_approval"?`<button class="primary approve" data-run-id="${esc(run.id)}" data-phase="${esc(run.phase)}">Draft it — stops at about ${money(BUDGET?.pass_b)}</button>`:""}${RUNNING.includes(run.phase)?`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`:""}</div></section></div>`;
+      ${run.phase==="awaiting_approval"?`<button class="primary approve" data-run-id="${esc(run.id)}" data-phase="${esc(run.phase)}">Draft it — stops at about ${money(BUDGET?.pass_b)}</button>`:""}${RUNNING.includes(run.phase)?`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`:""}${run.phase==="done"?`<button class="primary" data-preview="${esc(run.id)}">Preview PDFs</button>`:""}</div></section></div>`;
   openView("tailor",run.company+" · "+run.role);
 }
 
+function renderReader(){
+  const rows=shown(),j=selectedJob();if(!j)return;
+  const queue=rows.slice(0,80).map((row,index)=>`<div class="queue-row ${index===sel?"selected":""}" data-reader-row="${index}"><div class="queue-top"><span class="fitdot ${esc(row.fit)}"></span><span class="queue-company">${esc(row.company)}</span><span class="queue-mark">${esc(row.status==="new"?"":row.status)}</span></div><div class="queue-title">${esc(row.title)}</div></div>`).join("");
+  const marks=["star","yes","maybe","gate","no","applied"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
+  el("tailor-view").innerHTML=`<div class="reader-shell"><section class="reader-queue"><div class="panelhead"><span class="label">Queue</span><span class="spacer"></span><span class="dim">${rows.length} active</span></div><div class="queue-list">${queue}</div></section>
+    <section class="reader-main"><div class="reader-scroll"><article class="reader-copy"><div class="reader-badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge">prefit ${esc(j.score)}</span>`:""}<span class="spacer"></span><a class="open" href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener">open posting ↗</a></div><h1>${esc(j.title)}</h1><div class="reader-meta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div><div class="reader-posting">${esc(j.description||"Posting text is not stored for this row.")}</div></article></div></section>
+    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span><div class="gate-line"><span class="gate-mark">✓</span><span>Language — ${/german required|deutsch/i.test(j.description||"")?"requirement needs review":"no blocking requirement detected"}</span></div><div class="gate-line"><span class="gate-mark">✓</span><span>Location — ${esc(j.location||"not stated")}</span></div></div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No prefit reason was stored.")}</div><div class="hint">A prefit reason, not a fit assessment. Tailor re-evaluates properly.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button><div class="hint">marks it yes and queues the run · <kbd>t</kbd></div></div></aside></div>`;
+  openView("reader",`reading ${sel+1} of ${rows.length} · active`);
+}
+
+async function renderPreview(run){
+  if(!run)return;PREVIEW_RUN=run.id;
+  el("tailor-view").innerHTML='<div class="panel-empty">Loading compiled documents…</div>';
+  openView("preview",run.company+" · "+run.role);
+  let verify;try{const response=await fetch(`/api/runs/${encodeURIComponent(run.id)}/verify?t=${T}`);verify=await response.json();if(!response.ok)throw new Error(verify.error)}catch(error){el("tailor-view").innerHTML=`<div class="panel-empty runerror">${esc(error.message||error)}</div>`;return}
+  const counts={};(verify.checks||[]).forEach(check=>counts[check.state]=(counts[check.state]||0)+1);
+  const checks=(verify.checks||[]).map(check=>`<div class="verify-item ${esc(check.state)}"><span class="verify-mark ${esc(check.state)}">${check.state==="pass"?"✓":"!"}</span><div><div>${esc(check.label)}</div><div class="verify-detail">${esc(check.detail)}</div></div></div>`).join("");
+  const query=`?t=${encodeURIComponent(T)}&v=${Date.now()}`;
+  el("tailor-view").innerHTML=`<div class="preview-shell"><aside class="verify-rail"><div class="panelhead"><span class="label">Verification</span><span class="spacer"></span><span class="dim state-summary">${counts.pass||0} pass · ${(counts.flag||0)+(counts.fail||0)+(counts.unverified||0)} flagged</span></div><div class="verify-list">${checks}</div><div class="decision-section" style="margin-top:auto"><span class="label">Keywords</span><div class="dim">Covered: ${esc((verify.keywords?.covered||[]).join(", ")||"none")}</div><div class="dim">Absent: ${esc((verify.keywords?.absent||[]).join(", ")||"none")}</div></div></aside>
+    <section class="preview-main" id="preview-main"><div class="preview-tabs"><button class="chip on" data-preview-filter="both">Both documents</button><button class="chip" data-preview-filter="cv">CV only</button><button class="chip" data-preview-filter="cover">Letter only</button><span class="spacer"></span><span class="dim">${esc(run.artefacts?.cv_pdf||"cv.pdf")} · ${esc(run.artefacts?.cover_pdf||"cover.pdf")}</span></div><div class="pdf-stage"><iframe title="Compiled CV" class="pdf-frame cv" src="/api/pdf/${encodeURIComponent(run.id)}/cv${query}"></iframe><iframe title="Compiled cover letter" class="pdf-frame cover" src="/api/pdf/${encodeURIComponent(run.id)}/cover${query}"></iframe></div><div class="preview-foot"><span class="dim">Rendered from the compiled PDFs, not from source files. Every check is reproducible.</span><span class="spacer"></span><a class="secondary" href="/api/pdf/${encodeURIComponent(run.id)}/cv${query}" download>Download CV</a><a class="secondary" href="/api/pdf/${encodeURIComponent(run.id)}/cover${query}" download>Download letter</a><button class="secondary" data-recompile="${esc(run.id)}">Recompile</button></div></section></div>`;
+}
+
+async function renderRevise(run){
+  if(!run)return;REVISE_RUN=run.id;const versions=RUNS.filter(r=>r.slug===run.slug&&r.phase==="done");
+  let prefs={preferences:[]};try{prefs=await(await fetch("/api/prefs?t="+T)).json()}catch(_){}
+  const versionRows=versions.map((v,i)=>`<div class="version-row ${v.id===run.id?"current":""}" data-version-preview="${esc(v.id)}"><span>v${versions.length-i}</span><strong>${esc((v.ended_at||v.started_at||"").slice(0,16).replace("T"," "))}</strong><span>${esc(v.kind||"apply")}</span>${v.id===run.id?"<em>current</em>":`<span class="spacer"></span><button class="linkish" data-restore-version="${esc(v.id)}">Restore</button>`}</div>`).join("");
+  const prefRows=(prefs.preferences||[]).map(p=>`<li>${esc(p)}</li>`).join("")||"<li>No managed standing preferences.</li>";
+  el("tailor-view").innerHTML=`<div class="revise-shell"><aside class="versions"><div class="panelhead"><span class="label">Versions</span><span class="spacer"></span><span class="dim">${versions.length}</span></div><div class="version-list">${versionRows}</div><div class="decision-section"><span class="label">Standing preferences · read only</span><ul class="pref-list">${prefRows}</ul><div class="hint">Remove a preference by editing the managed block in the candidate profile.</div></div></aside><section class="revision-current"><div class="panelhead"><span class="label">Current documents</span><span class="spacer"></span><button class="secondary" data-preview="${esc(run.id)}">Open compiled PDFs</button></div><div class="revision-summary"><h1>${esc(run.company)}</h1><h2>${esc(run.role)}</h2><div class="writing"><div>${esc(run.targets?.cv)}</div><div>${esc(run.targets?.cover)}</div></div><div class="whybox">Every successful revision becomes another immutable source + PDF snapshot. Restore replaces these live files and recompiles them; it never creates a second live document set.</div></div></section><aside class="composer"><div class="panelhead"><span class="label">Revise</span></div><form id="revise-form"><div class="decision-section"><span class="label">Scope</span><label><input type="radio" name="scope" value="both" checked> CV + cover</label><label><input type="radio" name="scope" value="cv"> CV only</label><label><input type="radio" name="scope" value="cover"> Cover only</label></div><div class="decision-section"><label class="label" for="revision-note">What should change?</label><textarea id="revision-note" required placeholder="Make the evidence for… more explicit"></textarea><label class="label" for="revision-remember">Standing preference (optional)</label><textarea id="revision-remember" placeholder="Remember this for future applications"></textarea><div class="hint">Only text in this field is written into the managed preference block.</div></div><div class="composer-actions"><button class="primary" type="submit" data-reentry-kind="revise">Revise · about ${money(BUDGET?.revise)}</button><button class="secondary" type="submit" data-reentry-kind="redraft">Redraft · about ${money(BUDGET?.redraft)}</button><button class="secondary" type="submit" data-reentry-kind="apply">Full re-run</button></div></form></aside></div>`;
+  openView("revise",run.company+" · "+run.role);
+}
+
+async function renderCompanies(reload=true){
+  if(reload||!COMPANIES){try{COMPANIES=await(await fetch("/api/companies?t="+T)).json();const suggested=await(await fetch("/api/companies/suggest?t="+T)).json();SUGGESTIONS=suggested.suggestions||suggested.results||suggested||[]}catch(error){toast("could not load companies",{warn:true});return}}
+  const all=COMPANIES.companies||[],rows=all.filter(row=>COMPANY_FILTER==="all"||row.status===COMPANY_FILTER||(COMPANY_FILTER==="no-board"&&row.route!=="ats"));
+  if(!COMPANY_SELECTED||!all.some(row=>row.name===COMPANY_SELECTED))COMPANY_SELECTED=rows[0]?.name;
+  const selected=all.find(row=>row.name===COMPANY_SELECTED),statuses=["all","verified","ambiguous","unresolved","no-board","paused"];
+  const chips=statuses.map(status=>`<button class="chip ${COMPANY_FILTER===status?"on":""}" data-company-filter="${status}">${status}<span class="n">${status==="all"?all.length:(status==="no-board"?all.filter(r=>r.route!=="ats").length:(COMPANIES.counts?.[status]||0))}</span></button>`).join("");
+  const table=rows.map(row=>`<tr class="${row===selected?"sel":""}" data-company-row="${esc(row.name)}"><td><strong>${esc(row.name)}</strong><div class="dim">${esc(row.domain||"no domain")}</div></td><td>${esc(row.vendor&&row.token?row.vendor+" · "+row.token:row.route||"—")}</td><td><span class="phase ${esc(row.status)}">${esc(row.status||"unresolved")}</span></td><td>${esc(row.tier||"—")}</td><td>${esc(row.cadence_days||"—")}d</td><td>${esc((row.last_success_at||"—").slice(0,10))}</td><td>${esc(row.stats?.eligible_jobs??"—")}</td><td>${esc(row.note||"")}</td></tr>`).join("");
+  const candidates=(selected?.candidates||[]).map(candidate=>`<div class="candidate"><strong>${esc(candidate.vendor)} · ${esc(candidate.token)}</strong><div class="dim">${esc(candidate.note||"candidate board")}</div><div><button class="primary" data-company-confirm="${esc(candidate.vendor)}|${esc(candidate.token)}">This is them</button> <a class="linkish" target="_blank" rel="noopener" href="${esc(candidate.url||"#")}">Open board ↗</a></div></div>`).join("");
+  const suggestions=(Array.isArray(SUGGESTIONS)?SUGGESTIONS:[]).slice(0,8).map(item=>`<div class="suggestion"><strong>${esc(item.company||item.name)}</strong><span>${esc(item.count||"")} matching board rows</span><button class="linkish" data-suggest-add="${esc(item.company||item.name)}">Add</button><button class="linkish" data-suggest-never="${esc(item.company||item.name)}">Never</button></div>`).join("");
+  el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main"><div class="companies-head"><div><span class="label">Target companies</span><div class="company-summary">${all.length} rows · ${COMPANIES.routes?.ats||0} ATS · ${COMPANIES.counts?.ambiguous||0} decisions</div><div class="dim">${esc(COMPANIES.path)}</div></div><span class="spacer"></span><button class="secondary" data-restore>← Board</button></div><form id="company-add" class="company-add"><input id="company-name" required placeholder="Company name"><input id="company-website" required placeholder="Website"><select id="company-tier">${[1,2,3,4,5].map(n=>`<option value="${n}">Tier ${n}</option>`).join("")}</select><button class="primary">Add & resolve</button><span class="hint">One careers-page lookup + up to 6 probes: at most 9 requests. No jobs are fetched.</span></form><div class="chips">${chips}</div><div class="tablewrap"><table class="company-table"><thead><tr><th>Company</th><th>Board</th><th>Status</th><th>Tier</th><th>Every</th><th>Last ok</th><th>Yield</th><th>Note</th></tr></thead><tbody>${table}</tbody></table></div></section><aside class="company-rail"><div class="panelhead"><span class="label">Needs your decision</span></div>${selected?`<div class="decision-section"><strong>${esc(selected.name)}</strong><div class="dim">${esc(selected.domain||"")}</div>${candidates||'<div class="dim">No ambiguous evidence for this row.</div>'}${selected.status==="ambiguous"?'<button class="secondary" data-company-neither>Neither candidate</button>':""}<button class="secondary" data-company-resolve="${esc(selected.name)}">Resolve now</button></div><form id="company-edit" class="decision-section"><span class="label">Your fields</span><input id="company-aliases" value="${esc((selected.aliases||[]).join(", "))}" placeholder="Aliases"><input id="company-domain" value="${esc(selected.domain||"")}" placeholder="Domain"><select id="company-edit-tier">${[1,2,3,4,5].map(n=>`<option value="${n}" ${selected.tier===n?"selected":""}>Tier ${n}</option>`).join("")}</select><select id="company-route">${["ats","linkedin","manual"].map(v=>`<option ${selected.route===v?"selected":""}>${v}</option>`).join("")}</select><input id="company-flags" value="${esc((selected.flags||[]).join(", "))}" placeholder="Flags"><input id="company-countries" value="${esc((selected.countries||[]).join(", "))}" placeholder="Countries"><input id="company-cities" value="${esc((selected.cities||[]).join(", "))}" placeholder="Cities"><textarea id="company-note" placeholder="Note">${esc(selected.note||"")}</textarea><button class="secondary">Save owned fields</button></form>`:""}<div class="panelhead"><span class="label">Suggested by your own board</span></div><div class="suggestions">${suggestions||'<div class="panel-empty">No new suggestions.</div>'}</div></aside></div>`;
+  openView("companies",`${all.length} targets · ${COMPANIES.counts?.verified||0} verified`);
+}
+
 function openView(kind,title=""){
-  const app=el("app");app.classList.remove("expanded-board","expanded-applications","expanded-job","tailor-mode");app.classList.add("expanded",kind==="tailor"?"tailor-mode":"expanded-"+kind);
-  el("tailor-view").hidden=kind!=="tailor";
+  const app=el("app");app.classList.remove("expanded-board","expanded-applications","expanded-job","tailor-mode","reader-mode","preview-mode","revise-mode","companies-mode");
+  const parked=["tailor","reader","preview","revise","companies"].includes(kind);
+  app.classList.add("expanded",parked?"tailor-mode":"expanded-"+kind);
+  if(parked)app.classList.add(kind+"-mode");
+  el("tailor-view").hidden=!parked;
   layout.expanded=kind;saveLayout();el("restore").hidden=false;el("brand").textContent=kind==="tailor"?(RUNS.find(r=>r.id===ACTIVE_RUN)?.company||"Tailoring"):"JobFlow";el("local").textContent=title||kind;
 }
 function restoreWorkspace(){
-  const app=el("app");app.classList.remove("expanded","expanded-board","expanded-applications","expanded-job","tailor-mode");el("tailor-view").hidden=true;layout.expanded=null;saveLayout();el("restore").hidden=true;el("brand").textContent="JobFlow";el("local").textContent="local · 127.0.0.1:8765";
+  const app=el("app");app.classList.remove("expanded","expanded-board","expanded-applications","expanded-job","tailor-mode","reader-mode","preview-mode","revise-mode","companies-mode");el("tailor-view").hidden=true;layout.expanded=null;saveLayout();el("restore").hidden=true;el("brand").textContent="JobFlow";el("local").textContent="local · 127.0.0.1:8765";
 }
 
 // Layout state: user collapses and automatic narrow-window collapses stay distinct.
@@ -247,7 +297,7 @@ el("fetch").addEventListener("click",async()=>{
 async function pollActivity(){
   const url="/api/activity?t="+T+"&since="+SEQ+(EPOCH?"&epoch="+EPOCH:"");let data;try{data=await(await fetch(url)).json()}catch(_){return}
   if(data.reset||EPOCH===null)EV=[];EPOCH=data.epoch;SEQ=data.seq;COUNTS=data.counts||{};if(data.events?.length)EV=EV.concat(data.events).slice(-500);
-  renderStrip();if(!el("drawer").hidden)renderActivity();if(el("app").classList.contains("tailor-mode")&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
+  renderStrip();if(!el("drawer").hidden)renderActivity();if(el("app").classList.contains("tailor-mode")&&!el("app").classList.contains("reader-mode")&&!el("app").classList.contains("preview-mode")&&!el("app").classList.contains("revise-mode")&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
 }
 function renderStrip(){
   const last=EV.at(-1);el("stripcount").textContent=COUNTS.all||0;if(!last)return;
@@ -263,22 +313,47 @@ function toggleDrawer(){el("drawer").hidden=!el("drawer").hidden;el("stripcaret"
 function copyLog(){const text=EV.slice(-200).map(e=>[(e.ts||"").slice(11,19),e.source,e.cmd?"$ "+e.cmd:e.msg].join("  ")).join("\n");navigator.clipboard.writeText(text).then(()=>toast("copied "+Math.min(EV.length,200)+" lines"),()=>toast("could not copy",{warn:true}))}
 
 document.addEventListener("click",event=>{
+  if(event.target.closest("#companies-open"))return void renderCompanies();
   if(event.target.closest("#toastundo"))return void undo();
   if(event.target.closest("#striptoggle"))return void toggleDrawer();
   if(event.target.closest("#copylog"))return void copyLog();
   if(event.target.closest("#restore,[data-restore]"))return void restoreWorkspace();
   const collapse=event.target.closest("[data-collapse]");if(collapse)return void toggleCollapse(collapse.dataset.collapse);
-  const expand=event.target.closest("[data-expand]");if(expand){const kind=expand.dataset.expand;if(kind==="board"||kind==="applications"||kind==="job")openView(kind);return}
+  const expand=event.target.closest("[data-expand]");if(expand){const kind=expand.dataset.expand;if(kind==="job")renderReader();else if(kind==="board"||kind==="applications")openView(kind);return}
   const chip=event.target.closest("[data-filter]");if(chip){filter=chip.dataset.filter;sel=0;render();return}
   const act=event.target.closest("[data-act-filter]");if(act){actFilter=act.dataset.actFilter;renderActivity();return}
   const status=event.target.closest("[data-status]");if(status)return void setStatus(status.dataset.status);
   const note=event.target.closest("[data-note]");if(note)return void editNote(JOBS.find(j=>j.url===note.dataset.note));
   const tailor=event.target.closest("[data-tailor]");if(tailor)return void startTailor(tailor.dataset.tailor);
+  const readerRow=event.target.closest("[data-reader-row]");if(readerRow){sel=+readerRow.dataset.readerRow;renderReader();return}
+  const companyFilter=event.target.closest("[data-company-filter]");if(companyFilter){COMPANY_FILTER=companyFilter.dataset.companyFilter;renderCompanies(false);return}
+  const companyRow=event.target.closest("[data-company-row]");if(companyRow){COMPANY_SELECTED=companyRow.dataset.companyRow;renderCompanies(false);return}
+  const companyResolve=event.target.closest("[data-company-resolve]");if(companyResolve){companyResolve.disabled=true;const slug=companyResolve.dataset.companyResolve.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");postCompany("/api/companies/"+slug+"/resolve",{mtime:COMPANIES.mtime}).then(ok=>ok&&renderCompanies());return}
+  const companyConfirm=event.target.closest("[data-company-confirm]");if(companyConfirm){const [vendor,token]=companyConfirm.dataset.companyConfirm.split("|"),slug=COMPANY_SELECTED.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");postCompany("/api/companies/"+slug+"/identity",{mtime:COMPANIES.mtime,decision:"confirm",candidate:{vendor,token}}).then(ok=>ok&&renderCompanies());return}
+  if(event.target.closest("[data-company-neither]")){const slug=COMPANY_SELECTED.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");postCompany("/api/companies/"+slug+"/identity",{mtime:COMPANIES.mtime,decision:"neither"}).then(ok=>ok&&renderCompanies());return}
+  const suggestAdd=event.target.closest("[data-suggest-add]");if(suggestAdd){el("company-name").value=suggestAdd.dataset.suggestAdd;el("company-website").focus();return}
+  const suggestNever=event.target.closest("[data-suggest-never]");if(suggestNever){postCompany("/api/companies",{mtime:COMPANIES.mtime,decision:"never",name:suggestNever.dataset.suggestNever}).then(ok=>ok&&renderCompanies());return}
+  const preview=event.target.closest("[data-preview]");if(preview){const run=RUNS.find(r=>r.id===preview.dataset.preview);if(run)renderPreview(run);return}
+  const revise=event.target.closest("[data-revise]");if(revise){const run=RUNS.find(r=>r.id===revise.dataset.revise);if(run)renderRevise(run);return}
+  const restoreVersion=event.target.closest("[data-restore-version]");if(restoreVersion){restoreVersion.disabled=true;postRun("/api/runs/"+restoreVersion.dataset.restoreVersion+"/restore").then(ok=>{const run=RUNS.find(r=>r.id===REVISE_RUN);if(ok&&run)renderRevise(run)});return}
+  const versionPreview=event.target.closest("[data-version-preview]");if(versionPreview){const run=RUNS.find(r=>r.id===versionPreview.dataset.versionPreview);if(run)renderPreview(run);return}
+  const previewFilter=event.target.closest("[data-preview-filter]");if(previewFilter){const main=el("preview-main");main.classList.toggle("cv-only",previewFilter.dataset.previewFilter==="cv");main.classList.toggle("cover-only",previewFilter.dataset.previewFilter==="cover");document.querySelectorAll("[data-preview-filter]").forEach(node=>node.classList.toggle("on",node===previewFilter));return}
+  const recompile=event.target.closest("[data-recompile]");if(recompile){recompile.disabled=true;postRun("/api/runs/"+recompile.dataset.recompile+"/compile").then(ok=>{const run=RUNS.find(r=>r.id===recompile.dataset.recompile);if(ok&&run)renderPreview(run)});return}
   const runNode=event.target.closest("[data-run]");if(runNode){const run=RUNS.find(r=>r.id===runNode.dataset.run);if(run)renderTailor(run);return}
   const pill=event.target.closest("#runpill");if(pill){const run=RUNS.find(r=>r.id===pill.dataset.run);if(run)renderTailor(run);return}
   const approve=event.target.closest(".approve");if(approve){approve.disabled=true;postRun("/api/runs/"+approve.dataset.runId+"/approve",{phase:approve.dataset.phase});return}
   const cancel=event.target.closest(".cancelrun");if(cancel){postRun("/api/runs/"+cancel.dataset.runId+"/cancel");return}
   const row=event.target.closest("tr[data-row]");if(row&&!event.target.closest("select")){sel=+row.dataset.row;render()}
+});
+async function postCompany(path,body,method="POST"){const response=await fetch(path+"?t="+T,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});let data={};try{data=await response.json()}catch(_){}if(!response.ok){toast(data.error||"registry request failed",{warn:true,ms:5000});if(response.status===409)renderCompanies();return false}COMPANIES=data.companies?data:(data.result&&data.mtime?data:COMPANIES);return true}
+document.addEventListener("submit",event=>{
+  if(event.target.id==="company-add"){event.preventDefault();postCompany("/api/companies",{mtime:COMPANIES.mtime,name:el("company-name").value,website:el("company-website").value,tier:+el("company-tier").value}).then(ok=>ok&&renderCompanies());return}
+  if(event.target.id==="company-edit"){event.preventDefault();const slug=COMPANY_SELECTED.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""),list=id=>el(id).value.split(",").map(v=>v.trim()).filter(Boolean),changes={aliases:list("company-aliases"),domain:el("company-domain").value.trim(),tier:+el("company-edit-tier").value,route:el("company-route").value,flags:list("company-flags"),countries:list("company-countries"),cities:list("company-cities"),note:el("company-note").value};postCompany("/api/companies/"+slug,{mtime:COMPANIES.mtime,changes},"PATCH").then(ok=>ok&&renderCompanies());return}
+  if(event.target.id!=="revise-form")return;event.preventDefault();const button=event.submitter,kind=button?.dataset.reentryKind,run=RUNS.find(r=>r.id===REVISE_RUN);if(!run||!kind)return;
+  const scope=new FormData(event.target).get("scope")||"both",note=el("revision-note").value.trim(),remember=el("revision-remember").value.trim();
+  if(kind!=="apply"&&!note){toast("say what should change",{warn:true});return}
+  button.disabled=true;const body={job_url:run.job_url,kind,note,scope,remember};if(kind!=="apply")body.parent=run.id;
+  postRun("/api/runs",body).then(ok=>{if(ok){restoreWorkspace();toast(kind+" queued",{ms:2500})}else button.disabled=false});
 });
 document.addEventListener("change",event=>{
   if(event.target.matches("select[data-url]"))update(event.target.dataset.url,{status:event.target.value});
@@ -294,7 +369,7 @@ document.addEventListener("keydown",event=>{
   if(event.key==="]"){event.preventDefault();toggleCollapse("right");return}
   if(event.key==="\\"){event.preventDefault();resetLayout();return}
   const rows=shown(),move={j:1,ArrowDown:1,k:-1,ArrowUp:-1};
-  if(event.key in move){event.preventDefault();sel=Math.min(rows.length-1,Math.max(0,sel+move[event.key]));render();return}
+  if(event.key in move){event.preventDefault();sel=Math.min(rows.length-1,Math.max(0,sel+move[event.key]));if(el("app").classList.contains("reader-mode"))renderReader();else render();return}
   if(event.key==="Enter"){const j=selectedJob();if(j)open(j.open_url||j.url,"_blank","noopener");return}
   if(event.key==="e"){event.preventDefault();editNote();return}if(event.key==="t"){event.preventDefault();const j=selectedJob();if(j)startTailor(j.url);return}
   if(event.key==="z"){event.preventDefault();undo();return}
@@ -304,7 +379,8 @@ el("q").addEventListener("input",event=>{q=event.target.value;sel=0;render()});
 
 setInterval(pollActivity,3000);setInterval(pollRuns,6000);
 Promise.all([reloadJobs(),pollActivity(),pollRuns()]).then(()=>{
-  if(layout.expanded==="board"||layout.expanded==="applications"||layout.expanded==="job")openView(layout.expanded);
+  if(layout.expanded==="board"||layout.expanded==="applications")openView(layout.expanded);
+  else if(layout.expanded==="job"||layout.expanded==="reader")renderReader();
   else if(layout.expanded==="tailor"&&activeRuns()[0])renderTailor(activeRuns()[0]);
   else if(layout.expanded){layout.expanded=null;saveLayout()}
   fetch("/api/fetch/status?t="+T).then(r=>r.json()).then(status=>{renderFetchLog(status);if(status.running){el("fetch").disabled=true;POLL=setInterval(pollFetch,2000)}});

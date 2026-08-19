@@ -64,7 +64,8 @@ class SupervisorCase(unittest.TestCase):
         self.fake = fake
 
         config = {"claude_bin": str(fake), "canary_timeout_s": 8,
-                  "timeout_s": {"pass_a": 25, "pass_b": 25},
+                  "timeout_s": {"pass_a": 25, "pass_b": 25, "pass_c": 25},
+                  "inspection_enabled": False,
                   "daily_budget_usd": 50.0}
         (home / "job_scraper" / "board_config.json").write_text(
             json.dumps(config), encoding="utf-8")
@@ -88,6 +89,33 @@ class SupervisorCase(unittest.TestCase):
             self.addCleanup(os.environ.pop, key, None)
 
         self.home = home
+        def fake_compile(record):
+            directory = run_registry.run_dir(record["id"])
+            directory.mkdir(parents=True, exist_ok=True)
+            pdfs = {"cv": directory / "cv.pdf", "cover": directory / "cover.pdf"}
+            for path in pdfs.values():
+                path.write_bytes(b"%PDF-1.4\n1 0 obj <</Type /Page>> endobj\n%%EOF")
+            verify = {"schema": "jobflow.verify/1", "run_id": record["id"],
+                      "checks": [{"id": "visual_layout", "label": "Visual layout",
+                                  "state": "unverified", "detail": "test fixture",
+                                  "evidence": {}}],
+                      "keywords": {"covered": [], "absent": [], "source": "posting"}}
+            (directory / "verify.json").write_text(json.dumps(verify), encoding="utf-8")
+            artefacts = {"cv_source": record["targets"]["cv"],
+                         "cover_source": record["targets"]["cover"],
+                         "cv_pdf": str(pdfs["cv"].relative_to(home)),
+                         "cover_pdf": str(pdfs["cover"].relative_to(home))}
+            return pdfs, verify, artefacts
+
+        self._docs_patches = [
+            mock.patch.object(runs.docs, "compile_record", side_effect=fake_compile),
+            mock.patch.object(runs.docs, "archive_posting",
+                              return_value="documents/applications/test/job_posting.md"),
+            mock.patch.object(runs.docs, "merge_tracker", return_value="appended"),
+        ]
+        for patcher in self._docs_patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.supervisor = runs.Supervisor()
         self.supervisor.ensure_worker()
         # Without this the worker outlives its test, keeps draining its queue,
@@ -169,7 +197,8 @@ class HappyPathTest(SupervisorCase):
         record = run_registry.get(run_id)
         self.assertTrue((self.home / record["targets"]["cv"]).exists())
         self.assertTrue((self.home / record["targets"]["cover"]).exists())
-        self.assertEqual(sorted(record["artefacts"]), ["cover", "cv"])
+        self.assertEqual(sorted(record["artefacts"]),
+                         ["cover_pdf", "cover_source", "cv_pdf", "cv_source", "posting"])
 
     def test_the_reported_cost_is_what_the_ledger_is_debited_with(self):
         code, body = self.start()
@@ -191,6 +220,75 @@ class HappyPathTest(SupervisorCase):
         kinds = [json.loads(l)["type"] for l in stream.read_text(encoding="utf-8").splitlines()]
         self.assertIn("system", kinds)
         self.assertIn("result", kinds)
+
+    def test_revise_forks_the_parent_session_and_publishes_a_version(self):
+        parent = self.through_gate()
+        self.supervisor.approve(parent, "awaiting_approval")
+        self.assertEqual(self.wait_phase(parent, "done", "failed"), "done")
+        parent_record = run_registry.get(parent)
+        code, body = self.start(kind="revise", parent=parent, scope="cv",
+                                note="tighten the opening evidence")
+        self.assertEqual(code, 202, body)
+        child = body["run_id"]
+        self.assertEqual(self.wait_phase(child, "done", "failed"), "done",
+                         run_registry.get(child).get("error"))
+        child_record = run_registry.get(child)
+        self.assertEqual(child_record["parent"], parent)
+        self.assertNotEqual(child_record["session_id"], parent_record["session_id"])
+        self.assertEqual(child_record["resume_session_id"], parent_record["session_id"])
+
+
+class DocumentsPipelineTest(SupervisorCase):
+    def setUp(self):
+        super().setUp()
+        path = self.home / "job_scraper" / "board_config.json"
+        config = json.loads(path.read_text(encoding="utf-8"))
+        config["inspection_enabled"] = True
+        path.write_text(json.dumps(config), encoding="utf-8")
+
+    def _complete(self):
+        run_id = self.through_gate()
+        self.assertEqual(self.supervisor.approve(run_id, "awaiting_approval")[0], 200)
+        self.assertEqual(self.wait_phase(run_id, "done", "failed"), "done",
+                         run_registry.get(run_id).get("error"))
+        return run_id
+
+    def test_pass_c_proves_it_read_both_pdfs(self):
+        run_id = self._complete()
+        verify = json.loads((run_registry.run_dir(run_id) / "verify.json").read_text())
+        visual = next(check for check in verify["checks"]
+                      if check["id"] == "visual_layout")
+        self.assertEqual(visual["state"], "pass")
+        self.assertEqual(len(visual["evidence"]["read"]), 2)
+        record = run_registry.get(run_id)
+        self.assertIn("cv_pdf", record["artefacts"])
+        self.assertIn("posting", record["artefacts"])
+
+    def test_missing_read_evidence_can_never_turn_green(self):
+        os.environ["FAKE_INSPECT"] = "noread"
+        self.addCleanup(os.environ.pop, "FAKE_INSPECT", None)
+        run_id = self._complete()
+        verify = json.loads((run_registry.run_dir(run_id) / "verify.json").read_text())
+        visual = next(check for check in verify["checks"]
+                      if check["id"] == "visual_layout")
+        self.assertEqual(visual["state"], "unverified")
+
+    def test_blocked_inspection_is_published_as_failure(self):
+        os.environ["FAKE_INSPECT"] = "blocked"
+        self.addCleanup(os.environ.pop, "FAKE_INSPECT", None)
+        run_id = self._complete()
+        verify = json.loads((run_registry.run_dir(run_id) / "verify.json").read_text())
+        visual = next(check for check in verify["checks"]
+                      if check["id"] == "visual_layout")
+        self.assertEqual(visual["state"], "fail")
+
+    def test_compile_failure_stops_before_inspection_and_publication(self):
+        run_id = self.through_gate()
+        with mock.patch.object(runs.docs, "compile_record",
+                               side_effect=runs.docs.DocumentError("compile exploded")):
+            self.supervisor.approve(run_id, "awaiting_approval")
+            self.assertEqual(self.wait_phase(run_id, "failed", "done"), "failed")
+        self.assertIn("compile exploded", run_registry.get(run_id)["error"])
 
 
 class GuardEnforcementTest(SupervisorCase):
@@ -421,13 +519,16 @@ class AdmissionTest(SupervisorCase):
         self.assertEqual(code, 429)
         self.assertIn("budget", body["error"])
 
-    def test_standing_preferences_are_refused_rather_than_half_supported(self):
+    def test_standing_preferences_are_recorded_for_the_guarded_draft(self):
         code, body = self.start(remember="never quote the 2,000-user figure")
-        self.assertEqual(code, 501)
+        self.assertEqual(code, 202, body)
+        self.assertEqual(run_registry.get(body["run_id"])["remember"],
+                         "never quote the 2,000-user figure")
 
-    def test_revise_and_redraft_are_not_pretended_to_work(self):
+    def test_revise_requires_a_completed_parent(self):
         code, body = self.start(kind="revise")
-        self.assertEqual(code, 501)
+        self.assertEqual(code, 409)
+        self.assertIn("completed parent", body["error"])
 
 
 class ContractFileTest(SupervisorCase):
@@ -546,9 +647,10 @@ class LedgerTest(SupervisorCase):
         for n in range(4):
             code, body = self.start(url="https://example.com/jobs/%d" % n)
             admitted.append(code)
-        # pass_a 0.40 + pass_b 2.00 = 2.40 worst case; $5 admits two, not four.
-        self.assertEqual(admitted[:2], [202, 202])
-        self.assertEqual(admitted[2], 429)
+        # Pass A+B plus the bounded inspection/repair loop is $4.15 worst case;
+        # a $5 daily ceiling therefore admits exactly one, not four.
+        self.assertEqual(admitted[0], 202)
+        self.assertEqual(admitted[1], 429)
         self.assertIn("in flight", self.supervisor.start(
             {"job_url": "https://example.com/jobs/9", "company": "A", "role": "B"})[1]["error"])
 

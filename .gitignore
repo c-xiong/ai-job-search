@@ -95,6 +95,8 @@ job_scraper/run_state/
 job_scraper/board_config.json
 job_scraper/.fetch.lock
 job_scraper/.board.lock
+job_scraper/.companies.lock
+.tracker.lock
 job_scraper/.runs.lock
 job_scraper/.pipeline.lock
 job_scraper/.model.lock
