@@ -16,12 +16,28 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jobs_md  # noqa: E402
 
 ROOT = jobs_md.ROOT
+
+# Set by the board for the duration of one collection run; None everywhere else.
+#
+# It is a module hook rather than a parameter threaded through `collect_linkedin`,
+# `collect_freehire` and `ats_fetch.collect` because those three signatures are
+# also the terminal path (`tools/scrape_cron.py`), and the point of this hook is
+# that the terminal path does not change at all. One fetch runs at a time -
+# `fetch_jobs.RunLock` guarantees it - so a single hook is unambiguous.
+#
+# What it buys: a *successful* run used to leave no trace of what it executed.
+# `bun()` returned parsed JSON and nothing else, and the exit code was logged
+# only on failure, so "which command produced these 48 rows, and how long did it
+# take" was unanswerable. Now every call emits start and finish.
+EMITTER = None
+
 LINKEDIN = ".agents/skills/linkedin-search/cli/src/cli.ts"
 FREEHIRE = ".agents/skills/freehire-search/cli/src/cli.ts"
 ATS = ".agents/skills/ats-search/cli/src/cli.ts"
@@ -62,11 +78,19 @@ def bun(args, log, timeout=120):
     non-zero exit, stdout ignored - is what would have thrown away a whole run's
     good results (plan §10.3).
     """
+    argv = ["bun", "run"] + list(args)
+    emit = EMITTER
+    if emit:
+        emit("start", argv)
+    started = time.monotonic()
     try:
-        proc = subprocess.run(["bun", "run"] + args, cwd=str(ROOT), timeout=timeout,
+        proc = subprocess.run(argv, cwd=str(ROOT), timeout=timeout,
                               capture_output=True, text=True)
     except (OSError, subprocess.TimeoutExpired) as exc:
         log("  ! cli failed: %s" % exc)
+        if emit:
+            emit("finish", argv, exit_code=None, ms=(time.monotonic() - started) * 1000,
+                 parsed=False, stderr=str(exc))
         return None
     payload = None
     if proc.stdout.strip():
@@ -80,6 +104,10 @@ def bun(args, log, timeout=120):
             log("  . stdout still parsed - keeping what the run did produce")
     elif payload is None:
         log("  ! unparseable output (%d bytes)" % len(proc.stdout))
+    if emit:
+        emit("finish", argv, exit_code=proc.returncode,
+             ms=(time.monotonic() - started) * 1000, parsed=payload is not None,
+             stderr=(proc.stderr or "").strip()[:400] or None)
     return payload
 
 

@@ -14,7 +14,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from tools import collectors, fetch_jobs, jobs_board
+from tools import collectors, fetch_jobs
+from tools.board import server as board_server, state as board_state
 
 
 def silent(_message):
@@ -254,7 +255,7 @@ class BoardFetchRouteTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.server = jobs_board.ThreadingHTTPServer(("127.0.0.1", 0), jobs_board.Handler)
+        cls.server = board_server.ThreadingHTTPServer(("127.0.0.1", 0), board_server.Handler)
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -265,7 +266,7 @@ class BoardFetchRouteTest(unittest.TestCase):
         cls.server.server_close()
 
     def setUp(self):
-        jobs_board.FETCH.update({"running": False, "log": [], "sources": [],
+        board_server.FETCH.update({"running": False, "log": [], "sources": [],
                                  "error": None, "finished_at": None})
         # No test in this class may start a real collection: it would hit five
         # vendors and write to the developer's own job board. The worker is
@@ -273,18 +274,18 @@ class BoardFetchRouteTest(unittest.TestCase):
         # ThreadingHTTPServer, so stubbing Thread itself deadlocks the requests.
         self.started = []
         started = self.started
-        real_worker = jobs_board.fetch_worker
+        real_worker = board_server.fetch_worker
 
         def recording_worker(*args):
             started.append(args)
-            with jobs_board.FETCH_LOCK:
-                jobs_board.FETCH["running"] = False
+            with board_server.FETCH_LOCK:
+                board_server.FETCH["running"] = False
 
-        jobs_board.fetch_worker = recording_worker
-        self.addCleanup(lambda: setattr(jobs_board, "fetch_worker", real_worker))
-        self.addCleanup(lambda: jobs_board.FETCH.update({"running": False}))
+        board_server.fetch_worker = recording_worker
+        self.addCleanup(lambda: setattr(board_server, "fetch_worker", real_worker))
+        self.addCleanup(lambda: board_server.FETCH.update({"running": False}))
 
-    def post(self, path, body=None, token=jobs_board.TOKEN):
+    def post(self, path, body=None, token=board_server.TOKEN):
         url = "http://127.0.0.1:%d%s" % (self.port, path)
         if token is not None:
             url += "?t=" + token
@@ -303,15 +304,15 @@ class BoardFetchRouteTest(unittest.TestCase):
         status, body = self.post("/api/fetch", {"sources": ["ats"]}, token=None)
         self.assertEqual(status, 403)
         self.assertEqual(body["error"], "forbidden")
-        self.assertFalse(jobs_board.FETCH["running"])
+        self.assertFalse(board_server.FETCH["running"])
 
     def test_a_wrong_token_is_refused(self):
         status, _body = self.post("/api/fetch", {"sources": ["ats"]}, token="not-the-token")
         self.assertEqual(status, 403)
-        self.assertFalse(jobs_board.FETCH["running"])
+        self.assertFalse(board_server.FETCH["running"])
 
     def test_a_concurrent_fetch_is_refused_rather_than_doubled(self):
-        jobs_board.FETCH["running"] = True
+        board_server.FETCH["running"] = True
         status, body = self.post("/api/fetch", {"sources": ["ats"]})
         self.assertEqual(status, 409)
         self.assertIn("already running", body["error"])
@@ -320,7 +321,7 @@ class BoardFetchRouteTest(unittest.TestCase):
         status, body = self.post("/api/fetch", {"sources": ["ats", "monster"]})
         self.assertEqual(status, 400)
         self.assertIn("sources must be", body["error"])
-        self.assertFalse(jobs_board.FETCH["running"])
+        self.assertFalse(board_server.FETCH["running"])
 
     def test_an_empty_source_list_is_rejected(self):
         # `[]` is falsy, so a plain `or SOURCES` turns "I deselected everything"
@@ -343,7 +344,7 @@ class BoardFetchRouteTest(unittest.TestCase):
         self.assertEqual(status, 202)
         self.assertEqual(body["sources"], list(fetch_jobs.SOURCES))
 
-    def get(self, path, token=jobs_board.TOKEN):
+    def get(self, path, token=board_server.TOKEN):
         url = "http://127.0.0.1:%d%s" % (self.port, path)
         if token is not None:
             url += "?t=" + token
@@ -357,9 +358,28 @@ class BoardFetchRouteTest(unittest.TestCase):
         status, html = self.get("/")
         self.assertEqual(status, 200)
         for marker in ('id="fetch"', 'id="s-ats"', 'id="s-freehire"', 'id="s-linkedin"',
-                       "/api/fetch/status", 'id="degraded"'):
+                       'id="degraded"', 'src="/static/app.js"'):
             self.assertIn(marker, html, marker)
         self.assertNotIn("__TOKEN__", html)
+
+    def test_the_script_is_served_and_still_drives_the_fetch_endpoints(self):
+        """The controls moved to a file; the wiring has to have moved with them.
+
+        Before M1 the page was one constant, so asserting `/api/fetch/status`
+        appeared in the HTML covered both the markup and the polling loop. Now
+        they are two files, and checking only the markup would pass while the
+        button did nothing at all.
+        """
+        status, js = self.get("/static/app.js")
+        self.assertEqual(status, 200)
+        for marker in ("/api/fetch/status", "/api/fetch?t=", "/api/jobs?t=",
+                       "/api/update?t=", "/api/activity?t="):
+            self.assertIn(marker, js, marker)
+
+    def test_static_assets_do_not_leak_the_source_tree(self):
+        for path in ("/static/../server.py", "/static/nope.css"):
+            status, _body = self.get(path)
+            self.assertEqual(status, 404, path)
 
     def test_the_page_itself_needs_the_token(self):
         status, _body = self.get("/", token=None)
@@ -472,17 +492,17 @@ class PrimaryUrlTest(unittest.TestCase):
                 {"portal": "ats-search", "url": "https://jobs.ashbyhq.com/deepjudge/41c7"},
             ],
         }
-        self.assertEqual(jobs_board.primary_url(entry), "https://jobs.ashbyhq.com/deepjudge/41c7")
+        self.assertEqual(board_state.primary_url(entry), "https://jobs.ashbyhq.com/deepjudge/41c7")
         # And the row's own key is untouched - nothing is ever re-keyed.
         self.assertEqual(entry["url"], "https://www.linkedin.com/jobs/view/4451224579")
 
     def test_a_row_with_no_source_history_falls_back_to_its_url(self):
-        self.assertEqual(jobs_board.primary_url({"url": "https://example.test/1"}),
+        self.assertEqual(board_state.primary_url({"url": "https://example.test/1"}),
                          "https://example.test/1")
 
     def test_a_primary_source_with_no_matching_entry_falls_back(self):
         entry = {"url": "https://example.test/1", "primary_source": "ats-search", "sources": []}
-        self.assertEqual(jobs_board.primary_url(entry), "https://example.test/1")
+        self.assertEqual(board_state.primary_url(entry), "https://example.test/1")
 
 
 if __name__ == "__main__":

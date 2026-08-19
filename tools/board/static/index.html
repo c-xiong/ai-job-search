@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="board-token" content="__TOKEN__">
+<title>Job Board</title>
+<link rel="stylesheet" href="/static/app.css">
+</head><body>
+<div class="banner" id="degraded" hidden></div>
+<header>
+  <div class="row1">
+    <h1>Job Board</h1>
+    <div class="chips" id="chips"></div>
+    <input type="search" id="q" placeholder="filter by role, company, location…">
+  </div>
+  <div class="row2">
+    <button class="go" id="fetch">Fetch new jobs</button>
+    <label class="src"><input type="checkbox" id="s-ats" checked> ATS boards</label>
+    <label class="src"><input type="checkbox" id="s-freehire" checked> freehire</label>
+    <label class="src"><input type="checkbox" id="s-linkedin" checked> LinkedIn</label>
+    <details class="adv"><summary style="cursor:pointer">advanced</summary>
+      <span class="adv" style="margin-left:8px">
+        companies <input type="number" id="mc" value="8" min="1" max="20">
+        rows <input type="number" id="mn" value="40" min="1" max="200">
+        LinkedIn details <input type="number" id="md" value="15" min="0" max="20">
+      </span>
+    </details>
+    <span id="fstat"></span>
+  </div>
+</header>
+<table><thead><tr>
+  <th style="width:52px">Fit</th><th>Role</th><th style="width:15%">Company</th>
+  <th style="width:11%">Location</th><th style="width:74px">Posted</th>
+  <th style="width:96px">Status</th><th>Why</th><th style="width:16%">My notes</th>
+  <th style="width:46px"></th>
+</tr></thead><tbody id="tb"></tbody></table>
+<div class="empty" id="empty" hidden>Nothing here.</div>
+
+<!-- The activity drawer, collapsed. What the system just did, with the command
+     and the exit code, so a wrong answer is debuggable rather than mysterious. -->
+<section id="drawer" hidden>
+  <div class="drawerhead">
+    <span class="lab">Activity</span>
+    <div class="chips" id="actchips"></div>
+    <span style="flex:1"></span>
+    <label class="src"><input type="checkbox" id="follow" checked> follow</label>
+    <button class="linkish" id="copylog">Copy last 200</button>
+  </div>
+  <div id="actlog"></div>
+  <div class="drawerfoot">
+    <span>job_scraper/activity.jsonl</span><span>job_scraper/scrape.log</span>
+    <span>job_scraper/fetch_status.json</span>
+    <span style="margin-left:auto">a tail of those files — nothing is invented for the UI</span>
+  </div>
+</section>
+
+<footer>
+  <span><kbd>j</kbd><kbd>k</kbd> move</span>
+  <span><kbd>s</kbd> star <kbd>y</kbd> yes <kbd>m</kbd> maybe <kbd>n</kbd> no <kbd>g</kbd> gate <kbd>a</kbd> applied <kbd>u</kbd> new</span>
+  <span><kbd>e</kbd> note</span><span><kbd>z</kbd> undo</span><span><kbd>enter</kbd> open posting</span>
+  <span><kbd>/</kbd> search</span><span id="count"></span>
+</footer>
+
+<div id="strip">
+  <span class="tag" id="striptag">server</span>
+  <span class="time" id="striptime"></span>
+  <span class="msg" id="stripmsg">starting…</span>
+  <span style="flex:1"></span>
+  <span class="dur" id="stripdur"></span>
+  <button class="linkish" id="striptoggle">Activity <span class="n" id="stripcount">0</span> <span id="stripcaret">⌃</span></button>
+</div>
+
+<div id="toast"><span id="toastmsg"></span><button id="toastundo" hidden>Undo <span id="toastsec"></span></button></div>
+<script src="/static/app.js"></script>
+</body></html>

@@ -243,6 +243,7 @@ jobs:
           job_scraper/scrape_config.json
           job_scraper/companies.json
           job_scraper/jobs.md
+          job_scraper/activity.jsonl
           cv/my_cv.tex
           PATHS
           tracked_private=$(git ls-files -- docs cv/variants cv/out)

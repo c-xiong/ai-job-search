@@ -83,6 +83,9 @@ job_scraper/ats_cache/
 # Transient state for the board's Fetch button: a pid lock and a status file
 # whose log names the companies being fetched.
 job_scraper/fetch_status.json
+# The board's structured activity log: every command run, with the companies
+# fetched and the files written. Same privacy class as scrape.log above.
+job_scraper/activity.jsonl
 job_scraper/.fetch.lock
 job_scraper/.board.lock
 *_BehavioralReport.pdf

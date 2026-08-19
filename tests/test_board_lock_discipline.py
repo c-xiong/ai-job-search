@@ -51,7 +51,7 @@ def unguarded_writes(path):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             func = node.name
         if isinstance(node, ast.Call) and _call_name(node) in WRITERS:
-            # The definition of save_seen is not a call site, and jobs_board's
+            # The definition of save_seen is not a call site, and the board's
             # save() helper is called from handlers that hold the lock.
             if not _guarded_by_board_lock(stack):
                 found.append((func, node.lineno))
@@ -63,14 +63,17 @@ def unguarded_writes(path):
 
 
 class BoardLockDisciplineTest(unittest.TestCase):
-    # jobs_board.save() is a one-line helper; every caller holds the lock, and
+    # board.state.save() is a one-line helper; every caller holds the lock, and
     # the assertion below covers those callers.
-    ALLOWED = {("tools/jobs_board.py", "save")}
+    ALLOWED = {("tools/board/state.py", "save")}
 
     def test_every_board_write_is_inside_board_lock(self):
         offenders = []
-        for path in sorted(TOOLS.glob("*.py")):
-            rel = "tools/" + path.name
+        # rglob, not glob: the board server moved into tools/board/ and a guard
+        # that only reads tools/*.py would have stopped covering it without
+        # failing - the worst way for a structural test to break.
+        for path in sorted(TOOLS.rglob("*.py")):
+            rel = "tools/" + str(path.relative_to(TOOLS))
             for func, line in unguarded_writes(path):
                 if (rel, func) in self.ALLOWED:
                     continue

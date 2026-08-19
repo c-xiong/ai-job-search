@@ -63,6 +63,28 @@ class AlreadyRunning(Exception):
     """Raised when another fetch holds the lock."""
 
 
+class activity_hook:
+    """Install the board's activity callback on `collectors` for one run.
+
+    A context manager rather than a bare assignment so an exception cannot leave
+    the board's hook attached to a later terminal-driven collection in the same
+    process. `None` restores exactly the previous state, which is what keeps the
+    terminal path unchanged.
+    """
+
+    def __init__(self, emit):
+        self.emit = emit
+
+    def __enter__(self):
+        self.previous = collectors.EMITTER
+        collectors.EMITTER = self.emit
+        return self
+
+    def __exit__(self, *exc):
+        collectors.EMITTER = self.previous
+        return False
+
+
 class RunLock:
     """One fetch at a time, enforced by the OS rather than by a heuristic.
 
@@ -230,7 +252,7 @@ def load_seen():
 
 
 def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=None,
-          dry_run=False, lines=None):
+          dry_run=False, lines=None, emit=None):
     """Run the selected sources once and merge everything into the board.
 
     Collect first, write last. A run takes a minute or two, and the board is
@@ -242,6 +264,10 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
     handler takes, and an OS-level one, because `python3 tools/fetch_jobs.py` in a
     terminal and an open board are two *processes*.
 
+    `emit` is the board's activity hook: a callable taking (phase, argv, **kw),
+    installed on `collectors` for the duration of the run and removed afterwards.
+    None - the terminal default - leaves the collection path exactly as it was.
+
     Returns (summaries, log_lines). Raises AlreadyRunning if a fetch is in flight.
     """
     lines = lines if lines is not None else []
@@ -250,7 +276,7 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
     today = date.today().isoformat()
     summaries = []
 
-    with RunLock():
+    with RunLock(), activity_hook(emit):
         write_status(True, lines, summaries)
         log("fetch start - sources: %s%s" % (", ".join(sources), " (dry run)" if dry_run else ""))
 
