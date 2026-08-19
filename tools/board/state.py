@@ -65,6 +65,9 @@ def jobs_payload():
             "why": why,
             "note": entry.get("user_note", ""),
             "portal": entry.get("portal", ""),
+            "primary_source": entry.get("primary_source") or entry.get("portal", ""),
+            "sources": [source.get("portal", "") for source in entry.get("sources") or []
+                        if isinstance(source, dict) and source.get("portal")],
             # M2.5's Job panel renders the posting already stored by collectors.
             # This is payload shaping only; there is deliberately no new fetch
             # route or server-side reader state.

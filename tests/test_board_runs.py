@@ -623,6 +623,16 @@ class WriteEvidenceTest(SupervisorCase):
         self.assertEqual(job.allowed_writes(),
                          {str((self.home / "allowed.tex").resolve())})
 
+    def test_activity_command_hides_the_internal_budget_cap(self):
+        from board import run_proc
+        argv = ["claude", "--max-budget-usd", "0.40", "-p", "long prompt"]
+        job = run_proc.Pass("r-x", "l", argv, {}, 0.4, 1, "nonce",
+                            self.home / "hook.jsonl", model_argv=argv)
+        shown = job._reportable_argv()
+        self.assertNotIn("--max-budget-usd", shown)
+        self.assertNotIn("0.40", shown)
+        self.assertEqual(shown[-1], "<prompt 11 chars>")
+
 
 class VerifyRequestTest(SupervisorCase):
     def test_the_schema_and_keywords_are_both_checked(self):

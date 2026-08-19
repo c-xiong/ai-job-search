@@ -181,8 +181,8 @@ class Pass:
         directory.mkdir(parents=True, exist_ok=True)
         stream_path = directory / "stream.jsonl"
 
-        activity.emit("claude", "%s starting - stops at about $%.2f, %ds wall clock"
-                      % (self.label, self.budget, self.timeout),
+        activity.emit("claude", "%s starting - %ds wall clock" %
+                      (self.label, self.timeout),
                       cmd=" ".join(self._reportable_argv()), run_id=self.run_id)
 
         before = git_snapshot(run_registry.ROOT)
@@ -241,9 +241,8 @@ class Pass:
             run_registry.debit(self.cost, self.run_id)
 
         self._report_drift(before, expected_writes)
-        activity.emit("claude", "%s ended - %s, $%.4f reported"
-                      % (self.label, (self.result or {}).get("subtype", "no result event"),
-                         self.cost),
+        activity.emit("claude", "%s ended - %s" %
+                      (self.label, (self.result or {}).get("subtype", "no result event")),
                       level="info" if self.exit_code == 0 else "error",
                       cmd=" ".join(self._reportable_argv()),
                       exit_code=self.exit_code, ms=timer.ms, run_id=self.run_id,
@@ -268,10 +267,9 @@ class Pass:
             raise RunFailure("%s produced no result event (exit %s). stderr: %s"
                              % (self.label, self.exit_code, " / ".join(tail[-3:]) or "empty"))
         if self.result.get("subtype") == "error_max_budget_usd":
-            raise RunFailure("%s hit its budget cap (asked for $%.2f, reported $%.4f). The "
-                             "cap stops the run after the turn that crosses it, so raise it "
-                             "in job_scraper/board_config.json rather than retrying blind."
-                             % (self.label, self.budget, self.cost))
+            raise RunFailure("%s hit the supervisor's internal safety cap. Raise the "
+                             "corresponding limit in job_scraper/board_config.json rather "
+                             "than retrying blind." % self.label)
         if self.result.get("is_error") or self.exit_code != 0:
             raise RunFailure("%s failed: %s" % (self.label, str(
                 self.result.get("result") or tail[-1:] or "exit %s" % self.exit_code)[:500]))
@@ -282,7 +280,14 @@ class Pass:
         characters and the point of showing the command is the flags."""
         out = []
         skip = False
+        hide_value = False
         for index, item in enumerate(self.model_argv):
+            if hide_value:
+                hide_value = False
+                continue
+            if item == "--max-budget-usd":
+                hide_value = True
+                continue
             if skip:
                 out.append("<prompt %d chars>" % len(item))
                 skip = False

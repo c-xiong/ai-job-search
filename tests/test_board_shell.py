@@ -48,6 +48,8 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn("rightCollapsed:false", self.js)
         self.assertIn("autoLeft:false", self.js)
         self.assertIn("autoRight:false", self.js)
+        self.assertIn("shortcutsHidden:false", self.js)
+        self.assertIn("toggleShortcuts", self.js)
         self.assertIn('event.key==="["', self.js)
         self.assertIn('event.key==="]"', self.js)
         self.assertIn('event.key==="\\\\"', self.js)
@@ -82,6 +84,17 @@ class ShellMarkupTest(unittest.TestCase):
                 continue
             self.assertIn(marker, self.js)
 
+    def test_source_column_custom_text_modal_and_no_price_chrome(self):
+        self.assertIn('<th class="sourcecol">Source</th>', self.html)
+        self.assertIn('id="text-modal"', self.html)
+        self.assertIn('id="text-modal-input"', self.html)
+        self.assertIn('id="shortcut-hide"', self.html)
+        self.assertIn("LinkedIn browser", self.js)
+        self.assertIn("openTextModal", self.js)
+        self.assertNotIn("prompt(", self.js)
+        self.assertNotIn("money(", self.js)
+        self.assertNotIn("<th>Cost</th>", self.html)
+
     def test_approved_tokens_and_hard_centre_minimum_are_present(self):
         for token in ("--bg:", "--panel:", "--line:", "--text:", "--dim:",
                       "--sel:", "--selbar:", "--high:", "--medium:", "--low:",
@@ -99,12 +112,18 @@ class JobPanelPayloadTest(unittest.TestCase):
             "location": "Zurich",
             "posted": "2026-08-19",
             "description": "Build reliable systems.",
+            "portal": "linkedin-browser",
+            "primary_source": "linkedin-browser",
+            "sources": [{"portal": "linkedin-browser"}, {"portal": "linkedin-search"}],
         }
         with mock.patch.object(state, "load", return_value={entry["url"]: entry}), \
              mock.patch.object(state.jobs_md, "priority_score", return_value=0):
             payload = state.jobs_payload()
         self.assertEqual(payload["jobs"][0]["description"],
                          "Build reliable systems.")
+        self.assertEqual(payload["jobs"][0]["primary_source"], "linkedin-browser")
+        self.assertEqual(payload["jobs"][0]["sources"],
+                         ["linkedin-browser", "linkedin-search"])
 
 
 if __name__ == "__main__":
