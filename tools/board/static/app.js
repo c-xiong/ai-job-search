@@ -72,6 +72,7 @@ function render(){
           ? `<span class="dupe" title="possible duplicate of: ${esc(j.dupes.join(", "))}">· possible dupe</span>` : ""}</td>
       <td class="note" data-url="${esc(j.url)}" title="click to edit">${esc(j.note)}</td>
       <td><a class="open" href="${esc(j.open_url || j.url)}" target="_blank" rel="noopener">open ↗</a></td>
+      <td>${runCell(j)}</td>
     </tr>`).join("");
   el("empty").hidden = rows.length>0;
   el("count").textContent = `${rows.length} shown · ${JOBS.length} total`;
@@ -287,11 +288,152 @@ function copyLog(){
     ()=>toast("could not copy", {warn:true}));
 }
 
+// -------------------------------------------------------------------- runs
+// Tailoring a CV costs money and takes minutes, so the panel never hides what
+// stage a run is in, what it has spent, or what it is about to spend. Pass A
+// evaluates and stops; you approve; pass B drafts. The approve button carries
+// the pass-B figure because that is the only moment the number can change a
+// decision.
+let RUNS=[], QUEUE=[], LEDGER=null, BUDGET=null, RUNPOLL=null;
+
+const RUNNING = ["evaluating","queued","drafting","reviewing","compiling","inspecting"];
+const runByUrl = url => RUNS.find(r => r.job_url===url
+  && (RUNNING.includes(r.phase) || r.phase==="awaiting_approval"));
+
+function runCell(j){
+  const r = runByUrl(j.url);
+  if(!r) return `<button class="linkish tailor" data-url="${esc(j.url)}">Tailor</button>`;
+  if(r.phase==="awaiting_approval")
+    return `<span class="ph await" title="waiting for your approval">approve →</span>`;
+  return `<span class="ph run" title="${esc(r.phase)}">${esc(r.phase.slice(0,6))}…</span>`;
+}
+
+function money(n){ return "$"+(Math.round((n||0)*100)/100).toFixed(2); }
+
+function elapsed(r){
+  if(!r.started_at) return null;
+  const end = r.ended_at ? new Date(r.ended_at) : new Date();
+  const secs = Math.max(0, Math.round((end - new Date(r.started_at))/1000));
+  if(!secs) return null;
+  return secs < 90 ? secs+" s" : Math.round(secs/60)+" min";
+}
+
+function renderRuns(){
+  const live = RUNS.filter(r => RUNNING.includes(r.phase)
+    || ["awaiting_approval","orphaned"].includes(r.phase));
+  const recent = RUNS.filter(r => !live.includes(r)).slice(0,3);
+  const rows = live.concat(recent);
+  el("runs").hidden = rows.length===0;
+  if(!rows.length) return;
+
+  el("runqueue").textContent = QUEUE.length ? QUEUE.length+" queued" : "";
+  el("runledger").textContent = LEDGER
+    ? money(LEDGER.spent_today_usd)+" spent today of "+money(LEDGER.daily_budget_usd)
+      + (LEDGER.reserved_usd ? " · "+money(LEDGER.reserved_usd)+" committed" : "")
+    : "";
+
+  el("runlist").innerHTML = rows.map(r=>{
+    const fit = r.fit;
+    const head = `<span class="ph ${r.phase}">${esc(r.phase)}</span>`
+      + `<span class="who">${esc(r.role)} · ${esc(r.company)}</span>`;
+    // The brief's transparency requirement, stated for a run: what it cost, how
+    // long it took, and what its process exited with - not just a phase word.
+    // The real argv and the per-tool trace are one click away in the activity
+    // drawer, filtered to `claude`.
+    const facts = [
+      (r.cost && r.cost.total_usd) ? money(r.cost.total_usd) : null,
+      elapsed(r),
+      r.exit_code != null ? "exit "+r.exit_code : null,
+    ].filter(Boolean).join(" · ");
+    const cost = facts ? `<span class="muted">${esc(facts)}</span>` : "";
+    let body = "", actions = "";
+
+    if(r.phase==="awaiting_approval" && fit){
+      const gates = ["language_gate","location_gate"].map(g =>
+        `<span class="gate ${esc(fit[g]||"")}">${g.split("_")[0]} ${esc(fit[g]||"")}</span>`).join("");
+      body = `<div class="fit">`
+        + `<span class="score">${esc(String(fit.overall))}</span>`
+        + `<span class="verdict">${esc(fit.verdict)}</span>${gates}`
+        + `<div class="lists"><div><b>matches</b>${(fit.matches||[]).slice(0,4)
+            .map(m=>`<div>${esc(m)}</div>`).join("")}</div>`
+        + `<div><b>gaps</b>${(fit.gaps||[]).slice(0,4)
+            .map(m=>`<div>${esc(m)}</div>`).join("")}</div></div>`
+        + (fit.language_note ? `<div class="muted">${esc(fit.language_note)}</div>` : "")
+        + `</div>`;
+      actions = `<button class="go approve" data-run="${esc(r.id)}" data-phase="${esc(r.phase)}">`
+        + `Draft it — stops at about ${money(BUDGET && BUDGET.pass_b)}</button>`
+        + `<button class="linkish cancelrun" data-run="${esc(r.id)}">Discard</button>`;
+    } else if(r.phase==="orphaned"){
+      body = `<div class="muted">${esc(r.error||"")}</div>`;
+      actions = `<button class="linkish killrun" data-run="${esc(r.id)}">Kill it</button>`;
+    } else if(RUNNING.includes(r.phase)){
+      actions = `<button class="linkish cancelrun" data-run="${esc(r.id)}">Cancel</button>`;
+    } else if(r.error){
+      body = `<div class="muted">${esc(r.error)}</div>`;
+    } else if(r.artefacts && Object.keys(r.artefacts).length){
+      body = `<div class="muted">${esc(Object.values(r.artefacts).join("  ·  "))}</div>`;
+    }
+    if(RUNNING.includes(r.phase) && r.targets)
+      body += `<div class="muted">→ ${esc(r.targets.cv)}  ·  ${esc(r.targets.cover)}</div>`;
+    return `<div class="run ${esc(r.phase)}"><div class="runrow">${head}`
+      + `<span style="flex:1"></span>${cost}${actions}</div>${body}</div>`;
+  }).join("");
+}
+
+async function pollRuns(){
+  let d;
+  try { d = await (await fetch("/api/runs?t="+T)).json(); } catch(_) { return; }
+  const before = JSON.stringify(RUNS.map(r=>[r.id,r.phase]));
+  RUNS=d.runs||[]; QUEUE=d.queue||[]; LEDGER=d.ledger; BUDGET=d.budget_usd;
+  renderRuns();
+  // The Tailor cell mirrors run state, so a phase change has to redraw the
+  // table too - otherwise the button stays clickable for a run already going.
+  if(JSON.stringify(RUNS.map(r=>[r.id,r.phase]))!==before) render();
+  const busy = RUNS.some(r=>RUNNING.includes(r.phase)||r.phase==="awaiting_approval");
+  if(busy && !RUNPOLL) RUNPOLL=setInterval(pollRuns, 2000);
+  if(!busy && RUNPOLL){ clearInterval(RUNPOLL); RUNPOLL=null; }
+}
+
+async function postRun(path, body){
+  const r = await fetch(path+"?t="+T, {method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
+  let d={}; try { d = await r.json(); } catch(_){}
+  if(!r.ok) toast(d.error||("request failed ("+r.status+")"), {warn:true, ms:6000});
+  await pollRuns(); pollActivity();
+  return r.ok;
+}
+
+document.addEventListener("click", e=>{
+  const tailor=e.target.closest(".tailor");
+  if(tailor){
+    const j=JOBS.find(x=>x.url===tailor.dataset.url);
+    const note=prompt("Anything to tell the drafter about "+(j?j.company:"this role")+"? "
+      + "(optional — leave empty for none)", "");
+    if(note===null) return;
+    tailor.disabled=true;
+    postRun("/api/runs", {job_url:tailor.dataset.url, kind:"apply", note})
+      .then(ok=>{ if(ok) toast("evaluating — you will be asked before it drafts", {ms:3000});
+                  else tailor.disabled=false; });
+    return;
+  }
+  const approve=e.target.closest(".approve");
+  if(approve){ approve.disabled=true;
+    postRun("/api/runs/"+approve.dataset.run+"/approve", {phase:approve.dataset.phase})
+      .then(ok=>{ if(!ok) approve.disabled=false; });
+    return; }
+  const cancelrun=e.target.closest(".cancelrun");
+  if(cancelrun){ postRun("/api/runs/"+cancelrun.dataset.run+"/cancel"); return; }
+  const killrun=e.target.closest(".killrun");
+  if(killrun && confirm("Kill the model process this run left behind?"))
+    postRun("/api/runs/"+killrun.dataset.run+"/kill");
+});
+
 setInterval(pollActivity, 3000);
+setInterval(pollRuns, 6000);
 
 fetch("/api/jobs?t="+T).then(r=>r.json()).then(d=>{
   JOBS=d.jobs; STATUSES=d.statuses; FILTERS=buildFilters(); render();
-  pollActivity();
+  pollActivity(); pollRuns();
   // A fetch started before this page loaded may still be running.
   fetch("/api/fetch/status?t="+T).then(r=>r.json()).then(s=>{
     if(s.running){ el("fetch").disabled=true; POLL=setInterval(pollFetch,2000); }

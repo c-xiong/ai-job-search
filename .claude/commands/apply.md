@@ -18,6 +18,62 @@ This rule is the input side of the Step 3 Factual Grounding Audit, not a competi
 
 ---
 
+## Headless mode
+
+**Active only when the environment variable `JOBFLOW_RUN` is set to `1`.** In a terminal it is not set, nothing below applies, and the workflow runs exactly as written. Ignore this section unless `JOBFLOW_RUN=1`.
+
+Headless mode is the local job board (`python3 tools/jobs_board.py`) driving this workflow through `claude -p`. Three things are different, and each one exists because a headless process cannot do what the terminal version assumes.
+
+**1. There is nobody to ask, so Step 1 ends by writing a file instead of a question.**
+
+Run Step 0 and Step 1 as written, then write `$JOBFLOW_RUN_DIR/fit.json` and **stop**. Do not draft. Do not continue to Step 2. The supervisor validates the file, shows it in the browser, and starts a second pass on the same session if the owner approves — so stopping here costs nothing and drafting here spends money on a decision nobody made.
+
+Write it to a temporary name in the same directory and rename it into place, so a truncated file is never read. The schema is `jobflow.fit/1` and every field is required; use `null`, never a guess, where the posting does not state something:
+
+```jsonc
+{ "schema": "jobflow.fit/1",
+  "company": "Parloa", "role": "Software Engineer, Agent Platform",
+  "location": "Berlin, DE",
+  "deadline": "2026-09-30",              // or null - YYYY-MM-DD, never inferred from "apply soon"
+  "language_gate": "PASS",               // PASS | FLAG | FAIL - the Language Gate in 04-job-evaluation.md
+  "language_note": "English-language posting, no German requirement stated",
+  "location_gate": "PASS",               // PASS | FLAG | FAIL
+  "scores": { "technical": 82, "experience": 74, "behavioural": 78, "career": 88 },
+  "overall": 80,                         // 0-100, the bare number /upskill does arithmetic on
+  "verdict": "good",                     // strong | good | moderate | weak | poor
+  "matches": ["…"], "gaps": ["…"],
+  "sector": "AI infrastructure",         // or null
+  "role_type": "Full-time",              // or null
+  "contact_person": null,                // or null
+  "channel": "portal",                   // "portal" | "online" | null
+  "posting_chars": 6214 }
+```
+
+`sector`, `role_type`, `contact_person` and `channel` are here because the supervisor writes the tracker row and cannot derive them; you have the posting in front of you and it does not.
+
+**2. Deterministic side effects belong to the supervisor, not to you.** Do not do these, and say in your report that the supervisor owns them:
+
+| step | what you do instead |
+|---|---|
+| Step 0's archive to `documents/applications/…/job_posting.md` | write the verbatim posting to `$JOBFLOW_RUN_DIR/posting.md` |
+| Step 1's `salary_lookup.py` call | the benchmark is already in your prompt, or the prompt says there is none |
+| Step 5's compile, PDF inspection and cleanup | after Step 4, write `$JOBFLOW_RUN_DIR/drafts.json` (below) and stop |
+| Step 5d's `pdftotext` keyword check | list the posting keywords you targeted in `$JOBFLOW_RUN_DIR/verify_request.json` as `{"schema":"jobflow.verify/1","keywords":["…"]}` |
+| Step 6b's `job_search_tracker.csv` row | nothing - the four columns you own are the ones in `fit.json` |
+
+```jsonc
+// $JOBFLOW_RUN_DIR/drafts.json - paths only, and exactly the two you were given
+{ "schema": "jobflow.drafts/1",
+  "cv_source": "cv/main_parloa_software_engineer.tex",
+  "cover_source": "cover_letters/cover_parloa_software_engineer.tex" }
+```
+
+**3. You can write three places and no others.** `$JOBFLOW_RUN_DIR/**`, and the two exact paths the prompt names (also in `$JOBFLOW_CV_TARGET` and `$JOBFLOW_COVER_TARGET`). Every other write is refused by a `PreToolUse` hook, including inside a `Task` subagent. This is not advisory: a run's first instruction is a deliberate write to `$JOBFLOW_RUN_DIR/.guard-probe` that is **expected to be refused**, and a run whose guard stays silent is killed. When a refusal names the jobflow guard, do not retry it and do not route around it — report it and continue with what you can do.
+
+The only shell command available is `python3 tools/board/fetch_url.py "<https url>"`, which is the browser-headers retry from `09-web-research.md` step 2. **Quote the URL.** A posting URL containing `&` or `;` is more than one command to a shell unless it is quoted, and the guard refuses it on exactly that basis rather than guessing what you meant. `WebFetch`, `WebSearch`, `Read`, `Glob`, `Grep` and `Task` all work normally.
+
+---
+
 ## Step 0: Parse Input
 
 - If `$ARGUMENTS` looks like a URL, use `WebFetch` to retrieve the job posting content.

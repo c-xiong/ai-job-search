@@ -84,8 +84,20 @@ job_scraper/fetch_status.json
 # The board's structured activity log: every command run, with the companies
 # fetched and the files written. Same privacy class as scrape.log above.
 job_scraper/activity.jsonl
+# The run registry: one record per board-driven /apply run, naming the company,
+# the role, the posting URL and what each run cost. Same privacy class as the
+# tracker CSV. `run_state/` is its sibling - the per-run write allowlist, the
+# guard's decision log and the spawn specs, which carry the same names.
+job_scraper/runs.json
+job_scraper/run_state/
+# Local budget and timeout overrides for the run supervisor. No identity in it,
+# but it is machine-local configuration and the defaults live in tools/board/runs.py.
+job_scraper/board_config.json
 job_scraper/.fetch.lock
 job_scraper/.board.lock
+job_scraper/.runs.lock
+job_scraper/.pipeline.lock
+job_scraper/.model.lock
 *_BehavioralReport.pdf
 linkedin_Profile.pdf
 
@@ -135,6 +147,10 @@ documents/diplomas/**
 documents/references/**
 documents/applications/**
 documents/postings/**
+# One folder per board-driven run: the posting it fetched, the fit evaluation,
+# the drafts it produced and the full model transcript. Matches no rule above,
+# so it needs its own.
+documents/runs/**
 # Interview prep and experience records: these name the employers applied to,
 # quote what was submitted, and set out the candidate's weak points.
 documents/interview/**

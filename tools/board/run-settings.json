@@ -1,0 +1,16 @@
+{
+  "_comment": "Passed to every board-driven `claude -p` run as --settings. The hook is the write boundary described in tools/board/guard_write.py; the per-run allowlist reaches it through $JOBFLOW_ALLOWLIST. tools/board/runs.py re-validates this file's exact shape before every spawn, because a malformed --settings file is accepted silently by the CLI and the run then has no guard at all. Tracked in git on purpose: it holds no identity, and CI should see it.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/board/guard_write.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

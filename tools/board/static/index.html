@@ -27,11 +27,23 @@
     <span id="fstat"></span>
   </div>
 </header>
+<!-- Runs. Hidden until there is something to say, because an empty panel above
+     the table costs the triage view screen space it needs more. -->
+<section id="runs" hidden>
+  <div class="runshead">
+    <span class="lab">Runs</span>
+    <span id="runqueue" class="muted"></span>
+    <span style="flex:1"></span>
+    <span id="runledger" class="muted"></span>
+  </div>
+  <div id="runlist"></div>
+</section>
+
 <table><thead><tr>
   <th style="width:52px">Fit</th><th>Role</th><th style="width:15%">Company</th>
   <th style="width:11%">Location</th><th style="width:74px">Posted</th>
   <th style="width:96px">Status</th><th>Why</th><th style="width:16%">My notes</th>
-  <th style="width:46px"></th>
+  <th style="width:46px"></th><th style="width:62px"></th>
 </tr></thead><tbody id="tb"></tbody></table>
 <div class="empty" id="empty" hidden>Nothing here.</div>
 
