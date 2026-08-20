@@ -133,10 +133,10 @@ Read only the reference files you do not yet have:
 **Resolve the active template (do this once, reuse everywhere below):** if `05-cv-templates.md` or `06-cover-letter-templates.md` opens with an `ACTIVE-TEMPLATE` managed block (inserted by `/add-template`), read its declared **source extension** and **compile command** — these override the stock `.tex`/lualatex (CV) and `.tex`/xelatex (cover letter) defaults for the rest of this workflow. Call these `<CV_EXT>`/`<CV_COMPILE>` and `<COVER_EXT>`/`<COVER_COMPILE>`; where no block is present, they default to `.tex`, the stock lualatex command, and the stock xelatex command respectively. Every `.tex` reference below is really `<CV_EXT>` or `<COVER_EXT>` — stock behavior is unchanged, this only matters when a custom template is active.
 
 Also read the most recent existing CV and cover letter files for concrete structural reference (one of each is enough):
-- Read any existing `cv/main_*<CV_EXT>` file as a structural reference
-- Read any existing `cover_letters/cover_*<COVER_EXT>` or `cover_letters/Cover_*<COVER_EXT>` file as a structural reference
+- Read the selected personalized CV base from `cv/my_cv.tex` using the role variant supplied by the board (`sde`, `ai`, or `ml`). If no board variant was supplied, choose it using the mapping in `05-cv-templates.md`. Read one existing `cv/main_*<CV_EXT>` only as an optional structural reference.
+- Read `cover_letters/my_cover<COVER_EXT>` as the personalized content skeleton when it exists. Otherwise use `cover_letters/cover_example<COVER_EXT>`. Existing job-specific cover letters are phrasing references only.
 
-*The master candidate profile (`01-candidate-profile.md`), the master CV (`cv/main_example.tex`), and CLAUDE.md's Candidate Profile section are the sole source of truth for facts; existing tailored CVs may be read for structure and phrasing only, never as a source of claims.*
+*The master candidate profile (`01-candidate-profile.md`), the personalized master CV (`cv/my_cv.tex`), and CLAUDE.md's Candidate Profile section are the sole source of truth for facts. `cv/main_example.tex` is a placeholder/layout example, not factual evidence. Existing tailored CVs may be read for structure and phrasing only, never as a source of claims.*
 
 ### Requirement coverage (both documents)
 - **Every requirement the posting states gets addressed - matched or honestly gapped, never silently omitted.** A stated requirement the candidate lacks (a tool, a clearance, years of experience) is acknowledged with an honest bridge ("not in my daily toolkit yet; a natural extension of X"), because omission reads as hiding once an interviewer asks. Build the requirement list from Step 1 and check both drafts against it before Step 3.
@@ -149,7 +149,7 @@ Also read the most recent existing CV and cover letter files for concrete struct
 - Tailor the profile statement and experience bullets to the specific role
 - Reframe skills and achievements to match job requirements
 - Keep to 2 pages
-- **Grounding Audit:** Before writing to disk, audit all tailored bullet points against the union of three sources: `.claude/skills/job-application-assistant/01-candidate-profile.md` + the master CV (`cv/main_example.tex`) + `CLAUDE.md`'s Candidate Profile section to verify that all dates, roles, and metrics match exactly (zero profile drift or fabrication).
+- **Grounding Audit:** Before writing to disk, audit all tailored bullet points against the union of three sources: `.claude/skills/job-application-assistant/01-candidate-profile.md` + the personalized master CV (`cv/my_cv.tex`) + `CLAUDE.md`'s Candidate Profile section to verify that all dates, roles, and metrics match exactly (zero profile drift or fabrication).
 
 ### Cover Letter (`cover_letters/cover_<company>_<role><COVER_EXT>`)
 - **Match the language of the job posting** (Danish posting -> Danish cover letter, English posting -> English cover letter)

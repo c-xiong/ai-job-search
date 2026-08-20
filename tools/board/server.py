@@ -144,7 +144,7 @@ def fetch_status():
 # pattern is a validator as well as a parser: a path segment that is not a run
 # id never reaches the supervisor.
 RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
-                      r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore))?$")
+                      r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore|retry))?$")
 PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"/(?P<kind>cv|cover)$")
 COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
@@ -303,7 +303,7 @@ class Handler(BaseHTTPRequestHandler):
         company_match = COMPANY_PATH.fullmatch(parts.path)
         known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/companies",
                                "/api/companies/resolve-all") or \
-            (run_id and action in ("approve", "cancel", "kill", "compile", "restore"))
+            (run_id and action in ("approve", "cancel", "kill", "compile", "restore", "retry"))
         known = known or bool(company_match and company_match.group("action") in
                               ("resolve", "identity"))
         if not known or not self._authed(parse_qs(parts.query)):
@@ -359,13 +359,16 @@ class Handler(BaseHTTPRequestHandler):
             if action == "approve":
                 # Compare-and-set: the client sends the phase it last rendered,
                 # so two rapid clicks buy one pass B rather than two.
-                code, body = supervisor.approve(run_id, payload.get("phase"))
+                code, body = supervisor.approve(run_id, payload.get("phase"),
+                                                payload.get("base_cv"))
             elif action == "cancel":
                 code, body = supervisor.cancel(run_id)
             elif action == "compile":
                 code, body = supervisor.compile(run_id)
             elif action == "restore":
                 code, body = supervisor.restore(run_id)
+            elif action == "retry":
+                code, body = supervisor.retry(run_id)
             else:
                 code, body = supervisor.kill(run_id)
             return self._send(code, json.dumps(body, ensure_ascii=False))

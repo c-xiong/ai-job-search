@@ -38,6 +38,7 @@ job_scraper/companies.json
 # *.example file loses its [YOUR_*] tokens, and the leak guard fails if any of
 # the ignored paths below is ever staged.
 # ---------------------------------------------------------------------------
+build/
 CLAUDE.md
 .claude/skills/job-application-assistant/01-candidate-profile.md
 .claude/skills/job-application-assistant/02-behavioral-profile.md
@@ -53,6 +54,7 @@ job_scraper/scrape_config.json
 cv/my_cv.tex
 cv/variants/
 cv/out/
+cover_letters/my_cover.tex
 
 # Working design docs and plans. They name target companies and are written in
 # the first person; a doc meant for the public gets re-included explicitly with

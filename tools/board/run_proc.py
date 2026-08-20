@@ -102,6 +102,13 @@ def git_snapshot(root):
 class RunFailure(Exception):
     """A run cannot continue. The message is what the UI shows."""
 
+    def __init__(self, message, code="run_failed", retryable=False,
+                 model_started=True):
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.model_started = model_started
+
 
 class Pass:
     """One `claude -p` process: spawn it, read its stream, account for it."""
@@ -251,12 +258,25 @@ class Pass:
         if self.timed_out:
             raise RunFailure("%s exceeded its %ds wall clock and was killed"
                              % (self.label, self.timeout))
+        # A provider can reject the request before the model gets a turn, so no
+        # tool call (including the canary) is possible. Preserve that actionable
+        # verdict instead of replacing it with the secondary "canary unseen"
+        # symptom. Other failures still have to prove the guard was active.
+        provider_status = (self.result or {}).get("api_error_status")
+        provider_text = str((self.result or {}).get("result") or "")
+        provider_lower = provider_text.lower()
+        if provider_status == 429 or any(token in provider_lower for token in
+                                         ("out_of_credits", "session limit",
+                                          "rate limit", "rate_limit")):
+            message = provider_text.strip() or "The model provider rejected this run (HTTP 429)."
+            raise RunFailure(message[:500], code="provider_rate_limit",
+                             retryable=True, model_started=False)
         if self.canary_failed or not self.canary_seen:
             raise RunFailure(
                 "this pass's canary write was never refused, so the PreToolUse hook cannot "
                 "be shown to have been enforcing during it. The run was killed rather than "
                 "left writing under acceptEdits with no boundary, and its output is not "
-                "trusted.")
+                "trusted.", code="guard_unverified")
         if self.exit_code == 75:
             raise RunFailure("another model process already holds the model lock; this run "
                              "was not started. Kill the orphan from the run panel, or wait "
@@ -267,9 +287,11 @@ class Pass:
             raise RunFailure("%s produced no result event (exit %s). stderr: %s"
                              % (self.label, self.exit_code, " / ".join(tail[-3:]) or "empty"))
         if self.result.get("subtype") == "error_max_budget_usd":
-            raise RunFailure("%s hit the supervisor's internal safety cap. Raise the "
-                             "corresponding limit in job_scraper/board_config.json rather "
-                             "than retrying blind." % self.label)
+            raise RunFailure(
+                "%s reached the local supervisor cap ($%.2f; provider reported $%.2f). "
+                "Raise the corresponding limit in job_scraper/board_config.json before "
+                "retrying." % (self.label, self.budget, self.cost),
+                code="budget_cap", retryable=False)
         if self.result.get("is_error") or self.exit_code != 0:
             raise RunFailure("%s failed: %s" % (self.label, str(
                 self.result.get("result") or tail[-1:] or "exit %s" % self.exit_code)[:500]))

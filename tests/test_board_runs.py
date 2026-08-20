@@ -442,6 +442,16 @@ class FitContractTest(SupervisorCase):
 
 
 class ApprovalTest(SupervisorCase):
+    def test_approval_persists_the_selected_cv_base(self):
+        run_id = self.through_gate()
+        record = run_registry.get(run_id)
+        self.assertEqual(record["recommended_base_cv"], "ml")
+        code, _ = self.supervisor.approve(run_id, "awaiting_approval", "ai")
+        self.assertEqual(code, 200)
+        record = run_registry.get(run_id)
+        self.assertEqual(record["base_cv"], "ai")
+        self.assertEqual(record["resolved_base_cv"], "ai")
+
     def test_approving_twice_costs_one_pass_b(self):
         code, body = self.start()
         run_id = body["run_id"]
@@ -497,6 +507,11 @@ class ApprovalTest(SupervisorCase):
 
 
 class AdmissionTest(SupervisorCase):
+    def test_unknown_cv_base_is_refused(self):
+        code, body = self.start(base_cv="quantum")
+        self.assertEqual(code, 400)
+        self.assertIn("base_cv", body["error"])
+
     def test_a_non_http_url_is_refused(self):
         code, body = self.start(url="file:///etc/passwd")
         self.assertEqual(code, 400)
@@ -646,6 +661,47 @@ class VerifyRequestTest(SupervisorCase):
 
 
 class LedgerTest(SupervisorCase):
+    def test_provider_429_is_not_overwritten_by_the_missing_canary(self):
+        os.environ["FAKE_MODE"] = "rate_limit"
+        code, body = self.start()
+        self.assertEqual(code, 202)
+        run_id = body["run_id"]
+        self.assertEqual(self.wait_phase(run_id, "failed", "awaiting_approval"), "failed")
+        record = run_registry.get(run_id)
+        self.assertEqual(record["failure_code"], "provider_rate_limit")
+        self.assertTrue(record["retryable"])
+        self.assertFalse(record["model_started"])
+        self.assertIn("session limit", record["error"])
+        self.assertNotIn("canary", record["error"])
+        self.assertEqual(record["cost"]["total_usd"], 0)
+
+    def test_retry_creates_a_linked_attempt_with_a_fresh_session(self):
+        os.environ["FAKE_MODE"] = "rate_limit"
+        code, body = self.start(base_cv="ai")
+        failed_id = body["run_id"]
+        self.assertEqual(self.wait_phase(failed_id, "failed"), "failed")
+        failed = run_registry.get(failed_id)
+        os.environ["FAKE_MODE"] = "auto"
+
+        code, retried = self.supervisor.retry(failed_id)
+        self.assertEqual(code, 202, retried)
+        new_id = retried["run_id"]
+        current = run_registry.get(new_id)
+        self.assertNotEqual(new_id, failed_id)
+        self.assertNotEqual(current["session_id"], failed["session_id"])
+        self.assertEqual(current["application_id"], failed_id)
+        self.assertEqual(current["retry_of"], failed_id)
+        self.assertEqual(current["attempt"], 2)
+        self.assertEqual(current["base_cv"], "ai")
+        self.assertEqual(current["targets"], failed["targets"])
+        self.assertEqual(run_registry.get(failed_id)["phase"], "failed")
+
+        # A rapid second click returns the in-flight attempt instead of buying
+        # another model session.
+        code, duplicate = self.supervisor.retry(failed_id)
+        self.assertEqual(code, 200)
+        self.assertEqual(duplicate["run_id"], new_id)
+
     def test_queued_runs_reserve_their_worst_case(self):
         """Five queued runs each passing the same "there is room for one" test is
         how a $10 cap becomes $14 of committed spend."""
@@ -1211,6 +1267,8 @@ class SlugTest(unittest.TestCase):
         self.assertEqual(server.run_route("/api/runs/" + run_id), (run_id, None))
         self.assertEqual(server.run_route("/api/runs/" + run_id + "/approve"),
                          (run_id, "approve"))
+        self.assertEqual(server.run_route("/api/runs/" + run_id + "/retry"),
+                         (run_id, "retry"))
         self.assertEqual(server.run_route("/api/runs/../../etc/passwd"), (None, None))
 
 

@@ -47,6 +47,7 @@ Stdlib only, Python 3.9+.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -170,8 +171,9 @@ class Supervisor:
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=timeout)
 
-    def start(self, payload):
+    def start(self, payload, _lineage=None):
         """`POST /api/runs`. Returns (status, body)."""
+        lineage = _lineage or {}
         settings = config()
         job_url = (payload.get("job_url") or "").strip()
         kind = payload.get("kind") or "apply"
@@ -183,6 +185,9 @@ class Supervisor:
         if scope not in ("cv", "cover", "both"):
             return 400, {"error": "scope must be cv, cover or both"}
         remember = (payload.get("remember") or "").strip()[:1000]
+        base_cv = payload.get("base_cv") or "auto"
+        if base_cv not in ("auto", "sde", "ai", "ml"):
+            return 400, {"error": "base_cv must be auto, sde, ai or ml"}
 
         try:
             preflight()
@@ -257,6 +262,9 @@ class Supervisor:
                     run_id = new_run_id(company)
                 record = {
                     "id": run_id,
+                    "application_id": lineage.get("application_id") or run_id,
+                    "attempt": int(lineage.get("attempt") or 1),
+                    "retry_of": lineage.get("retry_of"),
                     "session_id": str(uuid.uuid4()) if kind == "apply" else None,
                     "resume_session_id": parent.get("session_id") if parent else None,
                     "job_url": job_url,
@@ -272,6 +280,8 @@ class Supervisor:
                     "note": (payload.get("note") or "")[:1000],
                     "scope": scope,
                     "remember": remember,
+                    "base_cv": base_cv,
+                    "resolved_base_cv": (base_cv if base_cv != "auto" else None),
                     "started_at": datetime.now().isoformat(timespec="seconds"),
                     "ended_at": None,
                     "approved_at": (datetime.now().isoformat(timespec="seconds")
@@ -298,7 +308,55 @@ class Supervisor:
         return 202, {"run_id": run_id, "position": position, "phase": "queued",
                      "targets": record["targets"]}
 
-    def approve(self, run_id, expected_phase):
+    def retry(self, run_id):
+        """Create a fresh, linked attempt for a failed run.
+
+        Terminal attempts stay immutable: their transcript, cost and failure
+        evidence remain an honest record. A retry gets a new run directory and
+        Claude session, while the application_id lets the UI present both as
+        one application with attempt history.
+        """
+        failed = get(run_id)
+        if failed is None:
+            return 404, {"error": "unknown run"}
+        if failed.get("phase") != "failed":
+            return 409, {"error": "only a failed run can be retried"}
+        if failed.get("kind") != "apply":
+            return 409, {"error": "retry currently supports full application runs only"}
+
+        application_id = failed.get("application_id") or failed["id"]
+        data = load()
+        live_retry = next((r for r in data["runs"]
+                           if r.get("retry_of") == run_id
+                           and r.get("phase") not in TERMINAL), None)
+        if live_retry:
+            return 200, {"run_id": live_retry["id"], "phase": live_retry["phase"],
+                         "attempt": live_retry.get("attempt", 2), "existing": True}
+        attempts = [int(r.get("attempt") or 1) for r in data["runs"]
+                    if (r.get("application_id") or r.get("id")) == application_id]
+        payload = {
+            "job_url": failed["job_url"], "company": failed["company"],
+            "role": failed["role"], "kind": "apply",
+            "note": failed.get("note") or "", "scope": failed.get("scope") or "both",
+            "remember": failed.get("remember") or "",
+            "base_cv": failed.get("base_cv") or "auto",
+        }
+        code, body = self.start(payload, _lineage={
+            "application_id": application_id,
+            "attempt": max(attempts or [1]) + 1,
+            "retry_of": run_id,
+        })
+        # Two callers can pass the read-side live_retry check together. The
+        # atomic duplicate admission in start() lets only one insert; translate
+        # the other's 409 into the same idempotent response.
+        if code == 409 and body.get("run_id"):
+            existing = get(body["run_id"])
+            if existing and existing.get("retry_of") == run_id:
+                return 200, {"run_id": existing["id"], "phase": existing["phase"],
+                             "attempt": existing.get("attempt", 2), "existing": True}
+        return code, body
+
+    def approve(self, run_id, expected_phase, base_cv=None):
         """Compare-and-set, then re-queue for pass B.
 
         Two rapid clicks cost one pass B: the second finds the phase already
@@ -319,7 +377,13 @@ class Supervisor:
                     return 409, {"error": "the page is showing %s; the run is %s"
                                           % (expected_phase, record["phase"]),
                                  "phase": record["phase"]}
+                selected = base_cv or record.get("base_cv") or "auto"
+                if selected not in ("auto", "sde", "ai", "ml"):
+                    return 400, {"error": "base_cv must be auto, sde, ai or ml"}
                 record["phase"] = "queued"
+                record["base_cv"] = selected
+                record["resolved_base_cv"] = (record.get("recommended_base_cv", "sde")
+                                               if selected == "auto" else selected)
                 record["approved_at"] = datetime.now().isoformat(timespec="seconds")
                 record["owner"] = run_registry.OWNER
                 record["owner_pid"] = os.getpid()
@@ -700,7 +764,7 @@ class Supervisor:
                         lambda nonce: self._prompt_a(record, salary, nonce),
                         settings["budget_usd"]["pass_a"], settings["timeout_s"]["pass_a"])
         except (RunFailure, PreflightError) as exc:
-            self._fail(run_id, str(exc))
+            self._fail(run_id, exc)
             return
         self._read_fit(run_id)
 
@@ -711,7 +775,7 @@ class Supervisor:
             with docs.document_lock(record["slug"]):
                 self._pass_b_locked(record, settings)
         except docs.DocumentError as exc:
-            self._fail(record["id"], str(exc))
+            self._fail(record["id"], exc)
 
     def _reentry(self, record, settings):
         """Fork a completed application session and publish a new immutable version."""
@@ -749,7 +813,7 @@ class Supervisor:
                 docs.merge_tracker(current)
                 self._settle_ok(run_id, produced)
         except (RunFailure, PreflightError, docs.DocumentError) as exc:
-            self._fail(run_id, str(exc))
+            self._fail(run_id, exc)
 
     def _pass_b_locked(self, record, settings):
         run_id = record["id"]
@@ -772,7 +836,7 @@ class Supervisor:
                               settings["timeout_s"]["pass_b"],
                               targets=targets, resume=True)
         except (RunFailure, PreflightError) as exc:
-            self._fail(run_id, str(exc))
+            self._fail(run_id, exc)
             return
 
         # Two independent proofs that *this* pass produced the documents, because
@@ -797,7 +861,7 @@ class Supervisor:
         try:
             pdfs, _verify, produced = docs.compile_record(get(run_id) or record)
         except docs.DocumentError as exc:
-            self._fail(run_id, str(exc))
+            self._fail(run_id, exc)
             return
 
         current = get(run_id) or record
@@ -812,7 +876,7 @@ class Supervisor:
             docs.merge_tracker(current)
             produced["posting"] = posting
         except docs.DocumentError as exc:
-            self._fail(run_id, str(exc))
+            self._fail(run_id, exc)
             return
         self._settle_ok(run_id, produced)
 
@@ -886,7 +950,7 @@ class Supervisor:
                 pdfs, _verify, produced = docs.compile_record(get(run_id) or record)
                 update(run_id, artefacts=produced)
             except (RunFailure, PreflightError, docs.DocumentError) as exc:
-                self._fail(run_id, str(exc))
+                self._fail(run_id, exc)
                 return
             repairs += 1
 
@@ -945,7 +1009,7 @@ class Supervisor:
         activity.emit("claude", "%s done - %s" % (run_id, ", ".join(sorted(produced.values()))),
                       run_id=run_id)
 
-    def _fail(self, run_id, message):
+    def _fail(self, run_id, failure):
         """Settle a failure, unless the run is already settled.
 
         The check-then-write is inside `transition()`, under `.runs.lock`: a
@@ -953,10 +1017,19 @@ class Supervisor:
         cancellation must not relabel it, and neither must a late failure
         overwrite a `done`.
         """
+        message = str(failure)
         phase = "cancelled" if message == "cancelled" else "failed"
+        record = get(run_id) or {}
+        fields = {
+            "ended_at": datetime.now().isoformat(timespec="seconds"),
+            "error": message,
+            "failed_phase": record.get("phase"),
+            "failure_code": getattr(failure, "code", "run_failed"),
+            "retryable": bool(getattr(failure, "retryable", phase == "failed")),
+            "model_started": bool(getattr(failure, "model_started", True)),
+        }
         if not transition(run_id, phase, ACTIVE_PHASES,
-                          ended_at=datetime.now().isoformat(timespec="seconds"),
-                          error=message):
+                          **fields):
             self._cancelled.discard(run_id)
             return
         self._cancelled.discard(run_id)
@@ -997,8 +1070,10 @@ class Supervisor:
         # Compare-and-set: Cancel can land between the process exiting and this
         # line, and a cancelled run that comes back as `awaiting_approval` is a
         # run the owner will be asked to pay for after saying no.
+        recommendation = self._recommend_base_cv(payload["role"])
         if not transition(run_id, "awaiting_approval", ("evaluating", "reviewing"),
-                          fit=payload, company=payload["company"], role=payload["role"]):
+                          fit=payload, company=payload["company"], role=payload["role"],
+                          recommended_base_cv=recommendation):
             activity.emit("claude", "%s produced an evaluation but is %s; not publishing it"
                           % (run_id, (get(run_id) or {}).get("phase")),
                           level="warn", run_id=run_id)
@@ -1006,6 +1081,15 @@ class Supervisor:
         activity.emit("claude", "%s evaluated - %s, overall %s (%s)"
                       % (run_id, payload["company"], payload["overall"], payload["verdict"]),
                       run_id=run_id)
+
+    @staticmethod
+    def _recommend_base_cv(role):
+        title = (role or "").lower()
+        if re.search(r"\b(machine learning|ml engineer|ml scientist|data scientist)\b", title):
+            return "ml"
+        if re.search(r"\b(ai|artificial intelligence|llm|nlp|generative ai)\b", title):
+            return "ai"
+        return "sde"
 
     def _read_drafts(self, record):
         """The pass-B contract: `drafts.json` naming exactly the two allowlisted
@@ -1102,6 +1186,14 @@ class Supervisor:
         # trusting a guard that was working before the approval card was opened.
         parts = [self._canary(record, nonce)]
         parts.append("Approved. Continue from Step 2 of `/apply`.\n\n")
+        selected_base = record.get("resolved_base_cv") or \
+            record.get("recommended_base_cv") or "sde"
+        parts.append(
+            "Selected CV content base: `%s`. Start from the corresponding thin variant "
+            "of `cv/my_cv.tex` described in `05-cv-templates.md`; preserve its factual "
+            "content and tailor only emphasis, ordering and supported wording for this "
+            "posting. Do not use `cv/main_example.tex` as a factual source.\n\n"
+            % selected_base)
         parts.append("Write exactly these two files and no others:\n"
                      "- CV: `%s`\n- Cover letter: `%s`\n\n"
                      % (record["targets"]["cv"], record["targets"]["cover"]))

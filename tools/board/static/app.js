@@ -56,6 +56,10 @@ function match(j){
 }
 const shown=()=>JOBS.filter(match);
 const selectedJob=()=>shown()[sel]||null;
+const baseOptions=(selected="auto",recommended="")=>[
+  ["auto",`Auto${recommended?" (recommended: "+recommended.toUpperCase()+")":""}`],
+  ["sde","SDE"],["ai","AI Engineer"],["ml","Machine Learning"]
+].map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
 const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","ats-search":"Company ATS","company-careers":"Company careers","freehire-search":"freehire"};
 const sourceLabel=value=>SOURCE_LABELS[value]||String(value||"Other website").replace(/-search$/,"").replaceAll("-"," ");
 const sourceTitle=job=>[...new Set([job.primary_source,...(job.sources||[])].filter(Boolean))].map(sourceLabel).join(" · ");
@@ -146,6 +150,7 @@ function renderJob(){
     <div class="posting"><span class="label">Posting</span><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
     <div class="jobactions"><div class="statusbuttons">${statusButtons}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
+      <label class="base-picker"><span>CV base</span><select data-base-start>${baseOptions()}</select></label>
       <button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button>
       <div class="hint">runs /apply in the background · you stay on the board</div></div>`;
   loadPosting(j);
@@ -188,8 +193,11 @@ function elapsed(run){
   if(seconds<90)return seconds+" s";return Math.round(seconds/60)+" min";
 }
 function activeRuns(){return RUNS.filter(r=>RUNNING.includes(r.phase)||r.phase==="awaiting_approval"||r.phase==="orphaned")}
+function latestApplications(){
+  const latest=new Map();RUNS.forEach(r=>{const key=r.application_id||r.id;if(!latest.has(key))latest.set(key,r)});return [...latest.values()]
+}
 function renderRuns(){
-  const live=activeRuns(),recent=RUNS.filter(r=>!live.includes(r)).slice(0,4),rows=live.concat(recent);
+  const applications=latestApplications(),live=applications.filter(r=>activeRuns().includes(r)),recent=applications.filter(r=>!live.includes(r)).slice(0,4),rows=live.concat(recent);
   el("runqueue").textContent=QUEUE.length?QUEUE.length+" queued":(live.length?live.length+" active":"");
   el("runlist").innerHTML=rows.length?rows.map(r=>{
     const step=PHASE_STEP[r.phase]||1,pct=Math.round(step/6*100),bad=["failed","orphaned"].includes(r.phase);
@@ -205,8 +213,8 @@ function renderRuns(){
   if(el("app").classList.contains("tailor-mode")&&!el("app").classList.contains("reader-mode")&&!el("app").classList.contains("preview-mode")&&!el("app").classList.contains("revise-mode")&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
 }
 function renderApplications(){
-  const rows=RUNS.slice(0,20);el("applicationcount").textContent=`${rows.filter(r=>r.phase==="done").length} drafted · ${activeRuns().length} active`;
-  el("applicationlist").innerHTML=rows.length?rows.map(r=>`<tr data-run="${esc(r.id)}"><td><span class="role">${esc(r.company)}</span> <span class="co">· ${esc(r.role)}</span></td><td><span class="phase ${esc(r.phase)}">${esc(r.phase.replaceAll("_"," "))}</span></td><td class="co">${esc((r.started_at||"").slice(0,16).replace("T"," "))}</td><td>${r.phase==="done"?`<button class="linkish previewrun" data-preview="${esc(r.id)}">Preview</button> <button class="linkish" data-revise="${esc(r.id)}">Revise</button>`:`<button class="linkish">Watch run</button>`}</td></tr>`).join(""):'<tr><td colspan="4" class="panel-empty">No applications yet.</td></tr>';
+  const rows=latestApplications().slice(0,20);el("applicationcount").textContent=`${rows.filter(r=>r.phase==="done").length} drafted · ${rows.filter(r=>activeRuns().includes(r)).length} active`;
+  el("applicationlist").innerHTML=rows.length?rows.map(r=>`<tr data-run="${esc(r.id)}"><td><span class="role">${esc(r.company)}</span> <span class="co">· ${esc(r.role)}</span>${(r.attempt||1)>1?` <span class="badge">attempt ${esc(r.attempt)}</span>`:""}</td><td><span class="phase ${esc(r.phase)}">${esc(r.phase.replaceAll("_"," "))}</span></td><td class="co">${esc((r.started_at||"").slice(0,16).replace("T"," "))}</td><td>${r.phase==="done"?`<button class="linkish previewrun" data-preview="${esc(r.id)}">Preview</button> <button class="linkish" data-revise="${esc(r.id)}">Revise</button>`:`<button class="linkish">Watch run</button>`}</td></tr>`).join(""):'<tr><td colspan="4" class="panel-empty">No applications yet.</td></tr>';
 }
 async function pollRuns(){
   let data;try{data=await(await fetch("/api/runs?t="+T)).json()}catch(_){return}
@@ -222,9 +230,10 @@ async function postRun(path,body){
 }
 async function startTailor(url){
   const j=JOBS.find(x=>x.url===url);if(!j)return;
+  const base_cv=document.querySelector("[data-base-start]")?.value||"auto";
   const note=await openTextModal({eyebrow:"Tailor application",title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Start tailoring"});
   if(note===null)return;
-  postRun("/api/runs",{job_url:url,kind:"apply",note}).then(ok=>ok&&toast("evaluating — you will be asked before it drafts",{ms:3000}));
+  postRun("/api/runs",{job_url:url,kind:"apply",note,base_cv}).then(ok=>ok&&toast("evaluating — you will be asked before it drafts",{ms:3000}));
 }
 
 const STEPS=[
@@ -237,16 +246,19 @@ const STEPS=[
 ];
 function renderTailor(run){
   if(!run){restoreWorkspace();return}ACTIVE_RUN=run.id;const current=PHASE_STEP[run.phase]||1,fit=run.fit||{};
+  const lineage=RUNS.filter(r=>(r.application_id||r.id)===(run.application_id||run.id)).sort((a,b)=>(a.attempt||1)-(b.attempt||1));
   const steps=STEPS.map((s,i)=>{const n=i+1,state=n<current||run.phase==="done"?"done":n===current?"live":"todo";return `<div class="step ${state}"><div class="steprow"><span class="stepdot">${n}</span><div><div class="steptitle">${s[0]}</div><div class="stepdetail">${s[1]}</div></div><span class="steptime">${state==="live"?esc(run.phase.replaceAll("_"," ")):""}</span></div></div>`}).join("");
   const matches=(fit.matches||[]).map(x=>`<div>${esc(x)}</div>`).join("")||"<div>No structured match list yet.</div>";
   const gaps=(fit.gaps||[]).map(x=>`<div>${esc(x)}</div>`).join("")||"<div>No structured gap list yet.</div>";
-  const logs=EV.filter(e=>e.source==="claude"||e.source==="latex"||e.source==="verify").slice(-100).map(e=>`<div><span>${esc((e.ts||"").slice(11,19))}</span>&nbsp; ${esc(e.cmd?"$ "+e.cmd:e.msg)}</div>`).join("")||"<div>Waiting for run activity…</div>";
+  const logs=EV.filter(e=>e.run_id===run.id&&(e.source==="claude"||e.source==="latex"||e.source==="verify")).slice(-100).map(e=>`<div><span>${esc((e.ts||"").slice(11,19))}</span>&nbsp; ${esc(e.cmd?"$ "+e.cmd:e.msg)}</div>`).join("")||"<div>No run-specific activity recorded yet.</div>";
+  const failureTitle=run.failure_code==="provider_rate_limit"?"Claude session limit reached":run.failure_code==="budget_cap"?"Local run budget exhausted":"Run failed";
+  const failure=run.phase==="failed"?`<div class="failure-card"><strong>${failureTitle}</strong><div>${esc(run.error||"No error detail was recorded.")}</div><div class="dim">Failed during ${esc((run.failed_phase||"unknown").replaceAll("_"," "))}${run.model_started===false?" · no model work started":""}${Number(run.cost?.total_usd||0)===0?" · no model cost incurred":""}</div></div>`:"";
   el("tailor-view").innerHTML=`<div class="tailor-shell"><section class="pipeline"><div class="panelhead"><span class="label">Pipeline</span><span class="spacer"></span><span class="dim">step ${current} of 6</span></div>${steps}<div class="writing"><div class="label">Writing to</div><div>${esc(run.targets?.cv||"CV target pending")}</div><div>${esc(run.targets?.cover||"Cover-letter target pending")}</div></div></section>
-    <section class="runoutput"><div class="panelhead"><span class="label">Run output</span><span class="spacer"></span><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
+    <section class="runoutput"><div class="panelhead"><span class="label">Run output${lineage.length>1?` · attempt ${esc(run.attempt||1)} of ${lineage.length}`:""}</span><span class="spacer"></span><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
       <div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Fit evaluation — ${esc(fit.verdict||"pending")}${fit.overall!=null?", "+esc(fit.overall):""}</strong><span class="spacer"></span><span class="dim">${run.phase==="awaiting_approval"?"waiting for your approval":""}</span></div>
       <div class="fitgrid"><div><span class="label">Matches</span>${matches}</div><div><span class="label">Gaps, stated not smoothed</span>${gaps}</div></div></div>
-      <div class="runlog">${logs}</div><div class="runfooter"><button class="secondary" data-restore>Back to board</button><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>
-      ${run.phase==="awaiting_approval"?`<button class="primary approve" data-run-id="${esc(run.id)}" data-phase="${esc(run.phase)}">Draft CV + cover letter</button>`:""}${RUNNING.includes(run.phase)?`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`:""}${run.phase==="done"?`<button class="primary" data-preview="${esc(run.id)}">Preview PDFs</button>`:""}</div></section></div>`;
+      ${failure}<div class="runlog">${logs}</div><div class="runfooter"><button class="secondary" data-restore>Back to board</button><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>
+      ${run.phase==="awaiting_approval"?`<label class="base-picker compact"><span>CV base</span><select data-run-base>${baseOptions(run.base_cv||"auto",run.recommended_base_cv||"")}</select></label><button class="primary approve" data-run-id="${esc(run.id)}" data-phase="${esc(run.phase)}">Draft CV + cover letter</button>`:""}${RUNNING.includes(run.phase)?`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`:""}${run.phase==="failed"?`<button class="primary retryrun" data-run-id="${esc(run.id)}">Retry from beginning</button>`:""}${run.phase==="done"?`<button class="primary" data-preview="${esc(run.id)}">Preview PDFs</button>`:""}</div></section></div>`;
   openView("tailor",run.company+" · "+run.role,"/run/"+encodeURIComponent(run.id));
 }
 
@@ -256,7 +268,7 @@ function renderReader(){
   const marks=["star","yes","maybe","gate","no","applied"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
   el("tailor-view").innerHTML=`<div class="reader-shell"><section class="reader-queue"><div class="panelhead"><span class="label">Queue</span><span class="spacer"></span><span class="dim">${rows.length} active</span></div><div class="queue-list">${queue}</div></section>
     <section class="reader-main"><div class="reader-scroll"><article class="reader-copy"><div class="reader-badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge" title="${esc(scoreTitle(j))}">${esc(SCORE_LABEL[j.score_source]||"score")} ${esc(Math.round(j.score))}</span>`:""}${j.fit_evidence==="title-only"?'<span class="badge">title only</span>':""}<span class="spacer"></span><a class="open" href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener">open posting ↗</a></div><h1>${esc(j.title)}</h1><div class="reader-meta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div><div class="reader-posting" id="postingbody">${esc(postingText(j))}</div></article></div></section>
-    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Tailor re-evaluates properly.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button><div class="hint">marks it yes and queues the run · <kbd>t</kbd></div></div></aside></div>`;
+    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Tailor re-evaluates properly.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><label class="base-picker"><span>CV base</span><select data-base-start>${baseOptions()}</select></label><button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button><div class="hint">marks it yes and queues the run · <kbd>t</kbd></div></div></aside></div>`;
   loadPosting(j);
   openView("reader",`reading ${sel+1} of ${rows.length} · active`,"/job/"+encodeURIComponent(j.url));
 }
@@ -516,8 +528,9 @@ document.addEventListener("click",event=>{
   const recompile=event.target.closest("[data-recompile]");if(recompile){recompile.disabled=true;postRun("/api/runs/"+recompile.dataset.recompile+"/compile").then(ok=>{const run=RUNS.find(r=>r.id===recompile.dataset.recompile);if(ok&&run)renderPreview(run)});return}
   const runNode=event.target.closest("[data-run]");if(runNode){const run=RUNS.find(r=>r.id===runNode.dataset.run);if(run)renderTailor(run);return}
   const pill=event.target.closest("#runpill");if(pill){const run=RUNS.find(r=>r.id===pill.dataset.run);if(run)renderTailor(run);return}
-  const approve=event.target.closest(".approve");if(approve){approve.disabled=true;postRun("/api/runs/"+approve.dataset.runId+"/approve",{phase:approve.dataset.phase});return}
+  const approve=event.target.closest(".approve");if(approve){approve.disabled=true;postRun("/api/runs/"+approve.dataset.runId+"/approve",{phase:approve.dataset.phase,base_cv:document.querySelector("[data-run-base]")?.value||"auto"});return}
   const cancel=event.target.closest(".cancelrun");if(cancel){postRun("/api/runs/"+cancel.dataset.runId+"/cancel");return}
+  const retry=event.target.closest(".retryrun");if(retry){retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry").then(ok=>{if(!ok){retry.disabled=false;return}toast("fresh attempt queued",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
   const row=event.target.closest("tr[data-row]");if(row&&!event.target.closest("select")){sel=+row.dataset.row;render()}
 });
 async function postCompany(path,body,method="POST"){const response=await fetch(path+"?t="+T,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});let data={};try{data=await response.json()}catch(_){}if(!response.ok){toast(data.error||"registry request failed",{warn:true,ms:5000});if(response.status===409)renderCompanies();return false}COMPANIES=data.companies?data:(data.result&&data.mtime?data:COMPANIES);return true}

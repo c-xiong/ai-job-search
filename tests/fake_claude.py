@@ -21,7 +21,7 @@ rather than quietly reusing an old one.
 
 `FAKE_MODE=auto` picks pass A or pass B from the prompt. The others are failure
 injections: `noguard`, `badfit`, `nofit`, `noposting`, `nowrite`, `hang`,
-`crash`. `FAKE_SKIP=drafts|verify` omits one pass-B contract file.
+`crash`, `rate_limit`. `FAKE_SKIP=drafts|verify` omits one pass-B contract file.
 
 The real CLI's behaviour is pinned separately by `tests/test_live_cli_contract.py`,
 which runs against the installed binary and is skipped unless asked for.
@@ -119,6 +119,13 @@ def main():
     emit({"type": "system", "subtype": "init", "session_id": session,
           "tools": ["Read", "Write"]})
 
+    if chosen == "rate_limit":
+        emit({"type": "rate_limit_event", "rate_limit_info": {
+            "status": "rejected", "rateLimitType": "out_of_credits"}})
+        emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
+              "api_error_status": 429, "result": "You've hit your session limit",
+              "total_cost_usd": 0, "session_id": session})
+        return 1
     if chosen == "crash":
         emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
               "result": "something went wrong", "total_cost_usd": 0.01,

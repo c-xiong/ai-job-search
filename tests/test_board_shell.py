@@ -98,6 +98,12 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn("tailor-shell", self.css)
         self.assertIn("Gaps, stated not smoothed", self.js)
         self.assertIn("runpill", self.html)
+        for marker in ("Retry from beginning", "provider_rate_limit", "failure-card",
+                       "data-run-base", "data-base-start", "latestApplications",
+                       "retry_of"):
+            self.assertIn(marker, self.js if marker != "failure-card" else self.css)
+        self.assertIn("overflow-wrap:anywhere", self.css)
+        self.assertIn(".writing>div:not(.label)", self.css)
 
     def test_job_reader_and_compiled_pdf_preview_are_real_views(self):
         for marker in ("reader-shell", "reader-queue", "reader-decide",

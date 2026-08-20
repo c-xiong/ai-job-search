@@ -27,7 +27,7 @@ When the user provides a job posting (URL or text), follow this workflow:
 - Ask the user if they want to proceed with an application
 
 ### Step 2: Tailor CV
-- Read the most relevant existing CV variant from `cv/` as a starting point
+- Read `cv/my_cv.tex`, using the selected `sde`, `ai`, or `ml` content base as the starting point; existing tailored CVs are phrasing references only
 - Follow the guidelines in `05-cv-templates.md`
 - Create `cv/main_<company>_<role>.tex` with tailored content
 - Adjust: profile statement, skills section, experience bullet emphasis, section order

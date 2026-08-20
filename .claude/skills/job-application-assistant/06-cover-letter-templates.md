@@ -4,6 +4,12 @@ framework_version: 1.0.1
 
 # Cover Letter Templates and Tailoring Guide
 
+The personal fill-in skeleton is `cover_letters/my_cover.tex`. Keep layout and
+reusable structure there, with explicit bracketed slots for the opening,
+evidence, company connection and closing. It is one shared skeleton for SDE,
+AI and ML applications; role-specific evidence comes from the selected CV base
+and the posting, not from copied cover-letter templates.
+
 ## Template: Custom cover.cls (XeLaTeX)
 
 Cover letters use a custom LaTeX document class (`cover.cls`) with Lato/Raleway fonts.
