@@ -210,30 +210,39 @@ def collect_freehire(cfg, log):
 
 
 def screen(record, log, budget=None):
-    """Fetch a posting's text and apply the German screen. Returns (status, note).
+    """Fetch a posting's text and apply the German screen.
 
-    A record that already carries its description is screened for free - freehire
-    and four of the five ATS vendors ship one with the listing. Only a record
-    without one costs a `detail` request, and `budget` caps how many of those a
-    run may make: moving LinkedIn from a cron to a button removed the *unattended*
-    burst, not the burst itself, so the per-run cap is what actually bounds it.
+    Returns `(status, note, text)`. The text is the third element because this
+    already pays for it: a LinkedIn row has no description until `detail` is
+    called, and that call used to be made purely to run a regex over the result
+    and discard it. The board's Job pane and the fit scorer both want the same
+    bytes, so they are handed back rather than fetched twice.
+
+    A record that already carries its description is screened for free -
+    freehire and four of the five ATS vendors ship one with the listing. Only a
+    record without one costs a `detail` request, and `budget` caps how many of
+    those a run may make: moving LinkedIn from a cron to a button removed the
+    *unattended* burst, not the burst itself, so the per-run cap is what
+    actually bounds it.
     """
     if record.get("description"):
-        return screen_text(record["description"])
+        status, note = screen_text(record["description"])
+        return status, note, record["description"]
     cli = LINKEDIN if record["portal"] == "linkedin-search" else FREEHIRE
     ident = record.get("id")
     if not ident:
-        return "new", ""
+        return "new", "", ""
     if budget is not None and not budget.take():
-        return "new", "AUTO-SCREEN: not screened - the run's detail budget was spent"
+        return "new", "AUTO-SCREEN: not screened - the run's detail budget was spent", ""
     try:
         proc = subprocess.run(["bun", "run", cli, "detail", ident, "--format", "plain"],
                               cwd=str(ROOT), timeout=90, capture_output=True, text=True)
     except (OSError, subprocess.TimeoutExpired):
-        return "new", ""
+        return "new", "", ""
     if proc.returncode != 0:
-        return "new", ""
-    return screen_text(proc.stdout)
+        return "new", "", ""
+    status, note = screen_text(proc.stdout)
+    return status, note, proc.stdout
 
 
 class Budget:

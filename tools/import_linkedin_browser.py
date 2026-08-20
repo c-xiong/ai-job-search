@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ats_fetch  # noqa: E402
 import jobs_md  # noqa: E402
+import postings  # noqa: E402
 
 
 PORTAL = "linkedin-browser"
@@ -166,20 +167,25 @@ def _entry_for_source(seen, url):
     return matches[0] if len(matches) == 1 else None
 
 
-def import_rows(seen, rows, today, log=lambda _message: None):
-    """Merge browser rows, preferring final company URLs while retaining LinkedIn provenance."""
+def import_rows(seen, rows, today, log=lambda _message: None, pending=None):
+    """Merge browser rows, preferring final company URLs while retaining LinkedIn provenance.
+
+    `pending` collects the posting bodies whose sidecars still need writing, so
+    a `--dry-run` merges in memory and leaves the filesystem untouched.
+    """
     total = {"added": 0, "gated": 0, "already_known": 0, "collapsed": 0,
              "possible_duplicates": 0, "german_gated_by_company": {}}
     for row in rows:
         linkedin_url = row["linkedin_url"]
         if row["url"] == linkedin_url:
-            _add_stats(total, ats_fetch.merge(seen, [row], today, log, portal=PORTAL))
+            _add_stats(total, ats_fetch.merge(seen, [row], today, log, portal=PORTAL,
+                                              pending=pending))
             continue
 
         source_portal = "ats-search" if row.get("ats_id") else COMPANY_PORTAL
         application_row = dict(row, id=row.get("ats_id") or "")
         _add_stats(total, ats_fetch.merge(
-            seen, [application_row], today, log, portal=source_portal))
+            seen, [application_row], today, log, portal=source_portal, pending=pending))
         entry = _entry_for_source(seen, row["url"])
         if entry is None:
             raise InputError("could not resolve imported company URL after merge: %s" % row["url"])
@@ -228,10 +234,13 @@ def main(argv=None):
     try:
         rows, duplicates_in_input = normalize_rows(load_payload(args.input))
         messages = []
+        pending = []
         with jobs_md.board_lock():
             seen = _load_seen()
-            stats = import_rows(seen, rows, args.date, messages.append)
+            stats = import_rows(seen, rows, args.date, messages.append, pending)
             if not args.dry_run:
+                # Bodies before state, and neither on a dry run.
+                postings.commit_all(pending)
                 persist(seen)
     except (InputError, OSError, json.JSONDecodeError) as exc:
         print("import failed: %s" % exc, file=sys.stderr)

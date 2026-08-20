@@ -78,6 +78,24 @@ job_scraper/*.log
 # boards of the companies on your target list - regenerated on demand.
 job_scraper/ats_cache/
 **/job_scraper/ats_cache/
+# Stored posting bodies, one file per posting under a URL hash. This is the
+# full text of every job considered - team names, salary bands, and the
+# owner's whole search surface. Same privacy class as ats_cache/ above, and
+# depth-independent for the same reason.
+job_scraper/postings/
+**/job_scraper/postings/
+# The deterministic fit scorer's inputs. fit_profile.json encodes the
+# candidate's skills, target roles and geography; company_affinity.json is the
+# hand-scored "how much do I want to work here" list; fit_calibration.json
+# records which postings the owner would and would not read. Their
+# `*.example.json` twins are tracked and carry no real data - these exact
+# filenames do not match the example ones, so the twins stay visible.
+job_scraper/fit_profile.json
+**/job_scraper/fit_profile.json
+job_scraper/company_affinity.json
+**/job_scraper/company_affinity.json
+job_scraper/fit_calibration.json
+**/job_scraper/fit_calibration.json
 # Transient state for the board's Fetch button: a pid lock and a status file
 # whose log names the companies being fetched.
 job_scraper/fetch_status.json

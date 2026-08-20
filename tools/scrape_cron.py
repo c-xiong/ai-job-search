@@ -36,8 +36,10 @@ from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ats_fetch  # noqa: E402
 import collectors  # noqa: E402
 import jobs_md  # noqa: E402
+import postings  # noqa: E402
 
 ROOT = jobs_md.ROOT
 CONFIG = ROOT / "job_scraper" / "scrape_config.json"
@@ -72,8 +74,36 @@ def collect(cfg):
 
 
 def screen(record, budget=None):
-    """Fetch the posting and apply the German screen. Returns (status, note)."""
+    """Fetch the posting and apply the German screen. Returns (status, note, text)."""
     return collectors.screen(record, log, budget)
+
+
+def rows_for(found, screened, known):
+    """Shape collector records into merge rows.
+
+    Known URLs are passed through too. They are not re-screened - the detail
+    budget is for postings nobody has judged - but any description their
+    listing shipped inline still reaches merge(), which is how a row already on
+    the board gains a posting body it was missing.
+    """
+    rows = []
+    for url, record in found.items():
+        status, note, text = screened.get(url, (None, None, record.get("description") or ""))
+        rows.append({
+            "id": record.get("id", ""),
+            "title": record.get("title", ""),
+            "company": record.get("company", ""),
+            "registry_company": record.get("company", ""),
+            "location": record.get("location", ""),
+            "posted": record.get("posted", ""),
+            "deadline": None,
+            "url": url,
+            "description": text or record.get("description") or "",
+            "status": None if url in known else status,
+            "note": None if url in known else note,
+            "portal": record.get("portal", ""),
+        })
+    return rows
 
 
 def main():
@@ -105,34 +135,41 @@ def main():
             % (detail_budget.deferred, detail_budget.limit))
 
     if args.dry_run:
-        gated = sum(1 for status, _ in screened.values() if status == "gate")
+        gated = sum(1 for status, _, _ in screened.values() if status == "gate")
         log("  %d added (%d auto-gated on German, %d awaiting fit assessment)"
             % (len(fresh), gated, len(fresh) - gated))
         log("dry run - nothing written")
         return 0
 
-    gated = 0
+    # One writer, shared with the board's Fetch button. This used to build its
+    # own `seen[url] = {...}` dict, which meant the unattended path silently
+    # skipped cross-source dedup, the prefit prior and - once bodies existed -
+    # the posting store. Routing through merge() is what keeps the two paths
+    # from drifting into two different schemas.
+    rows = rows_for(found, screened, known)
+    by_portal = {}
+    for row in rows:
+        by_portal.setdefault(row.get("portal") or "linkedin-search", []).append(row)
+
+    today = date.today().isoformat()
+    added = gated = 0
+    pending = []
     with jobs_md.board_lock():
         seen = {}
         if jobs_md.SEEN.exists():
             seen = json.loads(jobs_md.SEEN.read_text(encoding="utf-8")).get("seen", {})
-        for url, rec in fresh.items():
-            if url in seen:
-                continue
-            status, note = screened[url]
-            gated += status == "gate"
-            seen[url] = {
-                "title": rec["title"], "company": rec["company"], "location": rec["location"],
-                "url": url, "first_seen": date.today().isoformat(), "posted": rec["posted"],
-                "deadline": None, "fit": "", "status": "new", "portal": rec["portal"],
-                "user_status": status, "user_note": "", "note": note,
-                "sources": [{"portal": rec["portal"], "url": url, "id": rec.get("id", ""),
-                             "first_seen": date.today().isoformat()}],
-                "primary_source": rec["portal"],
-                "last_seen_at": date.today().isoformat(),
-            }
+        for portal, portal_rows in sorted(by_portal.items()):
+            stats = ats_fetch.merge(seen, portal_rows, today, log, portal=portal,
+                                    pending=pending)
+            added += stats["added"]
+            gated += stats["gated"]
         log("  %d added (%d auto-gated on German, %d awaiting fit assessment)"
-            % (gated + (len(fresh) - gated), gated, len(fresh) - gated))
+            % (added, gated, added - gated))
+        # Bodies before state: an orphan sidecar is inert, a saved
+        # `posting_path` with no file behind it is a row that lies.
+        written = postings.commit_all(pending)
+        if written:
+            log("  %d posting bodies stored" % written)
         jobs_md.save_seen(seen)
         log("done - %d jobs in the board" % len(seen))
     return 0

@@ -1,0 +1,244 @@
+{
+  "_readme": [
+    "The deterministic fit scorer's inputs. Copy this file to fit_profile.json",
+    "and edit that copy - fit_profile.json is gitignored because it encodes who",
+    "you are, while this example is tracked and carries no real profile.",
+    "",
+    "Every number here is a tunable. The five component maxima in weights.max",
+    "must sum to 100; the scorer refuses to load a profile where they do not.",
+    "",
+    "Two rules the values encode, worth keeping in mind when editing:",
+    "  P1 - a missing skill is not a missing qualification. The skills block",
+    "       only ever ADDS, and saturates fast. Only skills.exclude counts",
+    "       against a posting, and it gates rather than deducts.",
+    "  P2 - preference is a first-class signal. roles and company affinity are",
+    "       42 of 100 on purpose. This is a reading-order prior, not a",
+    "       capability assessment."
+  ],
+  "version": 1,
+
+  "roles": {
+    "_comment": [
+      "Graded by how much you want that kind of role. Title evidence has strict",
+      "precedence: if the title names any family, the description cannot",
+      "override it - so a Data Scientist posting full of AI wording stays a",
+      "Data Scientist. Terms must be phrase-specific; a bare 'engineer',",
+      "'research', 'data', 'ai' or 'platform' must never assign a family."
+    ],
+    "description_factor": 0.6,
+    "cap_families": ["adjacent"],
+    "families": {
+      "ai_engineer": {
+        "score": 25,
+        "terms": ["ai engineer", "a.i. engineer", "ai engineering", "ai/ml engineer",
+                  "ai and ml engineer", "ai/ml", "ai developer",
+                  "artificial intelligence engineer", "artificial intelligence developer",
+                  "applied ai", "applied ai engineer",
+                  "llm", "llms", "large language model", "large language models",
+                  "llm engineer", "llm systems engineer", "llm infrastructure",
+                  "nlp", "nlp engineer", "nlp scientist", "natural language processing",
+                  "agentic ai", "agentic", "generative ai", "gen ai", "genai",
+                  "conversational ai", "ai software engineer", "ai platform engineer",
+                  "research engineer", "ai research engineer", "prompt engineer",
+                  "rag engineer", "retrieval augmented generation"]
+      },
+      "software_engineer": {
+        "score": 22,
+        "terms": ["software engineer", "software developer", "software engineering",
+                  "software dev engineer", "software development engineer",
+                  "backend engineer", "back-end engineer", "backend developer",
+                  "back end developer", "full stack engineer", "fullstack engineer",
+                  "full-stack engineer", "full stack developer", "fullstack developer",
+                  "full-stack developer", "platform engineer", "python developer",
+                  "typescript developer", "web developer", "application engineer",
+                  "swe", "sde"]
+      },
+      "ml_engineer": {
+        "score": 16,
+        "terms": ["machine learning", "machine learning engineer", "ml engineer",
+                  "mlops engineer", "mlops", "ml ops", "ml platform engineer",
+                  "ml infrastructure engineer", "machine learning infrastructure",
+                  "machine learning operations", "machine learning developer",
+                  "ml developer", "deep learning", "deep learning engineer",
+                  "deep learning developer", "computer vision", "computer vision engineer"]
+      },
+      "data_scientist": {
+        "score": 12,
+        "terms": ["data scientist", "research scientist", "applied scientist",
+                  "data engineer", "machine learning scientist", "quantitative researcher",
+                  "analytics engineer", "decision scientist"]
+      },
+      "generic_engineering": {
+        "_comment": [
+          "The catch-all for a title that is plainly an engineering job but names",
+          "no family: 'Compiler Engineer', 'Rust Engineer', 'Backend-Entwickler'.",
+          "Without it the role floor treats those exactly like 'Sales Manager' and",
+          "forces them to Low, which is far too blunt - they are real targets, just",
+          "not obviously the kind you are hunting. Scoring 14 keeps them below every",
+          "named family while leaving the floor for postings that are genuinely not",
+          "engineering at all."
+        ],
+        "score": 14,
+        "terms": ["engineer", "developer", "entwickler", "programmer", "programmierer",
+                  "engineering", "softwareentwickler"]
+      },
+      "adjacent": {
+        "score": 5,
+        "terms": ["solutions engineer", "solution engineer", "forward deployed engineer",
+                  "forward-deployed engineer", "sales engineer", "data analyst",
+                  "developer advocate", "developer relations", "technical account manager",
+                  "product manager", "business analyst", "support engineer",
+                  "consultant", "consulting", "berater", "presales", "pre-sales",
+                  "customer success", "trainer", "evangelist", "recruiter"]
+      }
+    }
+  },
+
+  "seniority": {
+    "_comment": [
+      "The sharpest discriminator for a new graduate, and the one place the",
+      "scorer reads the title and the body by different rules. The full ladder",
+      "is read from the TITLE only - 'Senior' in a job title is unambiguous.",
+      "From the BODY only the years-of-experience regex and explicit entry",
+      "markers count, because 'reporting to the Head of AI' and 'you will work",
+      "with senior engineers' are not seniority requirements. When both fire,",
+      "the lower score wins."
+    ],
+    "scores": {
+      "entry": 25,
+      "none": 20,
+      "one_two": 17,
+      "three_plus": 8,
+      "senior": 3,
+      "lead": 0
+    },
+    "years_bands": [
+      {"max_years": 0, "level": "entry"},
+      {"max_years": 2, "level": "one_two"},
+      {"max_years": 3, "level": "three_plus"},
+      {"max_years": 6, "level": "senior"},
+      {"max_years": 99, "level": "lead"}
+    ],
+    "entry": ["graduate", "new grad", "new graduate", "junior", "entry level",
+              "entry-level", "intern", "internship", "working student", "werkstudent",
+              "trainee", "praktikum", "absolvent", "berufseinsteiger", "no experience required"],
+    "one_two": [],
+    "three_plus": ["mid-level", "mid level", "midlevel"],
+    "senior": ["senior", "sr.", "experienced professional", "erfahrene"],
+    "lead": ["lead", "team lead", "tech lead", "technical lead", "staff engineer",
+             "principal", "head of", "manager", "director", "architect",
+             "vice president", "engineering manager", "chief"],
+    "experience_markers": ["experience", "experienced", "erfahrung", "berufserfahrung",
+                           "background", "hands-on", "hands on", "practical", "working",
+                           "track record", "praxis"],
+    "marker_window": 60
+  },
+
+  "skills": {
+    "_comment": [
+      "Additive only. A posting that names nothing you know scores 0 here; it is",
+      "never penalised, because a skill you have not used is usually a",
+      "vocabulary gap rather than a capability gap (P1). Saturation is the",
+      "weight-point total that earns full marks - low on purpose.",
+      "Bare 'ai' and 'ml' belong in roles, never here: they are far too common",
+      "in prose to carry a weight of 3.",
+      "exclude is the one negative list: stacks you have decided not to pursue.",
+      "It GATES (band -> low) rather than deducting, and only when the stack is",
+      "the role's primary one - named in the title, or inside a must-have line."
+    ],
+    "saturation": 10,
+    "primary": ["python", "pytorch", "transformers", "hugging face", "huggingface",
+                "nlp", "natural language processing", "llm", "llms", "large language model",
+                "large language models", "rag", "retrieval augmented generation",
+                "retrieval-augmented generation", "typescript", "fastapi", "react",
+                "next.js", "nextjs", "sql"],
+    "secondary": ["docker", "aws", "postgresql", "postgres", "langchain", "langgraph",
+                  "embeddings", "embedding", "vector database", "vector search", "pgvector",
+                  "spacy", "scikit-learn", "sklearn", "java", "spring boot", "django",
+                  "kubernetes", "sentence-transformers", "bertopic", "chromadb", "supabase"],
+    "domain": ["agentic", "evaluation", "forecasting", "topic modelling", "topic modeling",
+               "github actions", "nginx", "redis", "slurm", "hpc", "retrieval",
+               "ci/cd", "terraform", "prometheus", "grafana", "caddy", "stripe"],
+    "exclude": [".net", "dotnet", "asp.net", "c#", "php", "sap abap", "abap", "cobol",
+                "delphi", "vb.net", "visual basic", "sharepoint", "salesforce apex"],
+    "must_have_markers": ["required", "requirements", "must have", "must-have", "essential",
+                          "you have", "we expect", "vorausgesetzt", "erforderlich",
+                          "zwingend", "your profile", "qualifications"],
+    "exclude_counter_markers": ["migration", "migrating", "migrate", "legacy", "replace",
+                                "replacing", "modernis", "moderniz", "interoperab",
+                                "integration with", "phase out", "sunset", "away from"]
+  },
+
+  "geo": {
+    "_comment": [
+      "EDIT THESE FIRST. `home`, `belt`, `second` and `third` are placeholders",
+      "for wherever you actually want to work - the real ordering lives in your",
+      "private fit_profile.json, not here. The country and region lists below",
+      "are plain geography and can stay as they are.",
+      "",
+      "Keep the top tiers close together: they express a preference between",
+      "places you would all accept, not a gap in suitability. An unresolved",
+      "location scores NEUTRAL, never zero - an unknown is not a negative, and",
+      "zeroing it would bury every board that omits the field. No visa, permit",
+      "or relocation signal appears anywhere here, by design: those are never",
+      "grounds to discount a posting.",
+      "Buckets are tested in the order listed under `order`, most specific first."
+    ],
+    "scores": {
+      "home": 15, "belt": 14, "second": 14, "third": 13,
+      "ch_other": 10, "de_at": 9, "eu": 8, "unknown": 8, "outside": 0
+    },
+    "order": ["home", "belt", "second", "third", "ch_other", "de_at", "eu", "outside"],
+    "home": ["your-home-city"],
+    "belt": ["a-town-you-would-commute-to", "another-commutable-town"],
+    "second": ["your-second-choice-city"],
+    "third": ["your-third-choice-city"],
+    "ch_other": ["switzerland", "schweiz", "suisse", "svizzera", "basel", "bern", "berne",
+                 "geneva", "genève", "genf", "lausanne", "st. gallen", "st gallen",
+                 "sankt gallen", "lugano", "neuchâtel", "neuchatel", "fribourg", "sion",
+                 "chur", "biel", "bienne", "thun", "solothurn", "olten", "zurich area"],
+    "de_at": ["germany", "deutschland", "austria", "österreich", "oesterreich",
+              "hamburg", "frankfurt", "cologne", "köln", "koeln", "stuttgart",
+              "düsseldorf", "dusseldorf", "duesseldorf", "leipzig", "dresden",
+              "nuremberg", "nürnberg", "nuernberg", "hannover", "bremen", "essen",
+              "dortmund", "karlsruhe", "mannheim", "bonn", "münster", "augsburg",
+              "heidelberg", "darmstadt", "ulm", "freiburg", "potsdam", "jena",
+              "vienna", "wien", "graz", "linz", "salzburg", "innsbruck"],
+    "eu": ["europe", "european", "emea", "netherlands", "amsterdam", "utrecht",
+           "france", "paris", "lyon", "spain", "madrid", "barcelona", "italy", "milan",
+           "rome", "turin", "portugal", "lisbon", "porto", "poland", "warsaw", "krakow",
+           "czech", "prague", "sweden", "stockholm", "denmark", "copenhagen", "norway",
+           "oslo", "finland", "helsinki", "ireland", "dublin", "belgium", "brussels",
+           "luxembourg", "united kingdom", "london", "cambridge", "oxford", "manchester",
+           "edinburgh", "romania", "bucharest", "hungary", "budapest", "estonia",
+           "tallinn", "greece", "athens", "bulgaria", "sofia", "croatia", "zagreb"],
+    "outside": ["united states", "usa", "u.s.", "new york", "san francisco", "california",
+                "seattle", "boston", "austin", "chicago", "denver", "canada", "toronto",
+                "vancouver", "india", "bangalore", "bengaluru", "hyderabad", "singapore",
+                "japan", "tokyo", "china", "shanghai", "beijing", "shenzhen", "hong kong",
+                "australia", "sydney", "melbourne", "israel", "tel aviv", "dubai",
+                "abu dhabi", "brazil", "sao paulo", "são paulo", "mexico", "argentina",
+                "south africa", "cape town", "new zealand", "seoul", "taipei"]
+  },
+
+  "company": {
+    "_comment": [
+      "Affinity 0-5 lives in company_affinity.json. Resolution order is",
+      "explicit: your rating wins; failing that an ATS registry tier seeds it;",
+      "only a company with neither falls back to `default`. So 'unrated' does",
+      "not mean one fixed score - a tier-1 company with no rating seeds to 4."
+    ],
+    "tier_seed": {"1": 4, "2": 3, "3": 2, "4": 1, "5": 1},
+    "match_threshold": 85
+  },
+
+  "weights": {
+    "_comment": [
+      "max must sum to 100. bands are the display thresholds; calibrate them",
+      "against a hand-labelled set rather than a histogram - a histogram shows",
+      "the distribution, not whether the top of the list is right."
+    ],
+    "max": {"role": 25, "seniority": 25, "skills": 18, "company": 17, "location": 15},
+    "bands": {"high": 75, "medium": 58}
+  }
+}

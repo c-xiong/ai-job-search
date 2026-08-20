@@ -57,6 +57,63 @@ function render(){
   el("empty").hidden=rows.length>0;el("count").textContent=`${rows.length} shown · ${JOBS.length} total`;
   renderJob();document.querySelector("tr.sel")?.scrollIntoView({block:"nearest"});
 }
+// Which number the row is actually sorted on. Calling a rank score a "prefit"
+// was wrong in both directions: it understated an LLM judgement and overstated
+// a keyword prior.
+const SCORE_LABEL={rank:"rank",fit:"fit",prefit:"prefit",band:"band"};
+const scoreTitle=j=>({
+  rank:"Scored by /rank, which read the posting.",
+  fit:"Computed by tools/fit_score.py from the title, seniority, skills, company affinity and location.",
+  prefit:"An older collector-side prior, not a fit assessment.",
+  band:"Carried over from a coarse band with no number behind it.",
+}[j.score_source]||"");
+
+// Gates, read from what was actually decided rather than guessed at again here.
+//
+// This used to run `/german required|deutsch/i` over the description in the
+// browser. That was wrong twice over: far looser than collectors.GERMAN_RE,
+// which distinguishes German stated as a job *condition* from German mentioned
+// in passing, and it ran against a description that is now only an excerpt - so
+// it would have missed a requirement further down the posting and reported "no
+// blocking requirement detected" with confidence.
+function gateLines(j){
+  const gated=j.status==="gate";
+  const note=(j.why||"").includes("German")?j.why:"";
+  const language=gated&&note
+    ? {mark:"✕",text:"Language — German stated as a job condition"}
+    : gated
+      ? {mark:"✕",text:"Language — auto-screened out; see the note"}
+      : {mark:"✓",text:"Language — no blocking requirement was screened"};
+  const location={mark:"✓",text:"Location — "+(j.location||"not stated")};
+  return [language,location].map(g=>
+    `<div class="gate-line"><span class="gate-mark">${g.mark}</span><span>${esc(g.text)}</span></div>`
+  ).join("");
+}
+
+// Full posting bodies live in sidecars and are not in the list payload - every
+// row of it goes to the browser on every reload. The excerpt paints instantly;
+// the body arrives from /api/job and is cached so re-selecting a row is free.
+const POSTING_CACHE=new Map();
+function postingText(j){
+  if(POSTING_CACHE.has(j.url))return POSTING_CACHE.get(j.url);
+  if(j.description)return j.description;
+  return j.has_posting?"Loading the posting…"
+    :"Posting text is not stored for this row. Open the original posting to read it.";
+}
+async function loadPosting(j){
+  if(!j||!j.has_posting||POSTING_CACHE.has(j.url))return;
+  try{
+    const full=await(await fetch("/api/job?t="+T+"&url="+encodeURIComponent(j.url))).json();
+    POSTING_CACHE.set(j.url,full.description||"");
+  }catch(error){return}
+  // Only repaint when the row is still the selected one: a fast arrow-key walk
+  // down the list would otherwise drop an old response into the new row.
+  if(selectedJob()?.url===j.url){
+    const box=el("postingbody");
+    if(box){box.textContent=POSTING_CACHE.get(j.url);box.classList.remove("postingempty")}
+  }
+}
+
 function renderJob(){
   const j=selectedJob(),rows=shown();
   if(!j){el("jobdetail").innerHTML='<div class="panel-empty">Select a job.</div>';el("jobpos").textContent="";return}
@@ -64,13 +121,14 @@ function renderJob(){
   const statusButtons=["star","yes","maybe","gate","no"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
   el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitle">${esc(j.title)}</div>
     <div class="jobmeta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div>
-    <div class="badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge">prefit ${esc(j.score)}</span>`:""}</div></div>
-    <div class="whybox"><span class="label">Why it is here</span>${esc(j.why||"No prefit reason was stored.")}</div>
-    <div class="posting"><span class="label">Posting</span><div class="${j.description?"":"postingempty"}">${esc(j.description||"Posting text is not stored for this row. Open the original posting to read it.")}</div></div>
+    <div class="badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge" title="${esc(scoreTitle(j))}">${esc(SCORE_LABEL[j.score_source]||"score")} ${esc(Math.round(j.score))}</span>`:""}${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">title only</span>':""}</div></div>
+    <div class="whybox"><span class="label">Why it is here</span>${esc(j.why||"No reason was stored.")}</div>
+    <div class="posting"><span class="label">Posting</span><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
     <div class="jobactions"><div class="statusbuttons">${statusButtons}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
       <button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button>
       <div class="hint">runs /apply in the background · you stay on the board</div></div>`;
+  loadPosting(j);
 }
 
 async function update(url,patch,record=true){
@@ -177,8 +235,9 @@ function renderReader(){
   const queue=rows.slice(0,80).map((row,index)=>`<div class="queue-row ${index===sel?"selected":""}" data-reader-row="${index}"><div class="queue-top"><span class="fitdot ${esc(row.fit)}"></span><span class="queue-company">${esc(row.company)}</span><span class="queue-mark">${esc(row.status==="new"?"":row.status)}</span></div><div class="queue-title">${esc(row.title)}</div></div>`).join("");
   const marks=["star","yes","maybe","gate","no","applied"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
   el("tailor-view").innerHTML=`<div class="reader-shell"><section class="reader-queue"><div class="panelhead"><span class="label">Queue</span><span class="spacer"></span><span class="dim">${rows.length} active</span></div><div class="queue-list">${queue}</div></section>
-    <section class="reader-main"><div class="reader-scroll"><article class="reader-copy"><div class="reader-badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge">prefit ${esc(j.score)}</span>`:""}<span class="spacer"></span><a class="open" href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener">open posting ↗</a></div><h1>${esc(j.title)}</h1><div class="reader-meta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div><div class="reader-posting">${esc(j.description||"Posting text is not stored for this row.")}</div></article></div></section>
-    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span><div class="gate-line"><span class="gate-mark">✓</span><span>Language — ${/german required|deutsch/i.test(j.description||"")?"requirement needs review":"no blocking requirement detected"}</span></div><div class="gate-line"><span class="gate-mark">✓</span><span>Location — ${esc(j.location||"not stated")}</span></div></div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No prefit reason was stored.")}</div><div class="hint">A prefit reason, not a fit assessment. Tailor re-evaluates properly.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button><div class="hint">marks it yes and queues the run · <kbd>t</kbd></div></div></aside></div>`;
+    <section class="reader-main"><div class="reader-scroll"><article class="reader-copy"><div class="reader-badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge" title="${esc(scoreTitle(j))}">${esc(SCORE_LABEL[j.score_source]||"score")} ${esc(Math.round(j.score))}</span>`:""}${j.fit_evidence==="title-only"?'<span class="badge">title only</span>':""}<span class="spacer"></span><a class="open" href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener">open posting ↗</a></div><h1>${esc(j.title)}</h1><div class="reader-meta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div><div class="reader-posting" id="postingbody">${esc(postingText(j))}</div></article></div></section>
+    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Tailor re-evaluates properly.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button><div class="hint">marks it yes and queues the run · <kbd>t</kbd></div></div></aside></div>`;
+  loadPosting(j);
   openView("reader",`reading ${sel+1} of ${rows.length} · active`);
 }
 

@@ -76,6 +76,20 @@ REQUIRED_IGNORE_RULES = [
     "job_scraper/companies.json",
     "job_scraper/ats_cache/",
     "**/job_scraper/ats_cache/",
+    # Stored posting bodies: the full text of every job considered, one file per
+    # posting. Losing this rule would publish the owner's entire search surface.
+    "job_scraper/postings/",
+    "**/job_scraper/postings/",
+    # The deterministic fit scorer's inputs. The profile and affinity files
+    # encode who the candidate is and which employers they want; the calibration
+    # set records which postings they would and would not read. Only the
+    # `*.example.json` twins are tracked.
+    "job_scraper/fit_profile.json",
+    "**/job_scraper/fit_profile.json",
+    "job_scraper/company_affinity.json",
+    "**/job_scraper/company_affinity.json",
+    "job_scraper/fit_calibration.json",
+    "**/job_scraper/fit_calibration.json",
     "job_scraper/fetch_status.json",
     "job_scraper/.fetch.lock",
     "job_scraper/.board.lock",

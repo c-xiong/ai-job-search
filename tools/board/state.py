@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import jobs_md  # noqa: E402
+import postings  # noqa: E402
 
 from . import activity  # noqa: E402
 
@@ -41,16 +42,37 @@ def save(seen, why=""):
         ms=timer.ms)
 
 
+def _score_source(entry):
+    """Which number `jobs_md.priority_score` is actually reading for this row."""
+    for key, name in (("rank_score", "rank"), ("fit_priority_score", "fit"),
+                      ("prefit_score", "prefit")):
+        value = entry.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return name
+    return "band"
+
+
 def jobs_payload():
-    seen = load()
+    return {"jobs": _sorted(_shape(load().items())), "statuses": STATUSES}
+
+
+def _shape(items):
+    """Board rows for (url, entry) pairs. No sorting, no sidecar reads."""
     rows = []
-    for url, entry in seen.items():
-        why = entry.get("note", "")
-        # A collector cannot fill `fit`, so a freshly fetched row would otherwise
-        # arrive with no visible reason for its position. The prefit reasons are
-        # that reason, and they are shown as such - never as a fit assessment.
-        if not why and entry.get("prefit_reasons"):
-            why = "PREFIT: " + "; ".join(entry["prefit_reasons"])
+    for url, entry in items:
+        # Why this row sits where it sits. The screen note and the score answer
+        # different questions - "German is a job condition here" and "this
+        # scored 70 because the title matched" - so they are joined rather than
+        # ranked. Making one win meant a row with any note, including a bland
+        # "not screened, budget spent", never showed why it was placed at all.
+        # `prefit_reasons` is the older ATS-only prior and only appears for rows
+        # collected before the scorer existed.
+        parts = [entry.get("note", "")]
+        if entry.get("fit_reasons"):
+            parts.append("; ".join(entry["fit_reasons"]))
+        elif entry.get("prefit_reasons"):
+            parts.append("PREFIT: " + "; ".join(entry["prefit_reasons"]))
+        why = " · ".join(part for part in parts if part)
         rows.append({
             "url": url,
             "open_url": primary_url(entry),
@@ -68,23 +90,59 @@ def jobs_payload():
             "primary_source": entry.get("primary_source") or entry.get("portal", ""),
             "sources": [source.get("portal", "") for source in entry.get("sources") or []
                         if isinstance(source, dict) and source.get("portal")],
-            # M2.5's Job panel renders the posting already stored by collectors.
-            # This is payload shaping only; there is deliberately no new fetch
-            # route or server-side reader state.
-            "description": (entry.get("description") or entry.get("job_description")
-                            or entry.get("text") or ""),
+            # The list payload carries the excerpt, never the body. Every row
+            # goes to the browser on each reload, so a few kilobytes of posting
+            # per row would be megabytes on the wire; `job_payload()` serves the
+            # full text for the one row you actually opened.
+            "description": entry.get("posting_excerpt", ""),
+            "has_posting": bool(entry.get("posting_path")),
+            "posting_chars": entry.get("posting_chars") or 0,
+            # Which of the three scores the row is actually sorted on, so the
+            # page can label a reason correctly instead of calling every number
+            # a prefit.
+            "score_source": _score_source(entry),
+            "fit_evidence": entry.get("fit_evidence", ""),
+            "fit_parts": entry.get("fit_parts") or {},
             "dupes": entry.get("possible_duplicate_of") or [],
         })
-    # Your status first, then display priority (rank_score > prefit_score > fit),
-    # then newest. Same order as jobs_md.sort_key, so the board and the markdown
-    # can never disagree about what is at the top.
-    rows.sort(key=lambda r: (STATUSES.index(r["status"]) if r["status"] in LOCK_STATUSES
-                             else 99,
-                             -r["score"],
-                             jobs_md._neg_date(r["posted"])))
-    return {"jobs": rows, "statuses": STATUSES}
+    return rows
+
+
+def _sorted(rows):
+    """Your status first, then display priority, then newest.
+
+    The priority half is `jobs_md.priority_score`, which reads rank_score >
+    fit_priority_score > prefit_score > the band, and caps the result at what
+    the displayed band allows. Same order as `jobs_md.sort_key`, so the board
+    and the markdown export can never disagree about what is at the top.
+    """
+    return sorted(rows, key=lambda r: (
+        STATUSES.index(r["status"]) if r["status"] in LOCK_STATUSES else 99,
+        -r["score"],
+        jobs_md._neg_date(r["posted"])))
 
 
 def job_payload(url):
-    """One shaped board row, including the stored posting body."""
-    return next((row for row in jobs_payload()["jobs"] if row["url"] == url), None)
+    """One shaped board row, with its full posting body.
+
+    A direct key lookup and exactly one sidecar read. The old shape rebuilt and
+    re-sorted the entire table to throw all but one row away, which was merely
+    wasteful when rows were small and would now mean touching every posting on
+    disk to answer a question about one of them.
+    """
+    seen = load()
+    entry = seen.get(url)
+    if entry is None:
+        return None
+    row = next((r for r in _shape([(url, entry)]) if r["url"] == url), None)
+    if row is None:
+        return None
+    try:
+        body = postings.load(entry)
+    except postings.UnsafePath:
+        # A stored path that does not resolve inside the store is a bug or a
+        # tampered state file, never something to serve. The row still renders;
+        # only its body is withheld.
+        body = ""
+    row["description"] = body or row.get("description", "")
+    return row

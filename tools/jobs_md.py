@@ -48,21 +48,41 @@ STATUS_HELP = [
 ]
 FIT_ORDER = {"high": 0, "medium": 1, "low": 2, "": 3, None: 3}
 
-# Display priority, 0-100, high first. Three sources, in order of authority:
-# `/rank`'s LLM score when it has run, the collector's deterministic `prefit_score`
-# when it has not, and the coarse `fit` band for entries that predate both.
-# Without this a freshly collected batch sinks to the bottom of the board - a
-# collector cannot fill `fit`, and an empty fit is the lowest bucket.
+# Display priority, 0-100, high first. Four sources, in order of authority:
+# `/rank`'s LLM score when it has run, `tools/fit_score.py`'s deterministic
+# score when it has not, the older `prefit_score` for rows that predate the
+# scorer, and the coarse `fit` band for rows that predate all of it.
 FIT_SCORE = {"high": 80, "medium": 55, "low": 30, "": 0, None: 0}
+
+# What each displayed band allows a row's priority to reach.
+#
+# Without this the column contradicts the order it sits in: a title-only row
+# scoring 82 is labelled `medium` because it has no posting text to justify
+# High, and it would still sort above a fully evidenced 75 labelled `high`.
+# Same for a gated row - German stated as a condition forces `low`, but the raw
+# number is deliberately preserved, so only a ceiling keeps it out of the top.
+# Lives here rather than in fit_score.py because sorting is this module's job
+# and fit_score.py already imports it; the other direction would be a cycle.
+BAND_CEILING = {"high": 100, "medium": 74, "low": 57}
 
 
 def priority_score(entry):
-    """0-100 display priority. rank_score > prefit_score > the fit band."""
-    for key in ("rank_score", "prefit_score"):
+    """0-100 display priority, capped by the band the row actually shows.
+
+    rank_score > fit_priority_score > prefit_score > the fit band.
+    """
+    base = None
+    for key in ("rank_score", "fit_priority_score", "prefit_score"):
         value = entry.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-    return float(FIT_SCORE.get((entry.get("fit") or "").lower(), 0))
+            base = float(value)
+            break
+    band = (entry.get("fit") or "").lower()
+    if base is None:
+        base = float(FIT_SCORE.get(band, 0))
+    if entry.get("fit_source") in ("ranked", "deterministic"):
+        base = min(base, float(BAND_CEILING.get(band, 100)))
+    return base
 
 # A section heading is built from the statuses it holds, not hand-written next to
 # them: `## `gate` / `expired` - excluded automatically`. Naming a bucket something

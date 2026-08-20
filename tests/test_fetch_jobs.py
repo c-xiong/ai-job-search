@@ -191,20 +191,23 @@ class DetailBudgetTest(unittest.TestCase):
 
     def test_a_deferred_posting_is_stored_without_a_description_and_says_so(self):
         budget = collectors.Budget(0)
-        status, note = collectors.screen(
+        status, note, text = collectors.screen(
             {"portal": "linkedin-search", "id": "123"}, silent, budget)
         self.assertEqual(status, "new")
         self.assertIn("detail budget", note)
         self.assertEqual(budget.deferred, 1)
+        self.assertEqual(text, "", "a posting that was never fetched has no body to store")
 
     def test_a_record_that_already_has_its_text_costs_no_request(self):
         budget = collectors.Budget(0)
-        status, _note = collectors.screen(
+        status, _note, text = collectors.screen(
             {"portal": "freehire-search", "id": "x", "description": "Python and Go."},
             silent, budget)
         self.assertEqual(status, "new")
         self.assertEqual(budget.used, 0)
         self.assertEqual(budget.deferred, 0, "an inline description is not a deferred fetch")
+        self.assertEqual(text, "Python and Go.",
+                         "the inline body is handed back so merge can store it")
 
     def test_the_ceiling_cannot_be_raised_from_config(self):
         budget = fetch_jobs._detail_budget({"linkedin_max_detail_fetches": 500}, None)

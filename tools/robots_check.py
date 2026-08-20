@@ -21,27 +21,48 @@ Usage:  python3 tools/robots_check.py <url>
 Exit 0 = the retry may proceed. Exit 1 = do not retry; go to escalation step 3.
 """
 
-import re, subprocess, sys
+import re, sys
+from pathlib import Path
 from urllib.parse import urlsplit, unquote
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from board import fetch_url  # noqa: E402
 
 BROWSER = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
            '(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36')
 
 def _fetch(url, ua):
-    """curl, not urllib: some hosts (jobup.ch) hang urllib indefinitely while
-    answering curl in under a second, and --max-time is a hard ceiling."""
-    # "--" terminates option parsing, so a URL beginning with a dash can never
-    # be read by curl as a flag. gate() rebuilds the target as
-    # scheme://host/robots.txt before calling here, so this is hardening for
-    # direct callers rather than a hole in the gate path itself.
-    r = subprocess.run(
-        ['curl', '-sS', '-L', '--max-redirs', '5', '--max-time', '12', '-A', ua,
-         '-H', 'Accept: text/plain,*/*', '-w', '\n%{http_code}', '--', url],
-        capture_output=True, text=True, timeout=20)
-    if r.returncode != 0:
-        raise RuntimeError('curl exit %d' % r.returncode)
-    body, _, code = r.stdout.rpartition('\n')
-    return body, int(code or 0)
+    """Fetch a robots.txt through the validated transport.
+
+    This used to shell out to `curl -sS -L --max-redirs 5`. That was adequate
+    while this ran once, by hand, against a URL a human had just looked at. It
+    is not adequate as the gate on a batch that walks dozens of arbitrary
+    careers domains: curl was given no `--proto` restriction, no public-address
+    check, and no per-hop validation, so a public domain could answer
+    `/robots.txt` with a redirect to `http://169.254.169.254/...` or an RFC1918
+    address and this would follow it. The permission check would then be the
+    most attacker-reachable request the tool makes - which is the wrong thing
+    for a safety gate to be.
+
+    `board/fetch_url.fetch` already solves exactly this: https-only, every hop
+    re-resolved and required to be public, the connection pinned to the address
+    that was validated, at most 3 redirects, and one absolute deadline for the
+    whole operation.
+
+    The `curl` note this replaced recorded that some hosts (jobup.ch) hang
+    urllib indefinitely while answering curl in under a second. `fetch_url`
+    does not inherit that: it re-applies the remaining budget before every
+    blocking read and reads with `read1`, so a dribbling or silent server
+    converges on the deadline instead of parking on it.
+    """
+    try:
+        _final, code, body = fetch_url.fetch(
+            url, max_redirects=3, timeout=12, max_bytes=512 * 1024)
+    except fetch_url.Refused as exc:
+        # A policy refusal is not a robots answer. Returning a body here would
+        # let a redirect into private space read as "allowed".
+        raise RuntimeError('refused: %s' % exc)
+    return body, code
 
 
 def is_robots_body(text):

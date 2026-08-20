@@ -163,20 +163,48 @@ class TestPercentEncodedRules(unittest.TestCase):
 
 
 class TestArgumentHardening(unittest.TestCase):
-    """A URL can never be read by curl as an option.
+    """The robots fetch cannot be steered anywhere it should not go.
 
     gate() rebuilds the target as scheme://host/robots.txt, so the gate path was
-    never exposed; this pins the "--" terminator for direct _fetch callers and
-    confirms a dash-leading argument fails closed end to end.
+    never exposed to a hostile argument; these pin the rest - that a
+    dash-leading argument fails closed, and that the fetch itself now runs
+    through the validated transport rather than a shell-out.
     """
 
-    def test_curl_argv_ends_with_a_double_dash_before_the_url(self):
+    def test_the_fetch_runs_through_the_validated_transport(self):
+        """No subprocess, and no way to reach a private address by redirect.
+
+        The previous implementation shelled out to `curl -L` with no scheme
+        restriction and no per-hop address check, which made the *permission
+        check* the most attacker-reachable request in the tool. Batch backfill
+        is what made that unacceptable: one hostile careers domain redirecting
+        its /robots.txt is enough.
+        """
         import inspect
 
         import robots_check
 
         src = inspect.getsource(robots_check._fetch)
-        self.assertIn("'--', url", src)
+        self.assertIn("fetch_url.fetch", src)
+        self.assertNotIn("subprocess", src)
+        self.assertNotIn("curl'", src)
+
+    def test_a_policy_refusal_is_never_reported_as_a_robots_answer(self):
+        """Returning a body on refusal would read a redirect as "allowed"."""
+        import robots_check
+
+        def refuse(*_args, **_kwargs):
+            raise robots_check.fetch_url.Refused(
+                "example.test resolves to the non-public address 127.0.0.1")
+
+        original = robots_check.fetch_url.fetch
+        robots_check.fetch_url.fetch = refuse
+        try:
+            code, message = robots_check.gate("https://example.test/jobs/1")
+        finally:
+            robots_check.fetch_url.fetch = original
+        self.assertEqual(code, 1)
+        self.assertIn("UNCONFIRMED", message)
 
     def test_a_dash_leading_argument_fails_closed(self):
         script = REPO_ROOT / "tools" / "robots_check.py"

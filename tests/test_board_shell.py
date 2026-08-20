@@ -6,6 +6,7 @@ existing HTTP tests cover the API wiring.
 """
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -114,27 +115,160 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn("minmax(480px,1fr)", self.css)
 
 
+class PostingAndScoreMarkupTest(unittest.TestCase):
+    """The Job panel reads a stored posting, and says which score it sorted on."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = (ROOT / "tools" / "board" / "static" / "app.js").read_text(encoding="utf-8")
+
+    def test_the_body_is_fetched_lazily_from_the_single_row_route(self):
+        for marker in ("POSTING_CACHE", "loadPosting", "/api/job?t=", "postingbody"):
+            self.assertIn(marker, self.js)
+
+    def test_a_late_response_cannot_land_in_the_wrong_row(self):
+        """Arrow-key walking the list must not paint row N-1's posting into row N."""
+        self.assertIn("selectedJob()?.url===j.url", self.js)
+
+    def test_the_score_badge_names_its_own_provenance(self):
+        for marker in ("SCORE_LABEL", "scoreTitle", "score_source"):
+            self.assertIn(marker, self.js)
+        self.assertNotIn('badge">prefit ${esc(j.score)}', self.js,
+                         "every score was being labelled a prefit, including /rank's")
+
+    def test_title_only_rows_say_so(self):
+        self.assertIn('fit_evidence==="title-only"', self.js)
+
+    def test_the_language_gate_is_read_not_guessed_in_the_browser(self):
+        """A loose inline regex over an excerpt is not a language gate.
+
+        collectors.GERMAN_RE distinguishes German stated as a job condition from
+        German mentioned in passing, and it runs over the whole posting. The
+        browser sees only an excerpt, so re-deriving the verdict there could only
+        ever be wrong - and it reported "no blocking requirement detected".
+        """
+        self.assertIn("gateLines", self.js)
+        code = "\n".join(line for line in self.js.splitlines()
+                         if not line.lstrip().startswith("//"))
+        self.assertNotIn("german required|deutsch", code)
+
+
 class JobPanelPayloadTest(unittest.TestCase):
-    def test_stored_posting_text_is_shaped_for_the_job_panel(self):
-        entry = {
-            "url": "https://example.test/jobs/1",
+    """The list payload carries an excerpt; the single-row route carries the body.
+
+    Bodies live in sidecars because `/api/jobs` ships every row on every reload.
+    Putting a few kilobytes of posting on each row would be megabytes on the
+    wire and megabytes rewritten on every status click, which is the whole
+    reason the store exists.
+    """
+
+    URL = "https://example.test/jobs/1"
+    BODY = ("Build reliable systems. Requirements: Python, FastAPI and a habit "
+            "of writing the test before the fix. We offer unhurried review.")
+
+    def entry(self, **over):
+        base = {
+            "url": self.URL,
             "title": "Engineer",
             "company": "Example",
             "location": "Zurich",
             "posted": "2026-08-19",
-            "description": "Build reliable systems.",
             "portal": "linkedin-browser",
             "primary_source": "linkedin-browser",
             "sources": [{"portal": "linkedin-browser"}, {"portal": "linkedin-search"}],
         }
-        with mock.patch.object(state, "load", return_value={entry["url"]: entry}), \
+        base.update(state.postings.describe(self.URL, self.BODY))
+        base.update(over)
+        return base
+
+    def test_the_list_payload_carries_the_excerpt_not_the_body(self):
+        entry = self.entry()
+        with mock.patch.object(state, "load", return_value={self.URL: entry}), \
              mock.patch.object(state.jobs_md, "priority_score", return_value=0):
             payload = state.jobs_payload()
-        self.assertEqual(payload["jobs"][0]["description"],
-                         "Build reliable systems.")
-        self.assertEqual(payload["jobs"][0]["primary_source"], "linkedin-browser")
-        self.assertEqual(payload["jobs"][0]["sources"],
-                         ["linkedin-browser", "linkedin-search"])
+        row = payload["jobs"][0]
+        self.assertTrue(row["description"])
+        self.assertLessEqual(len(row["description"]), state.postings.EXCERPT_CHARS + 1)
+        self.assertTrue(row["has_posting"])
+        self.assertEqual(row["posting_chars"], len(self.BODY))
+        self.assertEqual(row["primary_source"], "linkedin-browser")
+        self.assertEqual(row["sources"], ["linkedin-browser", "linkedin-search"])
+
+    def test_the_single_row_route_serves_the_full_body(self):
+        entry = self.entry()
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = state.postings.jobs_md.SEEN
+            state.postings.jobs_md.SEEN = Path(tmp) / "seen_jobs.json"
+            try:
+                state.postings.commit(self.URL, self.BODY)
+                with mock.patch.object(state, "load", return_value={self.URL: entry}), \
+                     mock.patch.object(state.jobs_md, "priority_score", return_value=0):
+                    row = state.job_payload(self.URL)
+            finally:
+                state.postings.jobs_md.SEEN = saved
+        self.assertEqual(row["description"], self.BODY)
+
+    def test_a_row_with_no_stored_body_says_so_rather_than_failing(self):
+        entry = self.entry()
+        for field in list(state.postings.ENTRY_FIELDS):
+            entry.pop(field, None)
+        with mock.patch.object(state, "load", return_value={self.URL: entry}), \
+             mock.patch.object(state.jobs_md, "priority_score", return_value=0):
+            row = state.jobs_payload()["jobs"][0]
+        self.assertEqual(row["description"], "")
+        self.assertFalse(row["has_posting"])
+
+    def test_an_unknown_url_is_not_an_error(self):
+        with mock.patch.object(state, "load", return_value={}):
+            self.assertIsNone(state.job_payload("https://example.test/nope"))
+
+    def test_the_payload_names_which_score_the_row_is_sorted_on(self):
+        """Otherwise the page calls a rank score a 'prefit' and misleads you."""
+        cases = [({"rank_score": 80}, "rank"),
+                 ({"fit_priority_score": 70}, "fit"),
+                 ({"prefit_score": 60}, "prefit"),
+                 ({}, "band")]
+        for extra, expected in cases:
+            entry = self.entry(**extra)
+            with mock.patch.object(state, "load", return_value={self.URL: entry}), \
+                 mock.patch.object(state.jobs_md, "priority_score", return_value=0):
+                row = state.jobs_payload()["jobs"][0]
+            self.assertEqual(row["score_source"], expected, extra)
+
+    def test_the_reasons_shown_are_the_ones_behind_the_sorted_number(self):
+        entry = self.entry(fit_reasons=["title matches \"ai engineer\""],
+                           prefit_reasons=["older prior"])
+        with mock.patch.object(state, "load", return_value={self.URL: entry}), \
+             mock.patch.object(state.jobs_md, "priority_score", return_value=0):
+            row = state.jobs_payload()["jobs"][0]
+        self.assertIn("ai engineer", row["why"])
+        self.assertNotIn("PREFIT", row["why"])
+
+    def test_a_screen_note_and_the_score_reasons_both_survive(self):
+        """They answer different questions, so neither may hide the other."""
+        entry = self.entry(note="AUTO-SCREEN: German stated as a job condition",
+                           fit_reasons=["German stated as a job condition",
+                                        'title matches "ai engineer"'])
+        with mock.patch.object(state, "load", return_value={self.URL: entry}), \
+             mock.patch.object(state.jobs_md, "priority_score", return_value=0):
+            row = state.jobs_payload()["jobs"][0]
+        self.assertIn("AUTO-SCREEN", row["why"])
+        self.assertIn("ai engineer", row["why"])
+
+    def test_a_bland_note_no_longer_hides_the_score_reasons(self):
+        entry = self.entry(note="AUTO-SCREEN: not screened - the run's detail budget was spent",
+                           fit_reasons=['title matches "ai engineer"'])
+        with mock.patch.object(state, "load", return_value={self.URL: entry}), \
+             mock.patch.object(state.jobs_md, "priority_score", return_value=0):
+            row = state.jobs_payload()["jobs"][0]
+        self.assertIn("ai engineer", row["why"])
+
+    def test_prefit_reasons_only_appear_when_there_is_no_computed_score(self):
+        entry = self.entry(prefit_reasons=["older prior"])
+        with mock.patch.object(state, "load", return_value={self.URL: entry}), \
+             mock.patch.object(state.jobs_md, "priority_score", return_value=0):
+            row = state.jobs_payload()["jobs"][0]
+        self.assertIn("PREFIT", row["why"])
 
 
 if __name__ == "__main__":

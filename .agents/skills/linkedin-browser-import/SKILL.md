@@ -24,7 +24,16 @@ settings.
    - `title`, `company`, and `linkedin_url` from the LinkedIn job detail (required)
    - `url`: the final company application or careers URL when available; otherwise
      use the same value as `linkedin_url`
-   - `location`, `posted`, `deadline`, and `description` when visible
+   - **`description`: the full posting text — required whenever the detail pane
+     shows one.** Expand any "see more" control first and take the whole body:
+     responsibilities, requirements, everything. This is the one source where
+     that text is free, because you already have the detail page open; every
+     other source either pays a request for it or cannot get it at all. It is
+     also what the fit scorer needs — a row imported without a body is capped at
+     `medium` no matter how well it matches, because a score with no evidence
+     behind it must not claim a strong one. Copy the text verbatim; never
+     summarise, translate, or trim it.
+   - `location`, `posted`, and `deadline` when visible
    Prefer inspecting the external Apply link target. If necessary, follow it only
    far enough to capture the final company/ATS URL, then stop before signing in,
    completing a form, or submitting anything. Do not store a LinkedIn redirect or
@@ -44,7 +53,7 @@ settings.
          "linkedin_url": "https://www.linkedin.com/jobs/view/1234567890",
          "posted": "2026-08-19",
          "deadline": null,
-         "description": ""
+         "description": "About the role\nYou will build retrieval pipelines in Python and ship them behind FastAPI...\n\nRequirements\n- 2+ years with PyTorch\n- Strong software engineering fundamentals\n\nWhat we offer\n- ..."
        }
      ]
    }

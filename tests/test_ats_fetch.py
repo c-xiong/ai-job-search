@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools import ats_fetch, jobs_md
+from tools import ats_fetch, jobs_md, postings
 
 
 class CanonicalUrlTest(unittest.TestCase):
@@ -91,6 +91,14 @@ def row(**over):
 
 
 def linkedin_entry(**over):
+    """A row as it sits on the board.
+
+    `description` is a convenience for the tests: a stored row keeps its body in
+    a sidecar and carries only the `posting_*` pointers, so the keyword is
+    translated into the fields a real merge would have written. Passing
+    `description` and expecting the dedup fingerprint to see it is precisely the
+    mistake this helper exists to prevent.
+    """
     base = {
         "title": "Machine Learning Engineer", "company": "Parloa", "location": "Berlin, Germany",
         "url": "https://www.linkedin.com/jobs/view/4451224579", "first_seen": "2026-08-12",
@@ -98,8 +106,11 @@ def linkedin_entry(**over):
         "portal": "linkedin-search", "user_status": "star", "user_note": "referral via Anna",
         "note": "why note", "rank_score": 82, "rank_verdict": "strong fit",
         "strengths": ["NLP"], "gaps": ["German"],
-        "description": "Build LLM and RAG systems in PyTorch with evaluation harnesses.",
     }
+    body = over.pop("description",
+                    "Build LLM and RAG systems in PyTorch with evaluation harnesses.")
+    if body:
+        base.update(postings.describe(base["url"], body))
     base.update(over)
     return base
 
@@ -263,9 +274,17 @@ class CrossRunPortalTest(unittest.TestCase):
 
 
 class AppendOnlyTest(unittest.TestCase):
-    """Plan test 22: a fetch may add and append. It may never overwrite."""
+    """Plan test 22: a fetch may add and append. It may never overwrite.
 
-    OWNED = ("title", "company", "location", "url", "fit", "status", "portal",
+    `fit` is deliberately absent from OWNED. It is now a column *derived* from
+    the row by tools/fit_score.py rather than a judgement typed into it, so a
+    merge refreshing it is re-derivation, not an overwrite - and a row that
+    just gained a posting body must be allowed to stop claiming title-only.
+    The judgement case is carved out separately and tested below: once /rank
+    has spoken, `fit_source: "ranked"` freezes the band it chose.
+    """
+
+    OWNED = ("title", "company", "location", "url", "status", "portal",
              "user_status", "user_note", "note", "rank_score", "rank_verdict",
              "strengths", "gaps", "first_seen", "posted")
 
@@ -313,6 +332,58 @@ class AppendOnlyTest(unittest.TestCase):
         entry = seen["https://job-boards.greenhouse.io/parloa/jobs/1"]
         self.assertEqual(entry["prefit_score"], 71)
         self.assertTrue(entry["prefit_reasons"], "a score must never appear without its reasons")
+
+    def test_a_new_row_arrives_with_a_computed_band(self):
+        """The Fit column was empty for every row ever collected until now."""
+        seen = {}
+        ats_fetch.merge(seen, [row()], "2026-08-20", silent, pending=[])
+        entry = seen["https://job-boards.greenhouse.io/parloa/jobs/1"]
+        self.assertIn(entry["fit"], ("high", "medium", "low"))
+        self.assertEqual(entry["fit_source"], "deterministic")
+        self.assertTrue(entry["fit_reasons"],
+                        "a band must never appear without the reasons for it")
+        self.assertEqual(sum(entry["fit_parts"].values()), entry["fit_score"])
+
+    def test_a_row_that_gains_a_body_stops_claiming_title_only(self):
+        seen = {}
+        ats_fetch.merge(seen, [row(description="")], "2026-08-20", silent, pending=[])
+        key = "https://job-boards.greenhouse.io/parloa/jobs/1"
+        self.assertEqual(seen[key]["fit_evidence"], "title-only")
+        self.assertNotEqual(seen[key]["fit"], "high",
+                            "a row with no posting text can never claim high")
+
+        ats_fetch.merge(seen, [row()], "2026-08-21", silent, pending=[])
+        self.assertEqual(seen[key]["fit_evidence"], "full")
+        self.assertGreater(seen[key]["fit_score"], 57,
+                           "the body it gained is worth points it could not earn before")
+
+    def test_rank_owns_the_band_once_it_has_spoken(self):
+        """A collect must never quietly undo an assessment that cost tokens."""
+        seen = {}
+        ats_fetch.merge(seen, [row()], "2026-08-20", silent, pending=[])
+        key = "https://job-boards.greenhouse.io/parloa/jobs/1"
+        seen[key].update({"fit": "low", "fit_source": "ranked", "rank_score": 31,
+                          "fit_reasons": ["/rank: weak fit"]})
+
+        ats_fetch.merge(seen, [row()], "2026-08-21", silent, pending=[])
+        self.assertEqual(seen[key]["fit"], "low")
+        self.assertEqual(seen[key]["fit_source"], "ranked")
+        self.assertEqual(seen[key]["fit_reasons"], ["/rank: weak fit"])
+        self.assertLessEqual(seen[key]["fit_priority_score"],
+                             jobs_md.BAND_CEILING["low"])
+
+    def test_scoring_failure_never_takes_a_collect_run_down(self):
+        broken = ats_fetch.fit_score.Context
+        ats_fetch.fit_score.Context = lambda *a, **k: (_ for _ in ()).throw(
+            ats_fetch.fit_score.ConfigError("profile is a banana"))
+        try:
+            seen = {}
+            ats_fetch.merge(seen, [row()], "2026-08-20", silent, pending=[])
+        finally:
+            ats_fetch.fit_score.Context = broken
+        entry = seen["https://job-boards.greenhouse.io/parloa/jobs/1"]
+        self.assertEqual(entry["title"], "Machine Learning Engineer",
+                         "the row still landed, just without a band")
 
 
 class ExportTest(unittest.TestCase):

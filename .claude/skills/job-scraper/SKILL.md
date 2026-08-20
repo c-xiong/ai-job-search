@@ -148,15 +148,45 @@ A distribution pattern worth flagging to the user as a caution signal, not as an
 
 If two or more results in this run's pool (from the same company, or sharing the same req/job ID visible in the URL or title) have substantially the same description and differ only in city/location/title, don't present them as separate rows. Consolidate into a single row and note the spread, e.g. "posted identically across 6 cities (BR, MX, GT)".
 
-### Step 3: Quick Fit Assessment
+### Step 3: Fit Assessment — computed, not judged
 
-For each new job, do a rapid fit check (NOT the full evaluation from `04-job-evaluation.md` - just a quick signal):
+**Do not assign `fit` by hand, and never write the field yourself.** The band is
+computed in code by `tools/fit_score.py` at merge time, for every row from every
+source, and it costs no tokens. Writing a hand-picked `high`/`medium`/`low` over
+it produces a column where two rows with the same label were decided by
+different rules, and the board sorts on the number behind that label.
 
-- **High match**: Role directly involves your core skills
-- **Medium match**: Role is adjacent to your experience
-- **Low match**: Role requires significant skills you lack
+What the scorer does, so you can explain a row without re-deriving it:
 
-**Language override:** before assigning a match level, check the posting against `04-job-evaluation.md`'s Language Gate (a required language you haven't declared at all in your CLAUDE.md Languages table). A required language that's entirely undeclared overrides skill fit: mark it **Low** regardless of how well the skills align, and name it in the highlight bullets so it isn't buried under an otherwise-good-looking match. A **declared** language at a requirement that reads higher than your declared level is *not* an override — score fit normally, but add a red-flag bullet under that job's highlights (Step 5) quoting the posting's requirement next to your declared level, so the gap is visible without being auto-downgraded.
+| component | max | reads |
+|---|---|---|
+| role family | 25 | title first, body only if the title names nothing |
+| seniority fit | 25 | full ladder from the title; years-of-experience regex from the body |
+| skill overlap | 18 | the stored posting body; additive only, saturates fast |
+| company affinity | 17 | your hand-set 0-5 rating in `job_scraper/company_affinity.json` |
+| location | 15 | city tiers; unresolved is neutral, never zero |
+
+Bands: **high ≥ 75, medium 58-74, low < 58**, all tunable in
+`job_scraper/fit_profile.json`. Four gates can only ever *lower* a band, never
+raise it, and each records its reason: German stated as a job condition, a title
+that is not an engineering or AI role at all, a stack on the exclude list, and -
+the one that bites most often - **no stored posting text caps the row at
+`medium`**, because a row with no evidence must not claim a strong match.
+
+Your job in this step is therefore to *report*, not to score:
+
+- If a row still shows no band, the profile failed to load. Say so; do not
+  substitute a guess.
+- **Language:** the German screen already runs in code
+  (`collectors.german_hit`) and files a hard requirement as `gate`. For any
+  *other* undeclared language from `04-job-evaluation.md`'s Language Gate,
+  raise it in the Step 5 highlights and recommend the user set the row to `no` -
+  the scorer does not read languages beyond German. A **declared** language at a
+  level above the user's is never an auto-downgrade: quote the requirement next
+  to the declared level in the highlights so the gap is visible.
+- To re-score after tuning the profile: `python3 tools/fit_score.py --recompute`
+  (add `--dry-run` first; it prints a before/after band histogram).
+- To see why one row scored what it did: `python3 tools/fit_score.py --explain <url>`.
 
 ### Step 4: Deduplicate & Store
 
@@ -178,9 +208,31 @@ For each new job, do a rapid fit check (NOT the full evaluation from `04-job-eva
 }
 ```
 
+**Computed fields, written by code — never by hand.** `tools/postings.py` stores
+the posting body in a sidecar and records `posting_path`, `posting_chars`,
+`posting_excerpt`, `posting_source`, `posting_extractor` and
+`posting_fingerprint` on the row. `tools/fit_score.py` then writes `fit`,
+`fit_score` (the raw 0-100), `fit_priority_score` (that number capped by what
+the displayed band allows, which is what the board sorts on), `fit_parts` (the
+five components), `fit_reasons`, `fit_source`, `fit_evidence` and `fit_version`.
+
+The body itself is **not** in `seen_jobs.json`: that file is rewritten in full on
+every board click and shipped to the browser on every reload, so the bodies live
+in `job_scraper/postings/<sha1>.txt` and the row keeps only pointers.
+
+`fit_source` is the one that matters when writing: `"deterministic"` means the
+scorer owns the band and may refresh it; `"ranked"` means `/rank` owns it and
+neither a collect nor a recompute may move it.
+
 The `portal` field records which CLI skill produced the job (results are already tagged per portal in Step 1b - persist that tag here). Entries written before this field existed lack it; the health check (Step 4.75) attributes those by matching the URL's domain against each portal's base URL, so do not backfill.
 
 `/rank` extends this schema additively: ranked entries also carry `rank_score` (0–100 overall score), `rank_verdict` (fit band, e.g. "strong fit"), `rank_date` (ISO date of ranking), and `strengths`/`gaps` (1-3 verbatim bullets each, copied from the scoring agent's findings). The `status` field is set to `"ranked"`. Do not drop any of these fields when re-writing entries. Entries ranked before `strengths`/`gaps` existed simply lack them; readers tolerate their absence and never backfill by guessing.
+
+**No implicit migration; explicit recomputation is fine.** The rule below is
+about *guessing*: a reader tolerates a missing key and never invents a value for
+it. It does not forbid a deliberate, repeatable, dry-runnable pass over the
+board — `tools/fit_score.py --recompute` and the posting backfill are exactly
+that, they announce what they changed, and `--dry-run` shows the effect first.
 
 `deadline` is a base field rather than a `/rank` extension: Step 2's detail fetch already extracts the application deadline, so it is written when the job is first seen and refreshed by `/rank` Step 4 when a scoring agent returns a different value. `null` means the posting states no deadline; a missing key means the entry predates this field - **never infer a deadline** from either, and never backfill by guessing.
 

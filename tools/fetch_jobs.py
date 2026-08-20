@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ats_fetch  # noqa: E402
 import collectors  # noqa: E402
 import jobs_md  # noqa: E402
+import postings  # noqa: E402
 
 ROOT = jobs_md.ROOT
 CONFIG = ROOT / "job_scraper" / "scrape_config.json"
@@ -208,9 +209,13 @@ def _screened_rows(found, budget, log, known_urls):
     rows = []
     for url, record in found.items():
         if url in known_urls:
-            status, note = None, None
+            # A row already on the board is not re-screened: the detail budget
+            # exists for postings nobody has judged yet. It still carries any
+            # description the listing shipped inline, which is what lets an
+            # already-known freehire or ATS row gain a body it was missing.
+            status, note, text = None, None, record.get("description") or ""
         else:
-            status, note = collectors.screen(record, log, budget)
+            status, note, text = collectors.screen(record, log, budget)
         rows.append({
             "id": record.get("id", ""),
             "title": record.get("title", ""),
@@ -220,7 +225,10 @@ def _screened_rows(found, budget, log, known_urls):
             "posted": record.get("posted", ""),
             "deadline": None,
             "url": url,
-            "description": record.get("description") or "",
+            # `text` over `record["description"]`: for LinkedIn the listing has
+            # no description and the screen's `detail` call is the only place
+            # the posting body exists.
+            "description": text or record.get("description") or "",
             "status": status,
             "note": note,
         })
@@ -316,15 +324,21 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
         with jobs_md.board_lock():
             seen = load_seen()
             before = len(seen)
+            # Posting bodies collect here and are written only in the branch
+            # below that also saves the state. merge() runs in full on a dry
+            # run - only save_seen() is skipped - so a sidecar written inside it
+            # would litter a run that is supposed to touch nothing.
+            pending = []
             if "ats" in sources:
                 summaries.append(ats_fetch.summarize(
-                    ats_fetch.merge(seen, ats_rows, today, log),
+                    ats_fetch.merge(seen, ats_rows, today, log, pending=pending),
                     ats_meta, len(ats_rows), log, dry_run))
             for name, rows in plain:
                 portal = name + "-search"
                 # Same conservative merge as the ATS source, so a job that an ATS
                 # board and LinkedIn both return in one click is one row, not two.
-                stats = ats_fetch.merge(seen, rows, today, log, portal=portal)
+                stats = ats_fetch.merge(seen, rows, today, log, portal=portal,
+                                        pending=pending)
                 stats.pop("german_gated_by_company", None)
                 summary = {"source": portal, "found": len(rows),
                            "deferred_descriptions": budget.deferred if name == "linkedin" else 0}
@@ -332,8 +346,14 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
                 summaries.append(summary)
             log("  %d new rows (%d in the board)" % (len(seen) - before, len(seen)))
             if dry_run:
-                log("dry run - nothing written")
+                log("dry run - nothing written (%d posting bodies not stored)" % len(pending))
             else:
+                # Bodies before state: an orphan sidecar is inert, while a saved
+                # `posting_path` with no file behind it is a row that claims a
+                # posting it cannot show.
+                written = postings.commit_all(pending)
+                if written:
+                    log("  %d posting bodies stored" % written)
                 jobs_md.save_seen(seen)
                 log("done - %d jobs in the board" % len(seen))
 

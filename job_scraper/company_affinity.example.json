@@ -1,0 +1,40 @@
+{
+  "_readme": [
+    "How much you want to work somewhere, 0-5. Copy to company_affinity.json",
+    "and edit that copy - the real list is gitignored, this example is tracked.",
+    "",
+    "This is the one input the scorer cannot infer. Everything else it reads",
+    "off the posting; this is the part only you know.",
+    "",
+    "Scale, and what each step is worth out of the component's 17 points:",
+    "  5 -> 17   would drop everything for this one",
+    "  4 -> 14   actively want it",
+    "  3 -> 10   happy to work there",
+    "  2 ->  7   neutral (the fallback for a company with no rating and no tier)",
+    "  1 ->  3   would take it if nothing better",
+    "  0 ->  0   would not apply",
+    "",
+    "Resolution order: your rating wins. Failing that, an ats-search registry",
+    "tier seeds it (tier 1 -> 4, 2 -> 3, 3 -> 2, 4-5 -> 1). Only a company with",
+    "neither falls back to `default`. So a rating is never *required* - it is",
+    "how you overrule the tier when the tier is not what you actually feel.",
+    "",
+    "Rating one company lifts every posting it has, together. That is the point:",
+    "you rate employers, not postings, and the board reorders itself.",
+    "",
+    "Names are matched leniently - legal suffixes and punctuation are stripped,",
+    "then token overlap must reach `company.match_threshold` in fit_profile.",
+    "'DeepJudge AG' matches 'DeepJudge'. The matched name is written into the",
+    "row's fit_reasons so a wrong match is visible rather than silent."
+  ],
+  "version": 1,
+  "default": 2,
+  "companies": {
+    "An AI Lab You Admire": 5,
+    "A Strong Local Scale-up": 4,
+    "A Solid Employer": 3,
+    "Somewhere You Are Unsure About": 2,
+    "A Consultancy You Would Rather Avoid": 1,
+    "A Company You Will Not Apply To": 0
+  }
+}
