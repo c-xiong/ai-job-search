@@ -5,6 +5,8 @@ panel geometry and its interaction hooks from silently regressing while the
 existing HTTP tests cover the API wiring.
 """
 
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -65,6 +67,30 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn('event.key==="["', self.js)
         self.assertIn('event.key==="]"', self.js)
         self.assertIn('event.key==="\\\\"', self.js)
+        # Geometry only.  Which view is open moved into the URL, because the
+        # blob is per-browser and could not answer a reload or the back button.
+        self.assertNotIn("expanded", self.js.split("DEFAULT_LAYOUT=")[1].split("}")[0])
+
+    def test_every_parked_view_is_addressable_and_the_url_drives_boot(self):
+        """A view that does not write a route is a view a reload cannot restore."""
+        for marker in ("function setRoute", "function parseRoute",
+                       "function dispatchRoute", "function applyRoute",
+                       '"hashchange"', "history.replaceState"):
+            self.assertIn(marker, self.js)
+        # Each parked artboard writes its own address...
+        for route in ('"/run/"+encodeURIComponent(run.id)',
+                      '"/job/"+encodeURIComponent(j.url)',
+                      '+"/preview"', '+"/revise"', '"/companies?f="'):
+            self.assertIn(route, self.js)
+        # ...and every one of them is reachable coming back the other way.
+        for head in ('head==="board"', 'head==="applications"', 'head==="job"',
+                     'head==="companies"', 'head==="run"',
+                     'second==="preview"', 'second==="revise"'):
+            self.assertIn(head, self.js)
+        # Boot is one function of the URL, not a ladder over saved state.
+        self.assertIn("applyRoute();", self.js.split("Promise.all(")[1])
+        # Paging inside a view rewrites its entry instead of stacking another.
+        self.assertIn('IN_PLACE=["job","companies"]', self.js)
 
     def test_workspace_and_tailor_artboards_have_runtime_hooks(self):
         self.assertIn('data-expand="board"', self.html)
@@ -280,6 +306,115 @@ class JobPanelPayloadTest(unittest.TestCase):
              mock.patch.object(state.jobs_md, "priority_score", return_value=0):
             row = state.jobs_payload()["jobs"][0]
         self.assertIn("PREFIT", row["why"])
+
+
+# The grep tests above pin that every view writes *a* route.  They cannot tell a
+# push from a replace, nor catch a router that re-enters itself.  This harness
+# slices the real routing block out of app.js and runs it against stand-ins for
+# the handful of browser objects it touches, so the algebra is checked rather
+# than the spelling.  Node is optional: without it these skip.
+ROUTE_HARNESS = r"""
+const fs=require("fs");
+const src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf("const IN_PLACE="),marker="applyRoute()});";
+const end=src.indexOf(marker)+marker.length;
+if(start<0||end<marker.length)throw new Error("routing block not found in app.js");
+
+const build=new Function("ctx","location","history","addEventListener",`
+  let JOBS=ctx.JOBS,RUNS=ctx.RUNS;
+  let filter="active",q="",sel=0,COMPANY_FILTER="all",COMPANY_SELECTED=null;
+  const shown=()=>JOBS.filter(job=>filter==="all"||job.status==="new");
+  const el=()=>({value:"seeded"});
+  const render=()=>{};
+  const restoreWorkspace=()=>{ctx.opened.push("workspace");setRoute("/")};
+  const openView=(kind,title,route)=>{ctx.opened.push(kind);setRoute(route||"/"+kind)};
+  const renderReader=()=>openView("reader",null,"/job/"+encodeURIComponent(shown()[sel].url));
+  const renderCompanies=()=>openView("companies","","/companies?f="+encodeURIComponent(COMPANY_FILTER)+(COMPANY_SELECTED?"&c="+encodeURIComponent(COMPANY_SELECTED):""));
+  const renderTailor=run=>openView("tailor",null,"/run/"+encodeURIComponent(run.id));
+  const renderPreview=run=>openView("preview",null,"/run/"+encodeURIComponent(run.id)+"/preview");
+  const renderRevise=run=>openView("revise",null,"/run/"+encodeURIComponent(run.id)+"/revise");
+  ${src.slice(start,end)}
+  return {applyRoute,renderReader,renderCompanies,renderTailor,renderPreview,
+          state:()=>({filter,sel,COMPANY_FILTER,COMPANY_SELECTED}),
+          set:(k,v)=>{if(k==="filter")filter=v;if(k==="sel")sel=v;if(k==="COMPANY_FILTER")COMPANY_FILTER=v;if(k==="COMPANY_SELECTED")COMPANY_SELECTED=v}};
+`);
+
+let stack,log,fire=null;
+const location={get hash(){return stack[stack.length-1]},set hash(v){stack.push(v);log.push("push "+v);fire&&fire()}};
+const history={replaceState:(_s,_t,v)=>{stack[stack.length-1]=v;log.push("replace "+v)}};
+const addEventListener=(name,fn)=>{if(name==="hashchange")fire=fn};
+const ctx={JOBS:[{url:"https://ex.com/a?id=1&x=2",status:"new"},{url:"https://ex.com/b",status:"no"}],
+           RUNS:[{id:"run-7"}],opened:[]};
+let R;
+const at=hash=>{stack=[hash];log=[];ctx.opened=[];R=build(ctx,location,history,addEventListener)};
+let bad=0;
+const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
+
+// A posting URL carrying its own query string survives encode -> hash -> decode.
+at(""); R.renderReader();
+const jobRoute="#/job/"+encodeURIComponent(ctx.JOBS[0].url);
+t("reader writes an encoded job route", location.hash===jobRoute);
+at(jobRoute); R.applyRoute();
+t("that route comes back to the reader", ctx.opened[0]==="reader"&&R.state().sel===0);
+
+// Paging within a view rewrites its entry; changing view stacks a new one.
+at(jobRoute); R.set("filter","all"); R.set("sel",1); R.renderReader();
+t("j/k in the reader replaces, never stacks", log.length===1&&log[0].startsWith("replace")&&stack.length===1);
+at("#/companies?f=all"); R.set("COMPANY_FILTER","review"); R.set("COMPANY_SELECTED","Acme & Co"); R.renderCompanies();
+t("filtering companies replaces", log.length===1&&log[0].startsWith("replace"));
+const companyRoute=location.hash;
+at("#/board"); R.renderTailor(ctx.RUNS[0]);
+t("board -> tailor pushes", log[0]==="push #/run/run-7");
+at("#/run/run-7"); R.renderPreview(ctx.RUNS[0]);
+t("tailor -> preview pushes, so back returns to the pipeline", log[0]==="push #/run/run-7/preview");
+
+// A name needing escaping round-trips through the query string.
+at(companyRoute); R.applyRoute();
+t("companies filter and selection come back",
+  R.state().COMPANY_FILTER==="review"&&R.state().COMPANY_SELECTED==="Acme & Co"&&ctx.opened[0]==="companies");
+
+// Rendering *from* a route must not write back, or the router feeds itself.
+at("#/run/run-7"); R.applyRoute();
+t("applying a route writes nothing back", log.length===0&&ctx.opened[0]==="tailor");
+at("#/board"); R.renderTailor(ctx.RUNS[0]);
+t("our own write does not re-enter the router", ctx.opened.filter(v=>v==="tailor").length===1);
+at("#/board"); location.hash="#/companies";
+t("a hash typed by hand does re-render", ctx.opened.includes("companies"));
+
+// A route naming something that is gone lands on the workspace, and does not
+// leave the broken address sitting in the history.
+[["a pruned run","#/run/deleted"],
+ ["a posting that dropped off the board","#/job/"+encodeURIComponent("https://gone.example/x")],
+ ["an unknown view","#/nope/nope"]].forEach(([name,hash])=>{
+  at(hash); R.applyRoute();
+  t(name+" falls back to the workspace",
+    ctx.opened.includes("workspace")&&location.hash==="#/"&&stack.length===1);
+});
+
+// A deep link outranks whichever chip the board was left on.
+at("#/job/"+encodeURIComponent("https://ex.com/b")); R.applyRoute();
+t("deep link widens a filter that would hide the row",
+  R.state().filter==="all"&&ctx.opened[0]==="reader");
+
+process.exit(bad?1:0);
+"""
+
+
+class RouteBehaviourTest(unittest.TestCase):
+    """The URL is the single source of truth for which view is on screen."""
+
+    def test_the_router_round_trips_stacks_and_recovers(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed; the routing algebra is unchecked")
+        app = ROOT / "tools" / "board" / "static" / "app.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "probe.js"
+            probe.write_text(ROUTE_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(app)],
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         (result.stdout + result.stderr).strip())
 
 
 if __name__ == "__main__":

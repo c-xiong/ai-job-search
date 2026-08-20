@@ -247,7 +247,7 @@ function renderTailor(run){
       <div class="fitgrid"><div><span class="label">Matches</span>${matches}</div><div><span class="label">Gaps, stated not smoothed</span>${gaps}</div></div></div>
       <div class="runlog">${logs}</div><div class="runfooter"><button class="secondary" data-restore>Back to board</button><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>
       ${run.phase==="awaiting_approval"?`<button class="primary approve" data-run-id="${esc(run.id)}" data-phase="${esc(run.phase)}">Draft CV + cover letter</button>`:""}${RUNNING.includes(run.phase)?`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`:""}${run.phase==="done"?`<button class="primary" data-preview="${esc(run.id)}">Preview PDFs</button>`:""}</div></section></div>`;
-  openView("tailor",run.company+" · "+run.role);
+  openView("tailor",run.company+" · "+run.role,"/run/"+encodeURIComponent(run.id));
 }
 
 function renderReader(){
@@ -258,13 +258,13 @@ function renderReader(){
     <section class="reader-main"><div class="reader-scroll"><article class="reader-copy"><div class="reader-badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge" title="${esc(scoreTitle(j))}">${esc(SCORE_LABEL[j.score_source]||"score")} ${esc(Math.round(j.score))}</span>`:""}${j.fit_evidence==="title-only"?'<span class="badge">title only</span>':""}<span class="spacer"></span><a class="open" href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener">open posting ↗</a></div><h1>${esc(j.title)}</h1><div class="reader-meta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div><div class="reader-posting" id="postingbody">${esc(postingText(j))}</div></article></div></section>
     <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Tailor re-evaluates properly.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; Tailor CV + cover letter</button><div class="hint">marks it yes and queues the run · <kbd>t</kbd></div></div></aside></div>`;
   loadPosting(j);
-  openView("reader",`reading ${sel+1} of ${rows.length} · active`);
+  openView("reader",`reading ${sel+1} of ${rows.length} · active`,"/job/"+encodeURIComponent(j.url));
 }
 
 async function renderPreview(run){
   if(!run)return;PREVIEW_RUN=run.id;
   el("tailor-view").innerHTML='<div class="panel-empty">Loading compiled documents…</div>';
-  openView("preview",run.company+" · "+run.role);
+  openView("preview",run.company+" · "+run.role,"/run/"+encodeURIComponent(run.id)+"/preview");
   let verify;try{const response=await fetch(`/api/runs/${encodeURIComponent(run.id)}/verify?t=${T}`);verify=await response.json();if(!response.ok)throw new Error(verify.error)}catch(error){el("tailor-view").innerHTML=`<div class="panel-empty runerror">${esc(error.message||error)}</div>`;return}
   const counts={};(verify.checks||[]).forEach(check=>counts[check.state]=(counts[check.state]||0)+1);
   const checks=(verify.checks||[]).map(check=>`<div class="verify-item ${esc(check.state)}"><span class="verify-mark ${esc(check.state)}">${check.state==="pass"?"✓":"!"}</span><div><div>${esc(check.label)}</div><div class="verify-detail">${esc(check.detail)}</div></div></div>`).join("");
@@ -279,7 +279,7 @@ async function renderRevise(run){
   const versionRows=versions.map((v,i)=>`<div class="version-row ${v.id===run.id?"current":""}" data-version-preview="${esc(v.id)}"><span>v${versions.length-i}</span><strong>${esc((v.ended_at||v.started_at||"").slice(0,16).replace("T"," "))}</strong><span>${esc(v.kind||"apply")}</span>${v.id===run.id?"<em>current</em>":`<span class="spacer"></span><button class="linkish" data-restore-version="${esc(v.id)}">Restore</button>`}</div>`).join("");
   const prefRows=(prefs.preferences||[]).map(p=>`<li>${esc(p)}</li>`).join("")||"<li>No managed standing preferences.</li>";
   el("tailor-view").innerHTML=`<div class="revise-shell"><aside class="versions"><div class="panelhead"><span class="label">Versions</span><span class="spacer"></span><span class="dim">${versions.length}</span></div><div class="version-list">${versionRows}</div><div class="decision-section"><span class="label">Standing preferences · read only</span><ul class="pref-list">${prefRows}</ul><div class="hint">Remove a preference by editing the managed block in the candidate profile.</div></div></aside><section class="revision-current"><div class="panelhead"><span class="label">Current documents</span><span class="spacer"></span><button class="secondary" data-preview="${esc(run.id)}">Open compiled PDFs</button></div><div class="revision-summary"><h1>${esc(run.company)}</h1><h2>${esc(run.role)}</h2><div class="writing"><div>${esc(run.targets?.cv)}</div><div>${esc(run.targets?.cover)}</div></div><div class="whybox">Every successful revision becomes another immutable source + PDF snapshot. Restore replaces these live files and recompiles them; it never creates a second live document set.</div></div></section><aside class="composer"><div class="panelhead"><span class="label">Revise</span></div><form id="revise-form"><div class="decision-section"><span class="label">Scope</span><label><input type="radio" name="scope" value="both" checked> CV + cover</label><label><input type="radio" name="scope" value="cv"> CV only</label><label><input type="radio" name="scope" value="cover"> Cover only</label></div><div class="decision-section"><label class="label" for="revision-note">What should change?</label><textarea id="revision-note" required placeholder="Make the evidence for… more explicit"></textarea><label class="label" for="revision-remember">Standing preference (optional)</label><textarea id="revision-remember" placeholder="Remember this for future applications"></textarea><div class="hint">Only text in this field is written into the managed preference block.</div></div><div class="composer-actions"><button class="primary" type="submit" data-reentry-kind="revise">Revise</button><button class="secondary" type="submit" data-reentry-kind="redraft">Redraft</button><button class="secondary" type="submit" data-reentry-kind="apply">Full re-run</button></div></form></aside></div>`;
-  openView("revise",run.company+" · "+run.role);
+  openView("revise",run.company+" · "+run.role,"/run/"+encodeURIComponent(run.id)+"/revise");
 }
 
 async function renderCompanies(reload=true){
@@ -304,25 +304,91 @@ async function renderCompanies(reload=true){
   const readOnly=selected?`<details class="company-details"><summary>Technical details</summary><dl><dt>Priority</dt><dd>Tier ${detail(selected.tier)}</dd><dt>Source</dt><dd>${detail(selected.route)}</dd><dt>Aliases</dt><dd>${detail(selected.aliases)}</dd><dt>Countries</dt><dd>${detail(selected.countries)}</dd><dt>Cities</dt><dd>${detail(selected.cities)}</dd><dt>Tags</dt><dd>${detail(selected.flags)}</dd><dt>Notes</dt><dd>${detail(selected.note)}</dd></dl></details>`:"";
   const suggestions=(Array.isArray(SUGGESTIONS)?SUGGESTIONS:[]).slice(0,8).map(item=>`<div class="suggestion"><strong>${esc(item.company||item.name)}</strong><span>${esc(item.count||"")} matching board rows</span><button class="linkish" data-suggest-add="${esc(item.company||item.name)}">Add</button><button class="linkish" data-suggest-never="${esc(item.company||item.name)}">Never</button></div>`).join("");
   el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main"><div class="companies-head"><div><span class="label">Target companies</span><div class="company-summary">${buckets.ready} ready · ${buckets.review} need review · ${buckets.unresolved} not connected</div></div><span class="spacer"></span><button class="primary" id="resolve-all" ${buckets.unresolved?"":"disabled"}>Automatically check all ${buckets.unresolved||""}</button></div><form id="company-add" class="company-add"><input id="company-name" required placeholder="Company name"><input id="company-website" required placeholder="Company website"><button class="secondary">Add company</button><span class="hint">The system will try to find and verify the official job board automatically.</span></form><div class="chips">${chips}</div><div class="tablewrap"><table class="company-table"><thead><tr><th>Company</th><th>Monitoring</th><th>Connection</th><th>Last successful check</th><th>Relevant jobs found</th></tr></thead><tbody>${table||'<tr><td colspan="5" class="panel-empty">No companies in this view.</td></tr>'}</tbody></table></div></section><aside class="company-rail"><div class="panelhead"><span class="label">${selected?esc(selected.name):"Company status"}</span></div>${companyStatus}${readOnly}<div class="panelhead"><span class="label">Suggested companies</span></div><div class="suggestions">${suggestions||'<div class="panel-empty">No new suggestions.</div>'}</div></aside></div>`;
-  openView("companies","");
+  openView("companies","","/companies?f="+encodeURIComponent(COMPANY_FILTER)+(COMPANY_SELECTED?"&c="+encodeURIComponent(COMPANY_SELECTED):""));
 }
 
-function openView(kind,title=null){
+function openView(kind,title=null,route=null){
   const app=el("app");app.classList.remove("expanded-board","expanded-applications","expanded-job","tailor-mode","reader-mode","preview-mode","revise-mode","companies-mode");
   const parked=["tailor","reader","preview","revise","companies"].includes(kind);
   app.classList.add("expanded",parked?"tailor-mode":"expanded-"+kind);
   if(parked)app.classList.add(kind+"-mode");
   el("tailor-view").hidden=!parked;
-  layout.expanded=kind;saveLayout();el("restore").hidden=false;el("brand").textContent=kind==="tailor"?(RUNS.find(r=>r.id===ACTIVE_RUN)?.company||"Tailoring"):"JobFlow";el("local").textContent=title===null?kind:title;
+  el("restore").hidden=false;el("brand").textContent=kind==="tailor"?(RUNS.find(r=>r.id===ACTIVE_RUN)?.company||"Tailoring"):"JobFlow";el("local").textContent=title===null?kind:title;
+  setRoute(route||"/"+kind);
 }
 function restoreWorkspace(){
-  const app=el("app");app.classList.remove("expanded","expanded-board","expanded-applications","expanded-job","tailor-mode","reader-mode","preview-mode","revise-mode","companies-mode");el("tailor-view").hidden=true;layout.expanded=null;saveLayout();el("restore").hidden=true;el("brand").textContent="JobFlow";el("local").textContent="";
+  const app=el("app");app.classList.remove("expanded","expanded-board","expanded-applications","expanded-job","tailor-mode","reader-mode","preview-mode","revise-mode","companies-mode");el("tailor-view").hidden=true;el("restore").hidden=true;el("brand").textContent="JobFlow";el("local").textContent="";
+  setRoute("/");
 }
 
-// Layout state: user collapses and automatic narrow-window collapses stay distinct.
+// Routing. The fragment owns *which view is on screen*; the layout blob below
+// owns only *how wide the panels are*. They used to be one thing, and that cost
+// three bugs: a reload could restore board/applications/job but silently dropped
+// companies, preview and revise; the tailor view came back on whatever run
+// happened to be first rather than the one you were reading; and because
+// localStorage is per-browser rather than per-tab, two open tabs overwrote each
+// other's idea of where they were. A fragment is never sent to the server, so
+// server.py stays the plain static handler it is - no SPA fallback, no second
+// pass through the token check.
+//
+//   #/                  workspace        #/companies?f=&c=   companies
+//   #/board             expanded board   #/run/<id>          tailor
+//   #/applications      expanded apps    #/run/<id>/preview  compiled PDFs
+//   #/job/<url>         reader           #/run/<id>/revise   revise
+//
+// Paging or filtering inside one view rewrites its entry; moving to another view
+// pushes one. Otherwise j/k in the reader would bury the board under 80 entries.
+const IN_PLACE=["job","companies"];
+let APPLYING_ROUTE=false,SELF_WRITE=false;
+const routeHead=value=>String(value||"").replace(/^#/,"").replace(/^\//,"").split(/[/?]/)[0];
+function setRoute(route,replace=false){
+  if(APPLYING_ROUTE&&!replace)return;
+  const next="#"+route,head=routeHead(route);
+  if(location.hash===next||(!location.hash&&route==="/"))return;
+  SELF_WRITE=true;
+  if(replace||(head&&head===routeHead(location.hash)&&IN_PLACE.includes(head))){history.replaceState(null,"",next);SELF_WRITE=false}
+  else location.hash=next;
+}
+function parseRoute(){
+  const raw=location.hash.replace(/^#/,"")||"/",[path,query]=raw.split("?");
+  const decode=part=>{try{return decodeURIComponent(part)}catch(_){return part}};
+  return {parts:path.split("/").filter(Boolean).map(decode),params:new URLSearchParams(query||"")};
+}
+// Returns false for a route that names something that is not there any more -
+// a finished run that was pruned, a posting that dropped off the board.
+function dispatchRoute(){
+  const {parts,params}=parseRoute(),[head,first,second]=parts;
+  if(!head){restoreWorkspace();return true}
+  if(head==="board"||head==="applications"){openView(head);return true}
+  if(head==="job"){
+    if(!JOBS.some(job=>job.url===first))return false;
+    // A deep link outranks whichever chip you happened to leave the board on.
+    if(!shown().some(row=>row.url===first)){filter="all";q="";el("q").value="";render()}
+    const index=shown().findIndex(row=>row.url===first);
+    if(index<0)return false;
+    sel=index;renderReader();return true;
+  }
+  if(head==="companies"){COMPANY_FILTER=params.get("f")||"all";COMPANY_SELECTED=params.get("c")||null;renderCompanies();return true}
+  if(head==="run"){
+    const run=RUNS.find(item=>item.id===first);if(!run)return false;
+    if(second==="preview")renderPreview(run);else if(second==="revise")renderRevise(run);else renderTailor(run);
+    return true;
+  }
+  return false;
+}
+function applyRoute(){
+  APPLYING_ROUTE=true;
+  let ok=false;try{ok=dispatchRoute()}finally{APPLYING_ROUTE=false}
+  if(!ok){setRoute("/",true);restoreWorkspace()}
+}
+addEventListener("hashchange",()=>{if(SELF_WRITE){SELF_WRITE=false;return}applyRoute()});
+
+// Layout state: geometry only. Which view is open lives in the URL (above),
+// because that answers the back button and is per-tab. User collapses and
+// automatic narrow-window collapses stay distinct.
 const LAYOUT_KEY="jobflow.layout.v1";
-const DEFAULT_LAYOUT={version:1,left:264,right:452,collect:300,applications:208,leftCollapsed:false,rightCollapsed:false,autoLeft:false,autoRight:false,shortcutsHidden:false,expanded:null};
-function loadLayout(){try{const value=JSON.parse(localStorage.getItem(LAYOUT_KEY));if(value?.version===1)return {...DEFAULT_LAYOUT,...value};localStorage.removeItem(LAYOUT_KEY)}catch(_){try{localStorage.removeItem(LAYOUT_KEY)}catch(__){}}return {...DEFAULT_LAYOUT}}
+const DEFAULT_LAYOUT={version:1,left:264,right:452,collect:300,applications:208,leftCollapsed:false,rightCollapsed:false,autoLeft:false,autoRight:false,shortcutsHidden:false};
+function loadLayout(){try{const value=JSON.parse(localStorage.getItem(LAYOUT_KEY));if(value?.version===1){const merged={...DEFAULT_LAYOUT,...value};delete merged.expanded;return merged}localStorage.removeItem(LAYOUT_KEY)}catch(_){try{localStorage.removeItem(LAYOUT_KEY)}catch(__){}}return {...DEFAULT_LAYOUT}}
 let layout=loadLayout();
 function saveLayout(){try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(layout))}catch(_){}}
 function applyLayout(){
@@ -488,9 +554,6 @@ el("q").addEventListener("input",event=>{q=event.target.value;sel=0;render()});
 
 setInterval(pollActivity,3000);setInterval(pollRuns,6000);
 Promise.all([reloadJobs(),pollActivity(),pollRuns()]).then(()=>{
-  if(layout.expanded==="board"||layout.expanded==="applications")openView(layout.expanded);
-  else if(layout.expanded==="job"||layout.expanded==="reader")renderReader();
-  else if(layout.expanded==="tailor"&&activeRuns()[0])renderTailor(activeRuns()[0]);
-  else if(layout.expanded){layout.expanded=null;saveLayout()}
+  applyRoute();
   fetch("/api/fetch/status?t="+T).then(r=>r.json()).then(status=>{renderFetchLog(status);if(status.running){el("fetch").disabled=true;POLL=setInterval(pollFetch,2000)}});
 });
