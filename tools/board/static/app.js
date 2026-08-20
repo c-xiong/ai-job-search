@@ -14,9 +14,29 @@ const HISTORY=[];
 let toastTimer=null,undoTimer=null,POLL=null;
 let MODAL_RESOLVE=null;
 
+// Theme: Auto -> Light -> Dark -> Auto. Auto is the old behaviour (follow the
+// OS) and stays the default; only an explicit choice is persisted. Kept out of
+// the layout blob so resetting the layout does not flip the user's theme.
 const media=matchMedia("(prefers-color-scheme: dark)");
-const setTheme=()=>el("app").classList.toggle("dark",media.matches);
-setTheme();media.addEventListener("change",setTheme);
+const THEME_KEY="jobflow.theme.v1";
+const THEMES=[
+  {mode:"system",name:"Auto",glyph:"\u25d0",hint:"Theme follows the system \u2014 click for light"},
+  {mode:"light",name:"Light",glyph:"\u2600",hint:"Light theme \u2014 click for dark"},
+  {mode:"dark",name:"Dark",glyph:"\u263e",hint:"Dark theme \u2014 click to follow the system"}
+];
+let themeMode=(()=>{try{const saved=localStorage.getItem(THEME_KEY);return THEMES.some(t=>t.mode===saved)?saved:"system"}catch(_){return "system"}})();
+function applyTheme(){
+  const spec=THEMES.find(t=>t.mode===themeMode)||THEMES[0];
+  el("app").classList.toggle("dark",themeMode==="dark"||(themeMode==="system"&&media.matches));
+  el("theme-glyph").textContent=spec.glyph;el("theme-name").textContent=spec.name;
+  el("theme-toggle").title=spec.hint;el("theme-toggle").setAttribute("aria-label",spec.hint);
+}
+function cycleTheme(){
+  themeMode=THEMES[(THEMES.findIndex(t=>t.mode===themeMode)+1)%THEMES.length].mode;
+  try{localStorage.setItem(THEME_KEY,themeMode)}catch(_){}
+  applyTheme();
+}
+applyTheme();media.addEventListener("change",()=>{if(themeMode==="system")applyTheme()});
 
 function toast(msg,opts={}){
   const box=el("toast"),btn=el("toastundo");el("toastmsg").textContent=msg;
@@ -400,6 +420,7 @@ document.addEventListener("click",event=>{
   if(event.target.closest("#text-modal-cancel,#text-modal-close"))return void closeTextModal(false);
   if(event.target===el("text-modal"))return void closeTextModal(false);
   if(event.target.closest("#shortcut-toggle"))return void toggleShortcuts();
+  if(event.target.closest("#theme-toggle"))return void cycleTheme();
   if(event.target.closest("#companies-open"))return void renderCompanies();
   const resolveAll=event.target.closest("#resolve-all");if(resolveAll){resolveAll.disabled=true;resolveAll.textContent="Checking companies…";(async()=>{try{const response=await fetch("/api/companies/resolve-all?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mtime:COMPANIES.mtime})});const data=await response.json();if(!response.ok)throw new Error(data.error||"automatic check failed");COMPANIES=data;const counts=data.result?.meta?.status_counts||{};toast(`Check complete · ${counts.verified||0} ready · ${counts.ambiguous||0} need review`,{ms:5000});renderCompanies(false)}catch(error){toast(error.message,{warn:true,ms:5000});renderCompanies(false)}})();return}
   if(event.target.closest("#toastundo"))return void undo();

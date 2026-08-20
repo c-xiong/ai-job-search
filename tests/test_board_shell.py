@@ -42,6 +42,17 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn("aria-valuenow", self.js)
         self.assertIn("setPointerCapture", self.js)
 
+    def test_theme_is_a_named_three_state_button_outside_the_layout_blob(self):
+        self.assertIn('id="theme-toggle"', self.html)
+        self.assertIn('id="theme-name"', self.html)
+        self.assertIn(".theme-toggle{", self.css)
+        self.assertIn("cycleTheme", self.js)
+        for mode in ('mode:"system"', 'mode:"light"', 'mode:"dark"'):
+            self.assertIn(mode, self.js)
+        # Its own key: resetting the layout must not flip the user's theme.
+        self.assertIn("jobflow.theme.v1", self.js)
+        self.assertNotIn("theme", self.js.split("DEFAULT_LAYOUT=")[1].split("}")[0])
+
     def test_layout_is_versioned_persistent_and_keeps_auto_collapse_separate(self):
         self.assertIn('jobflow.layout.v1', self.js)
         self.assertIn("version:1", self.js)
