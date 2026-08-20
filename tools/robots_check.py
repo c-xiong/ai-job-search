@@ -127,26 +127,55 @@ def allowed(text, agent, path):
             best_len, best_allow = n, is_allow      # ties -> Disallow wins (cautious)
     return True if best_len < 0 else best_allow
 
-def gate(url):
+NO_ROBOTS = 'no robots.txt published'
+
+
+def gate(url, cache=None):
+    """Does robots.txt permit fetching this URL? (exit_code, message).
+
+    `cache` is an optional dict the *caller* owns, holding one robots.txt per
+    host for the life of one batch. A backfill walks many rows from a few hosts
+    - 36 of one run's 45 candidates were LinkedIn - and asking a host 36 times
+    for the same file to be told "no" 36 times is wasteful and rude.
+
+    It is a parameter rather than a module global on purpose: a global would
+    leak between unrelated callers and would go stale in a long-lived process
+    like the board server, where robots.txt should be re-read. Passing None -
+    the default, and what every one-shot caller does - fetches every time,
+    exactly as before.
+
+    Only the *file* is cached. The path is evaluated on every call, because
+    robots rules are path-specific and caching a verdict would answer the wrong
+    question.
+    """
     parts = urlsplit(url)
     path = unquote(parts.path) or '/'
     if parts.query:
         path += '?' + parts.query
     robots = f'{parts.scheme}://{parts.netloc}/robots.txt'
-    body, last = None, 'no attempt'
-    for ua in ('Claude-User', BROWSER):
-        try:
-            text, code = _fetch(robots, ua)
-        except Exception as e:
-            last = type(e).__name__; continue
-        if code == 404:
-            return 0, 'ALLOWED - no robots.txt published'
-        if code == 200:
-            if not is_robots_body(text):
-                last = 'HTTP 200 but the body is not a robots.txt'
-                continue
-            body = text; break
-        last = 'HTTP %d' % code
+    if cache is not None and robots in cache:
+        body, last = cache[robots]
+        if body is None and last == NO_ROBOTS:
+            return 0, 'ALLOWED - ' + NO_ROBOTS
+    else:
+        body, last = None, 'no attempt'
+        for ua in ('Claude-User', BROWSER):
+            try:
+                text, code = _fetch(robots, ua)
+            except Exception as e:
+                last = type(e).__name__; continue
+            if code == 404:
+                if cache is not None:
+                    cache[robots] = (None, NO_ROBOTS)
+                return 0, 'ALLOWED - ' + NO_ROBOTS
+            if code == 200:
+                if not is_robots_body(text):
+                    last = 'HTTP 200 but the body is not a robots.txt'
+                    continue
+                body = text; break
+            last = 'HTTP %d' % code
+        if cache is not None:
+            cache[robots] = (body, last)
     if body is None:
         return 1, 'UNCONFIRMED (%s) - do not retry, go to step 3' % last
     for a in ('Claude-User', '*'):

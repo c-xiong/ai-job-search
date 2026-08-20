@@ -623,7 +623,10 @@ def backfill(seen, ctx, log=print, limit=25, dry_run=False, fetcher=None):
     body too short to be a posting - stores nothing and leaves the row exactly
     as it was, rather than recording a non-posting as full evidence.
     """
-    fetcher = fetcher or _default_fetcher
+    # One robots.txt per host for the whole run. Most of a batch is a handful of
+    # hosts, and re-asking each of them per row is wasted requests on someone
+    # else's server.
+    fetcher = fetcher or _fetcher_with_cache({})
     candidates = backfill_candidates(seen, ctx)
     log("%d rows have no stored posting and are worth fetching (limit %d)"
         % (len(candidates), limit))
@@ -662,19 +665,24 @@ def backfill(seen, ctx, log=print, limit=25, dry_run=False, fetcher=None):
     return stats, pending
 
 
-def _default_fetcher(url):
-    """(html, reason). `html` is None when policy or transport said no."""
+def _fetcher_with_cache(robots_cache):
+    """A fetcher that gates on robots.txt, reusing one file per host per run."""
     import robots_check
-    code, message = robots_check.gate(url)
-    if code != 0:
-        return None, "robots: %s" % message
-    try:
-        _final, status, body = fetch_url.fetch(url)
-    except fetch_url.Refused as exc:
-        return None, "refused: %s" % exc
-    if status >= 400:
-        return None, "HTTP %s" % status
-    return body, ""
+
+    def fetch(url):
+        """(html, reason). `html` is None when policy or transport said no."""
+        code, message = robots_check.gate(url, robots_cache)
+        if code != 0:
+            return None, "robots: %s" % message
+        try:
+            _final, status, body = fetch_url.fetch(url)
+        except fetch_url.Refused as exc:
+            return None, "refused: %s" % exc
+        if status >= 400:
+            return None, "HTTP %s" % status
+        return body, ""
+
+    return fetch
 
 
 def histogram(seen):

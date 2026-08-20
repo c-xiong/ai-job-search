@@ -189,6 +189,42 @@ class TestArgumentHardening(unittest.TestCase):
         self.assertNotIn("subprocess", src)
         self.assertNotIn("curl'", src)
 
+    def _counting_fetch(self, body="User-agent: *\nDisallow: /private\n"):
+        import robots_check
+
+        calls = []
+
+        def counting(url, _ua):
+            calls.append(url)
+            return body, 200
+
+        original = robots_check._fetch
+        robots_check._fetch = counting
+        self.addCleanup(lambda: setattr(robots_check, "_fetch", original))
+        return calls
+
+    def test_a_caller_supplied_cache_asks_each_host_once(self):
+        """A backfill walks many rows from a few hosts; asking each time is rude."""
+        import robots_check
+
+        calls = self._counting_fetch()
+        cache = {}
+        for path in ("/jobs/1", "/jobs/2", "/jobs/3"):
+            self.assertEqual(robots_check.gate("https://example.test" + path, cache)[0], 0)
+        self.assertEqual(len(calls), 1, "robots.txt was fetched more than once")
+        # Only the file is cached; the path is still judged on every call.
+        self.assertEqual(robots_check.gate("https://example.test/private/x", cache)[0], 1)
+        self.assertEqual(len(calls), 1)
+
+    def test_without_a_cache_nothing_is_remembered_between_calls(self):
+        """The default must not leak state into unrelated callers."""
+        import robots_check
+
+        calls = self._counting_fetch()
+        for path in ("/jobs/1", "/jobs/2"):
+            robots_check.gate("https://example.test" + path)
+        self.assertEqual(len(calls), 2)
+
     def test_a_policy_refusal_is_never_reported_as_a_robots_answer(self):
         """Returning a body on refusal would read a redirect as "allowed"."""
         import robots_check
