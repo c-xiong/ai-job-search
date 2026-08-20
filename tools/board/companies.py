@@ -7,7 +7,7 @@ import threading
 import sys
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import collectors  # noqa: E402
@@ -22,6 +22,19 @@ LOCK = ROOT / "job_scraper" / ".companies.lock"
 EDITABLE = {"name", "aliases", "domain", "tier", "route", "flags", "note",
             "countries", "cities"}
 ROUTES = {"ats", "linkedin", "manual"}
+
+
+def _board_url(vendor, token):
+    token = quote(str(token or "").strip(), safe="-._~")
+    if not token:
+        return None
+    return {
+        "greenhouse": "https://job-boards.greenhouse.io/%s" % token,
+        "ashby": "https://jobs.ashbyhq.com/%s" % token,
+        "personio": "https://%s.jobs.personio.de" % token,
+        "lever": "https://jobs.lever.co/%s" % token,
+        "smartrecruiters": "https://careers.smartrecruiters.com/%s" % token,
+    }.get(vendor)
 
 
 class CompanyError(RuntimeError):
@@ -84,10 +97,17 @@ def _domain(website):
 
 
 def _public(data):
-    companies = data["companies"]
+    companies = []
     counts = {}
     routes = {}
-    for row in companies:
+    for source in data["companies"]:
+        row = dict(source)
+        row["board_url"] = _board_url(row.get("vendor"), row.get("token"))
+        if "candidates" in row:
+            row["candidates"] = [dict(candidate, board_url=_board_url(
+                candidate.get("vendor"), candidate.get("token")))
+                for candidate in row.get("candidates") or []]
+        companies.append(row)
         counts[row.get("status", "unresolved")] = counts.get(row.get("status", "unresolved"), 0) + 1
         routes[row.get("route", "ats")] = routes.get(row.get("route", "ats"), 0) + 1
     return {"companies": companies, "defaults": data.get("defaults", {}),
@@ -167,6 +187,27 @@ def resolve(company_slug, payload):
     return {"result": result, **listing()}
 
 
+def resolve_all(payload):
+    """Resolve each currently unconnected ATS company once."""
+    with company_lock():
+        data = _load(); _fresh(payload.get("mtime"))
+        targets = [row["name"] for row in data["companies"]
+                   if row.get("status", "unresolved") == "unresolved" and
+                   row.get("route", "ats") == "ats"]
+        total = len(targets)
+    if not total:
+        return {"result": {"meta": {"resolved": 0, "status_counts": {}}}, **listing()}
+    selectors = [value for name in targets for value in ("--company", name)]
+    result = collectors.bun(
+        [collectors.ATS, "resolve"] + selectors + ["--max-companies", str(total),
+         "--max-probes", "6", "--format", "json"],
+        lambda line: activity.emit("registry", line), timeout=max(120, total * 20))
+    activity.emit("registry", "automatic identity check finished for %d companies" % total)
+    if result is None:
+        raise CompanyError("automatic identity check did not finish", 502)
+    return {"result": result, **listing()}
+
+
 def identity(company_slug, payload):
     decision = payload.get("decision")
     with company_lock():
@@ -183,9 +224,11 @@ def identity(company_slug, payload):
             if found is None:
                 raise CompanyError("candidate is not in the current evidence", 409)
             row["vendor"], row["token"], row["status"] = found["vendor"], found["token"], "verified"
+            stamp = date.today().isoformat()
             row["identity"] = {"method": "human_confirmed",
+                               "evidence_kind": "human_confirmed",
                                "evidence": "confirmed in the board UI",
-                               "checked": date.today().isoformat()}
+                               "checked": stamp, "verified_at": stamp}
             row.pop("candidates", None)
             row.setdefault("cadence_days", int(data.get("defaults", {}).get("cadence_days", {}).get(str(row.get("tier", 3)), 3)))
         elif decision in ("neither", "reject"):

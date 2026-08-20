@@ -301,7 +301,8 @@ class Handler(BaseHTTPRequestHandler):
         parts = urlparse(self.path)
         run_id, action = run_route(parts.path)
         company_match = COMPANY_PATH.fullmatch(parts.path)
-        known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/companies") or \
+        known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/companies",
+                               "/api/companies/resolve-all") or \
             (run_id and action in ("approve", "cancel", "kill", "compile", "restore"))
         known = known or bool(company_match and company_match.group("action") in
                               ("resolve", "identity"))
@@ -332,6 +333,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = companies.never(payload) if payload.get("decision") == "never" \
                     else companies.add(payload)
+            except companies.CompanyError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+
+        if parts.path == "/api/companies/resolve-all":
+            try:
+                body = companies.resolve_all(payload)
             except companies.CompanyError as exc:
                 return self._send(exc.status, json.dumps({"error": str(exc)}))
             return self._send(200, json.dumps(body, ensure_ascii=False))

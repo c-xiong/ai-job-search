@@ -77,9 +77,15 @@ class ShellMarkupTest(unittest.TestCase):
         for marker in ("revise-shell", "grid-template-columns:268px", "428px",
                        "companies-shell", "396px", "company-table"):
             self.assertIn(marker, self.css)
+        # The companies view speaks plain language now: the add button is
+        # "Add company" rather than "Add & resolve", and the request-budget
+        # hint was replaced by a sentence about what the system does. Resolving
+        # everything at once is a first-class button instead of a per-row
+        # action, so `resolve-all` is what pins it.
         for marker in ("renderRevise", "/api/prefs", "data-restore-version",
                        "--fork-session", "renderCompanies", "/api/companies",
-                       "Add & resolve", "at most 9 requests", "data-company-confirm"):
+                       "Add company", "resolve-all", "Automatically check all",
+                       "data-company-confirm"):
             if marker == "--fork-session":
                 continue
             self.assertIn(marker, self.js)
