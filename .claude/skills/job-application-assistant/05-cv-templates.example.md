@@ -1,5 +1,5 @@
 ---
-framework_version: 1.4.1
+framework_version: 1.5.0
 ---
 
 # CV Templates and Tailoring Guide
@@ -145,6 +145,18 @@ List **5-7 key competencies** in bullet format, tailored to the specific job. Fo
 
 Use the posting's own core term in the matching bullet's bold label when it truthfully applies - ATS and skim-reading hiring managers match literally, and "MLOps" in a heading outperforms a paraphrase like "ML Deployment".
 
+#### Keyword admission: specific and defensible, not exhaustive
+
+Do not convert the whole job description into the skills section. Generic graduate-programme language - analytical ability, curiosity, teamwork, willingness to learn, broad programming or cloud exposure - guides evidence selection but is not a reason to add a keyword. This matters especially for broad graduate postings such as AWS-style programmes: the CV should stay anchored in the candidate's strongest existing story rather than echoing every umbrella capability.
+
+For a **specific named hard skill** that an ATS may match literally, use this gate:
+
+1. **Documented:** the candidate profile or master CV names it or proves direct use. Add the exact JD term, preferably beside the experience that demonstrates it.
+2. **Credible adjacent / interview-ready:** the exact term is not recorded, but close, concrete evidence of prerequisites or an equivalent tool makes genuine familiarity a reasonable inference and the candidate can refresh it before interview. Add the exact term only in Skills/Core Competencies, using a level label such as `Working knowledge` or `Familiarity` when needed. Do not insert it into an experience or project bullet, and do not claim production use, duration, or proficiency. LangChain or LangGraph alongside evidenced RAG and agent-loop engineering is the intended pattern.
+3. **Unsupported:** learning would start from zero, or the term concerns a certification, language, clearance, years of experience, regulated qualification, or material domain experience. Leave it out.
+
+Every credible-adjacent addition must be surfaced in the final report as an interview-preparation item. The point is to prevent a good candidate from losing a literal ATS match for an immediately defensible capability, not to manufacture a history of using the tool.
+
 ### Education
 - Always include your highest degrees
 - For senior roles, keep education brief (dates and titles only)
@@ -256,7 +268,7 @@ What to check in the extraction:
 - **Contact details as literal text.** The stock template's fontawesome contact icons extract as glyph names (`MOBILE-ALT`, `Envelope`) - harmless noise, because the actual address and number are printed beside them. The failure mode is a contact detail carried *only* by an icon or a hyperlink (like the `LinkedIn` link text, whose URL is not in the text layer): invisible to an ATS. The email address must always appear as printed text.
 - **No garbled output.** `(cid:NNN)` markers or `�` characters mean a font is embedded without a Unicode mapping - an ATS sees the same garbage. This shows up with unusual fonts in custom templates, not with the stock moderncv setup under lualatex.
 - **Reading order.** The stock banking style is single-column, so extraction order matches visual order. Custom templates (via `/add-template`) with sidebars or multi-column layouts can interleave unrelated lines; if extraction order is scrambled, the user is trading ATS compatibility for looks and should be told.
-- **Keyword coverage.** Match the posting's required/preferred terms against the extracted text, in the posting's language. Prefer the posting's exact term over a synonym when it is truthfully applicable - ATS matching is often literal. Never add a keyword the profile does not support.
+- **Keyword coverage.** Match the posting's specific required/preferred hard-skill terms against the extracted text, in the posting's language. Prefer the posting's exact term over a synonym when it passes the keyword-admission gate above. Broad graduate-programme language is an intentional omission, not a keyword failure. A credible-adjacent term may be added only at skills level; unsupported terms remain absent.
 
 ### Date fields must be ASCII ranges (confirmed ATS import failure)
 

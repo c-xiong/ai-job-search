@@ -148,7 +148,7 @@ RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-
 PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"/(?P<kind>cv|cover)$")
 COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
-                          r"(?:/(?P<action>resolve|identity))?$")
+                          r"(?:/(?P<action>resolve|identity|test-fetch))?$")
 
 
 def run_route(path):
@@ -302,10 +302,10 @@ class Handler(BaseHTTPRequestHandler):
         run_id, action = run_route(parts.path)
         company_match = COMPANY_PATH.fullmatch(parts.path)
         known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/companies",
-                               "/api/companies/resolve-all") or \
+                               "/api/companies/resolve-all", "/api/companies/health-check") or \
             (run_id and action in ("approve", "cancel", "kill", "compile", "restore", "retry"))
         known = known or bool(company_match and company_match.group("action") in
-                              ("resolve", "identity"))
+                              ("resolve", "identity", "test-fetch"))
         if not known or not self._authed(parse_qs(parts.query)):
             # The token is what stops any web page you happen to have open from
             # POSTing to localhost - and for /api/fetch that means it is what
@@ -344,10 +344,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(exc.status, json.dumps({"error": str(exc)}))
             return self._send(200, json.dumps(body, ensure_ascii=False))
 
+        if parts.path == "/api/companies/health-check":
+            try:
+                body = companies.health_check(payload)
+            except companies.CompanyError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+
         if company_match:
             try:
                 if company_match.group("action") == "resolve":
                     body = companies.resolve(company_match.group("slug"), payload)
+                elif company_match.group("action") == "test-fetch":
+                    body = companies.test_fetch(company_match.group("slug"), payload)
                 else:
                     body = companies.identity(company_match.group("slug"), payload)
             except companies.CompanyError as exc:
@@ -360,7 +369,8 @@ class Handler(BaseHTTPRequestHandler):
                 # Compare-and-set: the client sends the phase it last rendered,
                 # so two rapid clicks buy one pass B rather than two.
                 code, body = supervisor.approve(run_id, payload.get("phase"),
-                                                payload.get("base_cv"))
+                                                payload.get("base_cv"),
+                                                payload.get("scope"))
             elif action == "cancel":
                 code, body = supervisor.cancel(run_id)
             elif action == "compile":

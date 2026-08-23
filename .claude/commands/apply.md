@@ -28,7 +28,7 @@ This rule is the input side of the Step 3 Factual Grounding Audit, not a competi
 
 **Active only when the environment variable `JOBFLOW_RUN` is set to `1`.** In a terminal it is not set, nothing below applies, and the workflow runs exactly as written. Ignore this section unless `JOBFLOW_RUN=1`.
 
-Headless mode is the local job board (`python3 tools/jobs_board.py`) driving this workflow through `claude -p`. Three things are different, and each one exists because a headless process cannot do what the terminal version assumes.
+Headless mode is the local job board (`python3 tools/jobs_board.py`) driving this workflow through `claude -p`. Four things are different, and each one exists because a headless process cannot do what the terminal version assumes.
 
 **1. There is nobody to ask, so Step 1 ends by writing a file instead of a question.**
 
@@ -68,13 +68,15 @@ Write it to a temporary name in the same directory and rename it into place, so 
 | Step 6b's `job_search_tracker.csv` row | nothing - the four columns you own are the ones in `fit.json` |
 
 ```jsonc
-// $JOBFLOW_RUN_DIR/drafts.json - paths only, and exactly the two you were given
+// $JOBFLOW_RUN_DIR/drafts.json - paths only, and exactly the ones you were given
 { "schema": "jobflow.drafts/1",
   "cv_source": "cv/main_parloa_software_engineer.tex",
   "cover_source": "cover_letters/cover_parloa_software_engineer.tex" }
 ```
 
-**3. You can write three places and no others.** `$JOBFLOW_RUN_DIR/**`, and the two exact paths the prompt names (also in `$JOBFLOW_CV_TARGET` and `$JOBFLOW_COVER_TARGET`). Every other write is refused by a `PreToolUse` hook, including inside a `Task` subagent. This is not advisory: a run's first instruction is a deliberate write to `$JOBFLOW_RUN_DIR/.guard-probe` that is **expected to be refused**, and a run whose guard stays silent is killed. When a refusal names the jobflow guard, do not retry it and do not route around it — report it and continue with what you can do.
+**3. The prompt's `Scope:` line says which documents this run owns.** `both` is the usual case and means the workflow as written. `cv` or `cover` means the owner asked for that document alone: draft it, name only it in `drafts.json`, and do not create or edit the other one. Everything else - the triage, the grounding rules, the reviewer pass - applies unchanged to the document you do own. A cover-only run still reads the selected CV base for its facts; it just does not write a CV.
+
+**4. You can write the run directory and your own documents, and nothing else.** `$JOBFLOW_RUN_DIR/**`, plus the exact document paths the prompt names (also in `$JOBFLOW_CV_TARGET` and `$JOBFLOW_COVER_TARGET` — the `Scope:` line says which of those two are yours this run; the other is not in the allowlist). Every other write is refused by a `PreToolUse` hook, including inside a `Task` subagent. This is not advisory: a run's first instruction is a deliberate write to `$JOBFLOW_RUN_DIR/.guard-probe` that is **expected to be refused**, and a run whose guard stays silent is killed. When a refusal names the jobflow guard, do not retry it and do not route around it — report it and continue with what you can do.
 
 The only shell command available is `python3 tools/board/fetch_url.py "<https url>"`, which is the browser-headers retry from `09-web-research.md` step 2. **Quote the URL.** A posting URL containing `&` or `;` is more than one command to a shell unless it is quoted, and the guard refuses it on exactly that basis rather than guessing what you meant. `WebFetch`, `WebSearch`, `Read`, `Glob`, `Grep` and `Task` all work normally.
 
@@ -133,30 +135,43 @@ Read only the reference files you do not yet have:
 **Resolve the active template (do this once, reuse everywhere below):** if `05-cv-templates.md` or `06-cover-letter-templates.md` opens with an `ACTIVE-TEMPLATE` managed block (inserted by `/add-template`), read its declared **source extension** and **compile command** — these override the stock `.tex`/lualatex (CV) and `.tex`/xelatex (cover letter) defaults for the rest of this workflow. Call these `<CV_EXT>`/`<CV_COMPILE>` and `<COVER_EXT>`/`<COVER_COMPILE>`; where no block is present, they default to `.tex`, the stock lualatex command, and the stock xelatex command respectively. Every `.tex` reference below is really `<CV_EXT>` or `<COVER_EXT>` — stock behavior is unchanged, this only matters when a custom template is active.
 
 Also read the most recent existing CV and cover letter files for concrete structural reference (one of each is enough):
-- Read the selected personalized CV base from `cv/my_cv.tex` using the role variant supplied by the board (`sde`, `ai`, or `ml`). If no board variant was supplied, choose it using the mapping in `05-cv-templates.md`. Read one existing `cv/main_*<CV_EXT>` only as an optional structural reference.
-- Read `cover_letters/my_cover<COVER_EXT>` as the personalized content skeleton when it exists. Otherwise use `cover_letters/cover_example<COVER_EXT>`. Existing job-specific cover letters are phrasing references only.
+- Read the selected personalized CV base from `cv/my_cv.tex` using the role variant supplied by the board (`sde` or `ai`). If no board variant was supplied, choose it using the mapping in `05-cv-templates.md`. Read one existing `cv/main_*<CV_EXT>` only as an optional structural reference.
+- Read `cover_letters/my_cover<COVER_EXT>` as the personalized content base when it exists. Text outside square-bracketed tailoring slots is the candidate's standing narrative: preserve its voice, factual substance, and overall argument by default. Fill `[ROLE FIT]`, `[WHY THIS COMPANY]`, and identity slots from the posting and verified research. Reorder or trim fixed evidence only when relevance or the one-page limit requires it, and report any material rewrite of the standing narrative. Otherwise use `cover_letters/cover_example<COVER_EXT>`. Existing job-specific cover letters are phrasing references only.
 
 *The master candidate profile (`01-candidate-profile.md`), the personalized master CV (`cv/my_cv.tex`), and CLAUDE.md's Candidate Profile section are the sole source of truth for facts. `cv/main_example.tex` is a placeholder/layout example, not factual evidence. Existing tailored CVs may be read for structure and phrasing only, never as a source of claims.*
 
-### Requirement coverage (both documents)
-- **Every requirement the posting states gets addressed - matched or honestly gapped, never silently omitted.** A stated requirement the candidate lacks (a tool, a clearance, years of experience) is acknowledged with an honest bridge ("not in my daily toolkit yet; a natural extension of X"), because omission reads as hiding once an interviewer asks. Build the requirement list from Step 1 and check both drafts against it before Step 3.
-- **Engage nice-to-haves by name** where the profile supports honest adjacency (e.g. "conceptually aligned with <named tool>"), and use the posting's own term over a synonym wherever it is truthfully applicable - including in CV section headings (a posting hiring for "MLOps" should find a heading containing "MLOps", not only a paraphrase).
-- **Address stated logistics and prerequisites** in the cover letter where the posting raises them: security clearance willingness, start date or availability, commute or location fit, and the posting's reference/job ID where one exists. When the employer operates across several countries, a truthful language-capabilities sentence mapped to their footprint is high-value targeting.
+### Requirement triage and skill admission (both documents)
+
+Do not treat every sentence in a posting as a keyword target. First classify its requirements:
+
+1. **Broad programme language:** generic graduate-programme traits or umbrella capabilities such as analytical thinking, willingness to learn, teamwork, programming fundamentals, or broad exposure to cloud/AI/technology. Use these to judge fit and select evidence, but do not mechanically add them to the CV or make the cover letter answer them one by one. An AWS-style graduate posting with broad capability language is not a reason to stuff every generic term.
+2. **Specific hard-skill keywords:** named languages, libraries, frameworks, protocols, cloud services, databases, or methods that an ATS may match literally. Run each through the Skill Admission Gate below.
+3. **Hard prerequisites:** work authorization, security clearance, start date, location, degree, language level, certification, and years of experience. Never infer these. Address only the ones material to eligibility, using verified facts.
+
+**Skill Admission Gate for specific hard-skill keywords:**
+
+- **Documented:** a factual source names the skill or proves direct use. Add the posting's exact term where it fits naturally, preferring an evidenced experience/project bullet when one exists.
+- **Credible adjacent / interview-ready:** the exact term is absent, but the profile contains strong, specific evidence of its prerequisites or a closely equivalent tool, making it reasonable to infer genuine familiarity that the candidate can refresh and defend before an interview. Add the exact keyword only to a Skills/Core Competencies line, optionally under `Working knowledge` or `Familiarity` when that is the honest level. Never claim production use, project use, duration, or proficiency that the sources do not establish. Examples include LangChain or LangGraph alongside already evidenced RAG and agent-loop engineering. Record every admitted inferred skill in the final tailoring report as an interview-preparation item.
+- **Unsupported:** the keyword would require learning from zero, rests only on generic intelligence, or concerns a certification, language, regulated qualification, years of experience, security clearance, or material domain experience. Do not add it to the CV. Mention it in the cover letter only when it is a decisive requirement and an honest adjacent-experience bridge materially helps; otherwise omit it from the documents and leave it visible in the fit evaluation.
+
+The cover letter is not a requirement matrix. Lead with the strongest documented matches, use at most one useful adjacent-skill bridge, and omit generic programme language and non-decisive gaps. Use the posting's exact term over a synonym wherever the gate admits it. Address stated logistics only where they materially affect eligibility or remove a likely concern.
 
 ### CV (`cv/main_<company>_<role><CV_EXT>`)
 - In the **CV language from the profile** (the `CV language:` line in CLAUDE.md's Identity section). When the profile does not set one, default to **English**. Never switch language per posting - the CV language is a profile-level choice, so all CVs stay consistent and reusable
 - Follow the moderncv/banking format from `05-cv-templates.md`
 - Tailor the profile statement and experience bullets to the specific role
-- Reframe skills and achievements to match job requirements
+- Reframe documented skills and achievements to match job requirements, and add only the specific keywords admitted by the Skill Admission Gate above
 - Keep to 2 pages
-- **Grounding Audit:** Before writing to disk, audit all tailored bullet points against the union of three sources: `.claude/skills/job-application-assistant/01-candidate-profile.md` + the personalized master CV (`cv/my_cv.tex`) + `CLAUDE.md`'s Candidate Profile section to verify that all dates, roles, and metrics match exactly (zero profile drift or fabrication).
+- **Grounding Audit:** Before writing to disk, audit all dates, roles, metrics, achievements, and claims of actual tool use against the union of three sources: `.claude/skills/job-application-assistant/01-candidate-profile.md` + the personalized master CV (`cv/my_cv.tex`) + `CLAUDE.md`'s Candidate Profile section (zero factual drift or fabrication). A credible-adjacent skill admitted by the gate is the only exception to literal source presence, and it may appear only as a skills-level capability, never as invented experience.
 
 ### Cover Letter (`cover_letters/cover_<company>_<role><COVER_EXT>`)
 - **Match the language of the job posting** (Danish posting -> Danish cover letter, English posting -> English cover letter)
 - Follow the structure from `06-cover-letter-templates.md`
 - Use the `cover.cls` template
+- For Swiss/German PDF applications, use its A4 formal-letter frame: candidate contacts and links top right, verified employer/contact block left, place/date right, and a bold left-aligned role subject with any posting reference number. Remove unresolved optional address lines rather than leaving placeholders
 - Tailor the opening paragraph to the specific role and company
 - Address to a named person if available in the posting, otherwise "Dear Hiring Manager" (or equivalent in posting language)
+- Select evidence rather than listing keywords: emphasize the strongest documented matches and use no more than one credible adjacent-skill bridge when it helps the argument
 - Keep to approximately one page
 - Any mention of agentic coding or AI tooling must reference **Claude Code** by name
 
@@ -199,6 +214,8 @@ Do NOT read `05-cv-templates.md` or `06-cover-letter-templates.md` — those gov
 ### 3. Factual Grounding Audit
 Compare every date, employer, job title, and quantitative metric in both drafts against the union of three sources: `.claude/skills/job-application-assistant/01-candidate-profile.md` + the master CV baseline template (`cv/main_example.tex`) + `CLAUDE.md`'s Candidate Profile section. A claim is grounded if ANY of these sources supports it. Mismatches between these three sources themselves must be reported to the user as a profile-consistency warning rather than treated as draft drift. Draft mismatches must be flagged as Part A edits with `"reason": "grounding"` so they can be distinguished from style changes. Keep the tolerance honest: reframed emphasis is fine; changed facts and escalated numbers are not.
 
+For skills, apply this separate admission rule: a named, role-specific hard skill may remain in a Skills/Core Competencies line when it is absent from the sources only if close, concrete evidence in the profile makes genuine familiarity and interview readiness a reasonable inference. It must not be turned into a claim of project use, production use, duration, or proficiency. Generic graduate-programme language is not a keyword target. Certifications, languages, clearances, years of experience, and material domain experience are never inferred. Flag any skill that fails this rule as a grounding edit; identify every skill that passes only by adjacency as an interview-preparation item.
+
 ### 4. Drafts to Review
 Both drafts are provided inline below. Do NOT use the Read tool on the draft files — use these exact texts.
 
@@ -234,11 +251,12 @@ Only use this format when you can quote the exact `old_string` from the drafts a
 **Part B — Narrative suggestions (for judgment calls that are not mechanical edits):**
 Prose suggestions grouped by category. Produce each category even if your finding is "no issues" — silence on a category can be mistaken for skipping it.
 - **Missed keywords/requirements** — what to add and roughly where, if it cannot be expressed as a clean string replacement
+- **Skill-gate audit** — list any credible-adjacent keywords admitted only at skills level, any unsupported keywords that must stay out, and any broad programme language intentionally ignored
 - **Company/department-specific angles** — connections between experience and the company's strategic priorities, based on your research
 - **Action-oriented reframing** — identify passive, generic, or low-energy statements and suggest action-oriented rewrites. Use this category especially for structural weakness that doesn't fit a single-sentence swap (e.g., "the whole opening paragraph reads as passive — restructure around your single strongest match to the posting").
 - **Tone and style issues** — check against `03-writing-style.md` AND `02-behavioral-profile.md`. Flag any issues with tone, formality, or voice (cliches, hedging, over-humility, inconsistent register), and specifically flag any mismatch between the letter's voice and the candidate's natural register as described in the behavioral profile.
 
-**CRITICAL RULE:** All suggestions must be grounded in actual profile data. Do NOT suggest fabricating skills, experience, or achievements. If a requirement is a gap, say so honestly and suggest how to frame adjacent experience instead.
+**CRITICAL RULE:** Do not fabricate experience, achievements, or tool usage. The only non-literal skill addition allowed is a named hard skill that passes the credible-adjacent rule above, and it must stay at skills level. If a decisive requirement is an unsupported gap, keep it out of the CV and suggest an honest adjacent-experience bridge only if the cover letter benefits; do not force every gap into either document.
 
 Do **not** run a verification checklist — the drafter will do that in the final step. Focus on content critique.
 
@@ -253,12 +271,13 @@ Once the reviewer agent returns its feedback:
 
 1. **Apply Part A (structured edits) directly with the Edit tool.** Do NOT re-read the draft files — you already have them in context from Step 2, and the reviewer's `old_string` values were quoted from that same text. For each edit in the JSON array, call `Edit` with the given `file`, `old_string`, and `new_string`. Skip any whose rationale would require fabricating content.
 2. **Apply Part B (narrative suggestions)** using judgment. These need interpretation, not mechanical replacement. Walk through every Part B category the reviewer returned and address it:
-   - **Missed keywords/requirements:** add the keyword or capability where it fits naturally in the CV or cover letter. Prefer the experience bullets (concrete evidence) over the profile statement (abstract claim).
+   - **Missed keywords/requirements:** apply the Skill Admission Gate from Step 2. Put documented keywords beside their real evidence; put credible-adjacent keywords only in Skills/Core Competencies; keep unsupported and generic programme terms out.
+   - **Skill-gate audit:** preserve the reviewer's distinction between documented, credible-adjacent, unsupported, and intentionally ignored terms. Add admitted adjacent skills to the final interview-preparation list.
    - **Company/department-specific angles:** weave the reviewer's research into the cover letter opening or motivation paragraph. Verify every company claim via WebFetch/WebSearch before including it — do not trust reviewer research at face value.
    - **Action-oriented reframing:** rewrite passive or generic phrasing (CV profile statement, cover letter opening, bullet leads). Structural weakness that the reviewer flagged without a clean JSON edit lives here.
    - **Tone and style issues:** apply the writing-style-guide fixes (no em-dashes, no cliches, no apologetic hedging, consistent first-person active voice).
    Use Edit for targeted changes; only re-read a file if an edit fails because the surrounding text has shifted.
-3. Do NOT incorporate any suggestion that would fabricate skills or experience. If a posting requirement is a genuine gap, acknowledge it honestly and frame adjacent experience instead.
+3. Do NOT incorporate any suggestion that fabricates experience or actual tool use. An inferred skill is allowed only under Step 2's credible-adjacent rule and only at skills level. Do not automatically acknowledge every genuine gap in the cover letter.
 
 After all edits are applied, the two files on disk are the final drafts.
 
@@ -337,12 +356,14 @@ Failures here are template-level problems: fix them in the `<CV_EXT>` source (e.
 
 | Keyword | Priority | Status | Note |
 |---------|----------|--------|------|
-| ... | required/preferred | covered / synonym-only / missing (have it) / missing (gap) | where it appears, or why absent |
+| ... | required/preferred | covered / synonym-only / missing (documented) / addable (credible adjacent) / omitted (generic) / missing (unsupported) | where it appears, gate rationale, or why absent |
 
 - **covered** — the term appears (verbatim or trivial inflection).
 - **synonym-only** — the concept is present under a different term. If the posting's exact term is truthfully applicable per the profile, prefer the posting's term (ATS keyword matches are often literal).
-- **missing (have it)** — the profile shows the candidate genuinely has this skill but the CV never says it: add it where it fits naturally, preferring experience bullets (concrete evidence) over the profile statement, then re-run 5a–5c.
-- **missing (gap)** — a genuine gap: leave it missing. **Never stuff keywords.** This is the same honesty rule the reviewer follows — a gap gets acknowledged in the cover letter's framing, not hidden in the CV.
+- **missing (documented)** — the sources show direct skill or usage but the CV omits the term: add it beside the strongest real evidence, then re-run 5a-5c.
+- **addable (credible adjacent)** — the named hard skill passes Step 2's gate: add the exact term only in Skills/Core Competencies, never inventing usage, and add it to the interview-preparation list before re-running 5a-5c.
+- **omitted (generic)** — broad graduate-programme or umbrella language that is useful for fit/evidence selection but not worth adding as a CV keyword.
+- **missing (unsupported)** — the term fails the gate: leave it absent. Mention it in the cover letter only if it is decisive and a concise, honest bridge adds value. Never stuff it.
 
 **4. Clean up:** delete the extracted `.txt` file.
 

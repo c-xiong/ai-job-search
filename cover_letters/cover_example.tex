@@ -9,7 +9,7 @@
 % wrapped in Raleway-Medium so the bullet font matches the body.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\documentclass[]{cover}
+\documentclass[a4paper]{cover}
 \usepackage{fancyhdr}
 
 \pagestyle{fancy}
@@ -21,16 +21,25 @@
 \begin{document}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%     TITLE NAME
+%     FORMAL LETTER HEADER
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\namesection{}{\Huge{[YOUR NAME]}}{  \href{mailto:your.email@example.com}{your.email@example.com} | [+XX XXXXXXXXXX] |  \urlstyle{same}\href{https://www.linkedin.com/in/yourprofile}{LinkedIn}
+\senderblock{[YOUR NAME]}{
+  [CITY, COUNTRY]\\
+  \href{mailto:your.email@example.com}{your.email@example.com} \enspace|\enspace [+XX XXXXXXXXXX]\\
+  \href{https://example.com}{Website} \enspace|\enspace
+  \href{https://www.linkedin.com/in/yourprofile}{LinkedIn} \enspace|\enspace
+  \href{https://github.com/yourprofile}{GitHub}
 }
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%     MAIN COVER LETTER CONTENT
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\recipientblock{[COMPANY]\\
+{[CONTACT PERSON OR HIRING TEAM]}\\
+{[DEPARTMENT, IF KNOWN]}\\
+{[STREET AND NUMBER]}\\
+{[POSTCODE, CITY, COUNTRY]}}
 
-\currentdate{\today}
+\currentdate{[CITY], \today}
+\subjectline{Application for [ROLE] [REFERENCE NUMBER, IF APPLICABLE]}
+
 \lettercontent{Dear [Hiring Manager / Team],}
 
 \lettercontent{[Opening paragraph: name the role and where you found it, state your strongest connection to it in one sentence, and preview why you are a fit. Keep it to 2--3 sentences.]}
@@ -51,11 +60,9 @@
 
 \lettercontent{I look forward to hearing from you.}
 
-\begin{flushright}
 % Note: no trailing \\ inside \closing{} - cover.cls appends its own \\, and a
 % doubled break triggers "There's no line here to end."
 \closing{Kind regards,}
 
 \signature{[YOUR NAME]}
-\end{flushright}
 \end{document}

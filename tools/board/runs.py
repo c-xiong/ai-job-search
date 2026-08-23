@@ -93,6 +93,26 @@ ALLOWED_TOOLS = ("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task", "TodoW
                  "Write", "Edit", "MultiEdit",
                  "Bash(python3 tools/board/fetch_url.py:*)")
 
+# `ml` was once a third content base. Machine-learning roles are served by the
+# `ai` base, so the picker no longer offers `ml` - but it stays accepted here so
+# runs approved before the change, and any stored record still holding it,
+# resolve instead of 400-ing. `_resolve_base_cv` is the one place it collapses.
+BASE_CV_CHOICES = ("auto", "sde", "ai", "ml")
+BASE_CV_ERROR = "base_cv must be auto, sde or ai"
+
+# Which documents one run produces. Not every posting deserves both: a speculative
+# application may want the letter alone, and a portal that only takes a PDF CV has
+# nowhere to put one. `docs.doc_kinds()` turns this into the list every downstream
+# step iterates.
+SCOPE_CHOICES = ("both", "cv", "cover")
+SCOPE_ERROR = "scope must be cv, cover or both"
+_DOC_TITLES = {"cv": "CV", "cover": "Cover letter"}
+
+
+def _resolve_base_cv(base):
+    """Map a stored/selected base onto a base the CV source actually defines."""
+    return "ai" if base == "ml" else base
+
 
 def _store(data):
     """Kept for callers that already hold `runs_lock()`."""
@@ -182,12 +202,12 @@ class Supervisor:
         if kind not in KINDS:
             return 400, {"error": "kind must be one of %s" % list(KINDS)}
         scope = payload.get("scope") or "both"
-        if scope not in ("cv", "cover", "both"):
-            return 400, {"error": "scope must be cv, cover or both"}
+        if scope not in SCOPE_CHOICES:
+            return 400, {"error": SCOPE_ERROR}
         remember = (payload.get("remember") or "").strip()[:1000]
         base_cv = payload.get("base_cv") or "auto"
-        if base_cv not in ("auto", "sde", "ai", "ml"):
-            return 400, {"error": "base_cv must be auto, sde, ai or ml"}
+        if base_cv not in BASE_CV_CHOICES:
+            return 400, {"error": BASE_CV_ERROR}
 
         try:
             preflight()
@@ -205,6 +225,11 @@ class Supervisor:
                 return 409, {"error": "parent belongs to a different posting"}
             if not parent.get("session_id"):
                 return 409, {"error": "the parent session is not resumable; use a full re-run"}
+            inherited = docs.doc_kinds(parent)
+            if any(kind not in inherited for kind in docs.doc_kinds({"scope": scope})):
+                return 409, {"error": "that run produced the %s only; a %s cannot be revised "
+                                      "into existence - start a full re-run"
+                                      % (docs.doc_phrase(inherited), scope)}
         company = (payload.get("company") or entry.get("company") or "").strip()
         role = (payload.get("role") or entry.get("title") or "").strip()
         if not company or not role:
@@ -356,7 +381,7 @@ class Supervisor:
                              "attempt": existing.get("attempt", 2), "existing": True}
         return code, body
 
-    def approve(self, run_id, expected_phase, base_cv=None):
+    def approve(self, run_id, expected_phase, base_cv=None, scope=None):
         """Compare-and-set, then re-queue for pass B.
 
         Two rapid clicks cost one pass B: the second finds the phase already
@@ -378,8 +403,15 @@ class Supervisor:
                                           % (expected_phase, record["phase"]),
                                  "phase": record["phase"]}
                 selected = base_cv or record.get("base_cv") or "auto"
-                if selected not in ("auto", "sde", "ai", "ml"):
-                    return 400, {"error": "base_cv must be auto, sde, ai or ml"}
+                if selected not in BASE_CV_CHOICES:
+                    return 400, {"error": BASE_CV_ERROR}
+                # The fit evaluation is exactly what tells you whether this one
+                # is worth a tailored CV or only a letter, so the scope stays
+                # editable right up to the moment pass B is paid for.
+                chosen_scope = scope or record.get("scope") or "both"
+                if chosen_scope not in SCOPE_CHOICES:
+                    return 400, {"error": SCOPE_ERROR}
+                record["scope"] = chosen_scope
                 record["phase"] = "queued"
                 record["base_cv"] = selected
                 record["resolved_base_cv"] = (record.get("recommended_base_cv", "sde")
@@ -790,9 +822,8 @@ class Supervisor:
                     raise docs.DocumentError("parent posting snapshot is missing")
                 (run_dir(run_id) / "posting.md").write_bytes(parent_posting.read_bytes())
                 update(run_id, phase="drafting")
-                scope = record.get("scope") or "both"
-                selected = ("cv", "cover") if scope == "both" else (scope,)
-                targets = [run_registry.ROOT / record["targets"][kind] for kind in selected]
+                targets = [run_registry.ROOT / record["targets"][kind]
+                           for kind in docs.doc_kinds(record)]
                 if record.get("remember"):
                     targets.append(docs.PROFILE)
                 self._spawn(
@@ -821,8 +852,11 @@ class Supervisor:
             self._settle(run_id, "cancelled", "cancelled before pass B started")
             return
         update(run_id, phase="drafting")
-        targets = [run_registry.ROOT / record["targets"]["cv"],
-                   run_registry.ROOT / record["targets"]["cover"]]
+        # The scope picked on the board is enforced here, not just asked for in
+        # the prompt: the write allowlist is built from `targets`, so a CV-only
+        # run cannot touch a cover letter even if the model decides to try.
+        targets = [run_registry.ROOT / record["targets"][kind]
+                   for kind in docs.doc_kinds(record)]
         if record.get("remember"):
             targets.append(docs.PROFILE)
         # Snapshotted before the run, because "the file exists" is not evidence
@@ -930,15 +964,16 @@ class Supervisor:
                 activity.emit("verify", "%s inspection: %s" % (run_id, verdict),
                               level="info" if verdict == "clean" else "warn", run_id=run_id)
                 return
-            toolchains = {docs.resolve_toolchain(kind)["kind"] for kind in ("cv", "cover")}
+            toolchains = {docs.resolve_toolchain(kind)["kind"]
+                          for kind in docs.doc_kinds(record)}
             if toolchains != {"latex"}:
                 activity.emit("verify", "%s has fixable issues, but automatic repair is "
                               "disabled for non-LaTeX toolchains" % run_id,
                               level="warn", run_id=run_id)
                 return
 
-            targets = [run_registry.ROOT / record["targets"]["cv"],
-                       run_registry.ROOT / record["targets"]["cover"]]
+            targets = [run_registry.ROOT / record["targets"][kind]
+                       for kind in docs.doc_kinds(record)]
             try:
                 self._spawn(
                     get(run_id) or record, "pass C (repair %d)" % (repairs + 1),
@@ -1085,20 +1120,23 @@ class Supervisor:
     @staticmethod
     def _recommend_base_cv(role):
         title = (role or "").lower()
-        if re.search(r"\b(machine learning|ml engineer|ml scientist|data scientist)\b", title):
-            return "ml"
-        if re.search(r"\b(ai|artificial intelligence|llm|nlp|generative ai)\b", title):
+        # ML/data-science titles share the `ai` base: it already leads with the
+        # research, modelling and evaluation evidence those postings ask for.
+        if re.search(r"\b(machine learning|ml engineer|ml scientist|data scientist"
+                     r"|ai|artificial intelligence|llm|nlp|generative ai)\b", title):
             return "ai"
         return "sde"
 
     def _read_drafts(self, record):
-        """The pass-B contract: `drafts.json` naming exactly the two allowlisted
-        targets, and the keyword list M3's verification pass reads."""
+        """The pass-B contract: `drafts.json` naming exactly the allowlisted
+        targets of this run's scope, and the keyword list M3's verification
+        pass reads."""
         run_id = record["id"]
         payload, problem = self._read_json(run_id, "drafts.json")
         if problem:
             return [problem]
-        problems = run_guard.validate_drafts(payload, record["targets"])
+        problems = run_guard.validate_drafts(payload, record["targets"],
+                                             docs.doc_kinds(record))
         request, missing = self._read_json(run_id, "verify_request.json")
         if missing:
             problems.append(missing)
@@ -1186,17 +1224,34 @@ class Supervisor:
         # trusting a guard that was working before the approval card was opened.
         parts = [self._canary(record, nonce)]
         parts.append("Approved. Continue from Step 2 of `/apply`.\n\n")
-        selected_base = record.get("resolved_base_cv") or \
-            record.get("recommended_base_cv") or "sde"
-        parts.append(
-            "Selected CV content base: `%s`. Start from the corresponding thin variant "
-            "of `cv/my_cv.tex` described in `05-cv-templates.md`; preserve its factual "
-            "content and tailor only emphasis, ordering and supported wording for this "
-            "posting. Do not use `cv/main_example.tex` as a factual source.\n\n"
-            % selected_base)
-        parts.append("Write exactly these two files and no others:\n"
-                     "- CV: `%s`\n- Cover letter: `%s`\n\n"
-                     % (record["targets"]["cv"], record["targets"]["cover"]))
+        kinds = docs.doc_kinds(record)
+        selected_base = _resolve_base_cv(
+            record.get("resolved_base_cv") or record.get("recommended_base_cv") or "sde")
+        if "cv" in kinds:
+            parts.append(
+                "Selected CV content base: `%s`. Start from that base in `cv/my_cv.tex` as "
+                "described in `05-cv-templates.md`; preserve its factual content and tailor "
+                "only emphasis, ordering and supported wording for this posting. Do not use "
+                "`cv/main_example.tex` as a factual source.\n\n"
+                % selected_base)
+        else:
+            parts.append(
+                "Selected CV content base: `%s`. Read that base in `cv/my_cv.tex` as the "
+                "factual source for every claim the letter makes, and do not edit it. Do "
+                "not use `cv/main_example.tex` as a factual source.\n\n"
+                % selected_base)
+        parts.append("Scope: %s. Write exactly %s, and nothing else:\n"
+                     % (record.get("scope") or "both",
+                        "these two files" if len(kinds) > 1 else "this one file"))
+        for kind in kinds:
+            parts.append("- %s: `%s`\n" % (_DOC_TITLES[kind], record["targets"][kind]))
+        if len(kinds) == 1:
+            other = "cover" if kinds[0] == "cv" else "cv"
+            parts.append("This application wants the %s only. Do Step 2 for it alone: do not "
+                         "draft, write or edit a %s - it is outside the write allowlist, so "
+                         "attempting it fails the run.\n"
+                         % (docs.DOC_LABELS[kinds[0]], docs.DOC_LABELS[other]))
+        parts.append("\n")
         parts.append("Still headless (`JOBFLOW_RUN=1`): the supervisor compiles, cleans up, "
                      "archives the posting and writes the tracker row. Do Steps 2, 3 and 4, "
                      "then write `$JOBFLOW_RUN_DIR/drafts.json` and "
@@ -1232,28 +1287,35 @@ class Supervisor:
 
     def _prompt_c(self, record, pdfs, nonce):
         parts = [self._canary(record, nonce)]
+        kinds = [kind for kind in ("cv", "cover") if kind in pdfs]
+        listed = "".join("- %s: `%s`\n" % (_DOC_TITLES[kind], Path(pdfs[kind]).resolve())
+                         for kind in kinds)
         parts.append(
-            "Inspect the two compiled PDFs below with the Read tool. You must Read both "
-            "exact paths even when the first one has an issue:\n- CV: `%s`\n- Cover: `%s`\n\n"
-            % (Path(pdfs["cv"]).resolve(), Path(pdfs["cover"]).resolve()))
+            "Inspect the compiled PDF%s below with the Read tool. You must Read every exact "
+            "path listed, even when the first one has an issue:\n%s\n"
+            % ("s" if len(kinds) > 1 else "", listed))
         parts.append(
             "Do not edit source files in this inspection turn. Check page composition, "
             "orphaned headings or entries, clipped content, bullet/body-font mismatch, "
             "signature placement and other visible layout defects. Atomically write "
             "`$JOBFLOW_RUN_DIR/inspect.json` with schema `jobflow.inspect/1`, verdict "
             "`clean`, `fixable`, or `blocked`, and `issues` as objects containing `doc` "
-            "(`cv` or `cover`), positive integer `page`, string `kind`, and string "
-            "`fix_hint`. Use an empty issues list only when both PDFs are visually clean.")
+            "(%s), positive integer `page`, string `kind`, and string `fix_hint`. Use an "
+            "empty issues list only when every PDF listed above is visually clean."
+            % " or ".join("`%s`" % kind for kind in kinds))
         return "".join(parts)
 
     def _prompt_repair(self, record, issues, nonce):
         parts = [self._canary(record, nonce)]
+        kinds = docs.doc_kinds(record)
         parts.append(
-            "Apply only the following verified visual-layout repairs to the two exact "
-            "source files. Do not compile; the supervisor recompiles after this turn. "
-            "Do not invent content or change factual claims.\n\n%s\n\nCV: `%s`\nCover: `%s`"
-            % (json.dumps(issues, ensure_ascii=False, indent=2),
-               record["targets"]["cv"], record["targets"]["cover"]))
+            "Apply only the following verified visual-layout repairs to the exact source "
+            "file%s listed below. Do not compile; the supervisor recompiles after this "
+            "turn. Do not invent content or change factual claims.\n\n%s\n\n%s"
+            % ("s" if len(kinds) > 1 else "",
+               json.dumps(issues, ensure_ascii=False, indent=2),
+               "".join("%s: `%s`\n" % (_DOC_TITLES[kind], record["targets"][kind])
+                       for kind in kinds)))
         return "".join(parts)
 
 

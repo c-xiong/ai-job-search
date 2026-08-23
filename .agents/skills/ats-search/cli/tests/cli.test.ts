@@ -322,7 +322,8 @@ describe("output shape", () => {
   test("the registry write touches only bookkeeping, never the fields you own", async () => {
     const session = newSession()
     const before = JSON.parse(readFileSync(session.registryPath, "utf-8"))
-    await runCLI(["search", "-c", "Parloa"], {}, session)
+    const result = await runCLI(["search", "-c", "Parloa"], {}, session)
+    const report = parseJSON<SearchPayload>(result).meta.companies[0]
     const after = JSON.parse(readFileSync(session.registryPath, "utf-8"))
     const b = before.companies.find((c: { name: string }) => c.name === "Parloa")
     const a = after.companies.find((c: { name: string }) => c.name === "Parloa")
@@ -331,6 +332,10 @@ describe("output shape", () => {
     }
     expect(after.defaults).toEqual(before.defaults)
     expect(a.stats.jobs_seen).toBeGreaterThan(0)
+    expect(a.stats.last_jobs_seen).toBe(report.jobs_seen)
+    expect(a.stats.last_eligible_jobs).toBe(report.eligible)
+    const backup = JSON.parse(readFileSync(session.registryPath.replace(/\.json$/, ".backup.json"), "utf-8"))
+    expect(backup).toEqual(before)
   })
 })
 

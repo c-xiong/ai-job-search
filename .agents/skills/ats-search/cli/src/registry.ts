@@ -62,12 +62,17 @@ export interface CompanyStats {
   german_gated: number
   eligible_jobs: number
   last_eligible_at: string | null
+  /** Counts from the most recent board fetch, unlike the cumulative fields above. */
+  last_jobs_seen: number | null
+  last_eligible_jobs: number | null
 }
 
 export interface Company {
   name: string
   aliases?: string[]
   domain?: string
+  /** Exact careers page supplied by the user; preferred over guessed paths. */
+  careers_url?: string
   tier: number
   vendor?: VendorName | null
   token?: string | null
@@ -181,6 +186,9 @@ export function loadRegistry(path = registryPath()): Registry {
     }
     const c = entry as Company
     if (!c.name || typeof c.name !== "string") throw new RegistryError(`${where} has no \`name\``)
+    if (c.careers_url !== undefined && typeof c.careers_url !== "string") {
+      throw new RegistryError(`${c.name}: \`careers_url\` must be a string`)
+    }
     if (seen.has(c.name.toLowerCase())) throw new RegistryError(`duplicate company name: ${c.name}`)
     seen.add(c.name.toLowerCase())
     if (typeof c.tier !== "number" || c.tier < 1 || c.tier > 5) {
@@ -345,7 +353,10 @@ export function selectDue(
 }
 
 export function emptyStats(): CompanyStats {
-  return { jobs_seen: 0, german_gated: 0, eligible_jobs: 0, last_eligible_at: null }
+  return {
+    jobs_seen: 0, german_gated: 0, eligible_jobs: 0, last_eligible_at: null,
+    last_jobs_seen: null, last_eligible_jobs: null,
+  }
 }
 
 export interface Bookkeeping {
@@ -366,7 +377,8 @@ export interface Bookkeeping {
 export function writeBookkeeping(entries: Bookkeeping[], path = registryPath()): void {
   if (!entries.length) return
   withRegistryLock(path, () => {
-  const raw = JSON.parse(readFileSync(path, "utf-8")) as Registry
+  const before = JSON.parse(readFileSync(path, "utf-8")) as Registry
+  const raw = JSON.parse(JSON.stringify(before)) as Registry
   const byName = new Map(entries.map((e) => [e.name, e]))
   for (const company of raw.companies) {
     const entry = byName.get(company.name)
@@ -377,9 +389,12 @@ export function writeBookkeeping(entries: Bookkeeping[], path = registryPath()):
     const stats: CompanyStats = { ...emptyStats(), ...(company.stats ?? {}) }
     stats.jobs_seen += entry.jobs_seen
     stats.eligible_jobs += entry.eligible
+    stats.last_jobs_seen = entry.jobs_seen
+    stats.last_eligible_jobs = entry.eligible
     if (entry.eligible > 0) stats.last_eligible_at = entry.attempted_at.slice(0, 10)
     company.stats = stats
   }
+  writeJsonAtomic(path.replace(/\.json$/, ".backup.json"), before)
   writeJsonAtomic(path, raw)
   })
 }
@@ -400,7 +415,8 @@ export function writeResolution(
 ): void {
   if (!updates.length) return
   withRegistryLock(path, () => {
-  const raw = JSON.parse(readFileSync(path, "utf-8")) as Registry
+  const before = JSON.parse(readFileSync(path, "utf-8")) as Registry
+  const raw = JSON.parse(JSON.stringify(before)) as Registry
   const defaults: RegistryDefaults = { ...DEFAULT_DEFAULTS, ...(raw.defaults ?? {}) }
   const byName = new Map(updates.map((u) => [u.name, u.patch]))
   for (const company of raw.companies) {
@@ -421,6 +437,7 @@ export function writeResolution(
       company.identity = null
     }
   }
+  writeJsonAtomic(path.replace(/\.json$/, ".backup.json"), before)
   writeJsonAtomic(path, raw)
   })
 }

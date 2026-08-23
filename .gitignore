@@ -33,6 +33,7 @@ venv/
 # private notes about each one ("go through the institute, do not cold-apply").
 # Same split as scrape_config.json - only companies.example.json is tracked.
 job_scraper/companies.json
+job_scraper/companies.backup.json
 #
 # CI enforces the split: the placeholder-integrity job fails if a tracked
 # *.example file loses its [YOUR_*] tokens, and the leak guard fails if any of
@@ -54,6 +55,11 @@ job_scraper/scrape_config.json
 cv/my_cv.tex
 cv/variants/
 cv/out/
+# Personal helper scripts. Nothing here is required - cv/my_cv.tex is the only
+# file the workflow needs - but if you keep your CV somewhere else and script
+# the copy, that script will hardcode paths from your machine. Name it
+# *.local.sh and it stays out of the repo.
+cv/*.local.sh
 cover_letters/my_cover.tex
 
 # Working design docs and plans. They name target companies and are written in

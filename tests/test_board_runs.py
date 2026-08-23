@@ -92,7 +92,10 @@ class SupervisorCase(unittest.TestCase):
         def fake_compile(record):
             directory = run_registry.run_dir(record["id"])
             directory.mkdir(parents=True, exist_ok=True)
-            pdfs = {"cv": directory / "cv.pdf", "cover": directory / "cover.pdf"}
+            # Scope-aware, like the real one: a run that owns one document must
+            # not be handed a second PDF it never asked for.
+            pdfs = {kind: directory / ("%s.pdf" % kind)
+                    for kind in runs.docs.doc_kinds(record)}
             for path in pdfs.values():
                 path.write_bytes(b"%PDF-1.4\n1 0 obj <</Type /Page>> endobj\n%%EOF")
             verify = {"schema": "jobflow.verify/1", "run_id": record["id"],
@@ -101,10 +104,10 @@ class SupervisorCase(unittest.TestCase):
                                   "evidence": {}}],
                       "keywords": {"covered": [], "absent": [], "source": "posting"}}
             (directory / "verify.json").write_text(json.dumps(verify), encoding="utf-8")
-            artefacts = {"cv_source": record["targets"]["cv"],
-                         "cover_source": record["targets"]["cover"],
-                         "cv_pdf": str(pdfs["cv"].relative_to(home)),
-                         "cover_pdf": str(pdfs["cover"].relative_to(home))}
+            artefacts = {}
+            for kind in pdfs:
+                artefacts[kind + "_source"] = record["targets"][kind]
+                artefacts[kind + "_pdf"] = str(pdfs[kind].relative_to(home))
             return pdfs, verify, artefacts
 
         self._docs_patches = [
@@ -238,6 +241,80 @@ class HappyPathTest(SupervisorCase):
         self.assertEqual(child_record["resume_session_id"], parent_record["session_id"])
 
 
+class ScopedDocumentsTest(SupervisorCase):
+    """Not every posting is worth both documents.
+
+    The scope picked on the board - CV and cover letter, CV only, or cover
+    letter only - is a write-allowlist decision, not a hint in the prompt: the
+    document the run does not own is never authorised, never compiled and never
+    overwritten by last month's file sitting at the same path.
+    """
+
+    def targets(self, run_id):
+        record = run_registry.get(run_id)
+        return {kind: self.home / record["targets"][kind] for kind in ("cv", "cover")}
+
+    def test_a_cover_only_run_leaves_the_cv_untouched(self):
+        run_id = self.through_gate(scope="cover")
+        self.assertEqual(self.supervisor.approve(run_id, "awaiting_approval")[0], 200)
+        self.assertEqual(self.wait_phase(run_id, "done", "failed"), "done",
+                         run_registry.get(run_id).get("error"))
+        paths = self.targets(run_id)
+        self.assertTrue(paths["cover"].is_file())
+        self.assertFalse(paths["cv"].exists())
+        artefacts = run_registry.get(run_id)["artefacts"]
+        self.assertIn("cover_pdf", artefacts)
+        self.assertNotIn("cv_pdf", artefacts)
+
+    def test_a_pass_b_that_ignores_the_scope_is_stopped_by_the_allowlist(self):
+        """The prompt asks; the guard decides. A model that drafts the document
+        it was not given must fail the run rather than quietly produce it."""
+        os.environ["FAKE_SCOPE"] = "ignore"
+        self.addCleanup(os.environ.pop, "FAKE_SCOPE", None)
+        run_id = self.through_gate(scope="cover")
+        self.supervisor.approve(run_id, "awaiting_approval")
+        self.assertEqual(self.wait_phase(run_id, "failed", "done"), "failed")
+        self.assertFalse(self.targets(run_id)["cv"].exists())
+
+    def test_the_approval_card_can_narrow_the_scope(self):
+        """The fit evaluation is the first honest look at the posting, so the
+        decision to skip a tailored CV can still be made there."""
+        run_id = self.through_gate()
+        self.assertEqual(
+            self.supervisor.approve(run_id, "awaiting_approval", scope="cover")[0], 200)
+        self.assertEqual(run_registry.get(run_id)["scope"], "cover")
+        self.assertEqual(self.wait_phase(run_id, "done", "failed"), "done",
+                         run_registry.get(run_id).get("error"))
+        self.assertFalse(self.targets(run_id)["cv"].exists())
+
+    def test_an_unknown_scope_is_refused_before_any_model_call(self):
+        code, body = self.start(scope="letter")
+        self.assertEqual(code, 400)
+        self.assertIn("scope", body["error"])
+        code, _body = self.supervisor.approve(self.through_gate(), "awaiting_approval",
+                                              scope="letter")
+        self.assertEqual(code, 400)
+
+    def test_a_revision_cannot_invent_a_document_the_run_never_produced(self):
+        parent = self.through_gate(scope="cover")
+        self.assertEqual(self.supervisor.approve(parent, "awaiting_approval")[0], 200)
+        self.assertEqual(self.wait_phase(parent, "done", "failed"), "done")
+        code, body = self.start(kind="revise", parent=parent, scope="cv",
+                                note="tighten the summary")
+        self.assertEqual(code, 409, body)
+        self.assertIn("cover letter", body["error"])
+
+    def test_a_retry_keeps_the_scope_of_the_attempt_it_replaces(self):
+        run_id = self.through_gate(scope="cv")
+        os.environ["FAKE_MODE"] = "crash"
+        self.supervisor.approve(run_id, "awaiting_approval")
+        self.assertEqual(self.wait_phase(run_id, "failed", "done"), "failed")
+        os.environ["FAKE_MODE"] = "auto"
+        code, body = self.supervisor.retry(run_id)
+        self.assertEqual(code, 202, body)
+        self.assertEqual(run_registry.get(body["run_id"])["scope"], "cv")
+
+
 class DocumentsPipelineTest(SupervisorCase):
     def setUp(self):
         super().setUp()
@@ -253,7 +330,7 @@ class DocumentsPipelineTest(SupervisorCase):
                          run_registry.get(run_id).get("error"))
         return run_id
 
-    def test_pass_c_proves_it_read_both_pdfs(self):
+    def test_pass_c_proves_it_read_every_pdf(self):
         run_id = self._complete()
         verify = json.loads((run_registry.run_dir(run_id) / "verify.json").read_text())
         visual = next(check for check in verify["checks"]
@@ -445,12 +522,25 @@ class ApprovalTest(SupervisorCase):
     def test_approval_persists_the_selected_cv_base(self):
         run_id = self.through_gate()
         record = run_registry.get(run_id)
-        self.assertEqual(record["recommended_base_cv"], "ml")
+        # "ML Engineer" recommends the `ai` base: it covers ML/data-science
+        # postings, and the CV source defines no separate `ml` base.
+        self.assertEqual(record["recommended_base_cv"], "ai")
         code, _ = self.supervisor.approve(run_id, "awaiting_approval", "ai")
         self.assertEqual(code, 200)
         record = run_registry.get(run_id)
         self.assertEqual(record["base_cv"], "ai")
         self.assertEqual(record["resolved_base_cv"], "ai")
+
+    def test_a_stored_ml_base_reaches_pass_b_as_ai(self):
+        # `ml` was retired as a base but old records may still hold it, so the
+        # prompt must resolve it rather than name a base the CV source lacks.
+        run_id = self.through_gate()
+        self.supervisor.approve(run_id, "awaiting_approval", "ai")
+        record = run_registry.get(run_id)
+        record["resolved_base_cv"] = "ml"
+        prompt = self.supervisor._prompt_b(record, "nonce")
+        self.assertIn("Selected CV content base: `ai`", prompt)
+        self.assertNotIn("`ml`", prompt)
 
     def test_approving_twice_costs_one_pass_b(self):
         code, body = self.start()

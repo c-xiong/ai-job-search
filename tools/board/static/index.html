@@ -8,11 +8,15 @@
 <div class="app" id="app">
   <div class="banner" id="degraded" hidden></div>
   <header class="appbar">
-    <button class="back" id="restore" hidden aria-label="Restore workspace">← <span>Board</span></button>
-    <div class="brand" id="brand">JobFlow</div>
-    <div class="local" id="local"></div>
+    <button class="brand" data-nav="board" aria-label="JobFlow — back to the board">JobFlow</button>
+    <span class="barsep"></span>
+    <nav class="nav" aria-label="Primary">
+      <button class="navitem" data-nav="board">Board</button>
+      <button class="navitem" data-nav="companies">Companies</button>
+    </nav>
+    <div class="crumb" id="crumb" hidden></div>
     <div class="spacer"></div>
-    <button class="secondary" id="companies-open">Target companies</button>
+    <span class="barsep" id="right-sep" hidden></span>
     <button class="runpill" id="runpill" hidden></button>
     <button class="secondary theme-toggle" id="theme-toggle" title="Theme follows the system" aria-label="Theme follows the system"><span class="theme-glyph" id="theme-glyph" aria-hidden="true">◐</span><span id="theme-name">Auto</span></button>
   </header>
@@ -64,11 +68,6 @@
           <span><kbd>s</kbd> star <kbd>y</kbd> yes <kbd>m</kbd> maybe <kbd>n</kbd> no <kbd>g</kbd> gate <kbd>a</kbd> applied <kbd>u</kbd> new</span>
           <span><kbd>e</kbd> note</span><span><kbd>t</kbd> tailor</span><span><kbd>z</kbd> undo</span><span><kbd>enter</kbd> open link</span><span><kbd>/</kbd> search</span>
         </div>
-      </section>
-      <div class="splitter horizontal" id="centre-row-split" role="separator" tabindex="0" aria-label="Resize Board and Applications" aria-orientation="horizontal"></div>
-      <section class="panel applications-panel" id="applications-panel">
-        <div class="panelhead"><span class="label">Applications</span><span class="count" id="applicationcount"></span><span class="spacer"></span><button class="secondary expand" data-expand="applications">↗ Expand</button></div>
-        <div class="tablewrap"><table class="apptable"><thead><tr><th>Company · Role</th><th>Phase</th><th>Started</th><th></th></tr></thead><tbody id="applicationlist"></tbody></table></div>
       </section>
     </div>
     <div class="splitter vertical" id="right-split" role="separator" tabindex="0" aria-label="Resize Job" aria-orientation="vertical"></div>

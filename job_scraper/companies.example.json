@@ -1,5 +1,5 @@
 {
-  "_comment": "Template for the ats-search company registry. Copy to job_scraper/companies.json and put your own target companies in it - the real file is gitignored, because the list of companies you are watching (and your notes about them) is personal. Add a row with just name+domain+tier+status:unresolved, then run `bun run .agents/skills/ats-search/cli/src/cli.ts resolve --all-unresolved` to fill in vendor+token. Nothing is ever promoted to status:verified without identity evidence - a slug that answers 200 is not evidence. See .agents/skills/ats-search/SKILL.md. `defaults.vendor_access` records what each vendor's published policy says; a vendor the CLI knows was disallowed stays off unless you explicitly set enabled true.",
+  "_comment": "Template for the ats-search company registry. Copy to job_scraper/companies.json and put your own target companies in it - the real file is gitignored. Add the exact careers_url you found; the board UI saves it, detects vendor/token, and exposes monitoring_status plus will_be_searched. The persisted status remains the ATS identity status used by the CLI. Nothing is promoted to status:verified without identity evidence. See .agents/skills/ats-search/SKILL.md. `defaults.vendor_access` records vendor policy; a disabled vendor is never reported as searchable.",
   "defaults": {
     "allowed_countries": [
       "[YOUR_COUNTRY_CODE e.g. CH]",
@@ -66,6 +66,7 @@
         "[YOUR_TARGET_COMPANY_LEGAL_NAME]"
       ],
       "domain": "[YOUR_TARGET_COMPANY_DOMAIN e.g. example.com]",
+      "careers_url": "[EXACT_CAREERS_PAGE_URL]",
       "tier": 1,
       "vendor": null,
       "token": null,
@@ -79,7 +80,9 @@
         "jobs_seen": 0,
         "german_gated": 0,
         "eligible_jobs": 0,
-        "last_eligible_at": null
+        "last_eligible_at": null,
+        "last_jobs_seen": null,
+        "last_eligible_jobs": null
       },
       "flags": [],
       "note": "[YOUR_NOTE - what actually matters when you apply here: the real seniority ask, a contact, the interview process]"
@@ -87,6 +90,7 @@
     {
       "name": "[YOUR_BIG_EMPLOYER_WITHOUT_A_PUBLIC_BOARD]",
       "domain": "[YOUR_BIG_EMPLOYER_DOMAIN]",
+      "careers_url": "[EXACT_CAREERS_PAGE_URL]",
       "tier": 3,
       "vendor": null,
       "token": null,
@@ -100,7 +104,9 @@
         "jobs_seen": 0,
         "german_gated": 0,
         "eligible_jobs": 0,
-        "last_eligible_at": null
+        "last_eligible_at": null,
+        "last_jobs_seen": null,
+        "last_eligible_jobs": null
       },
       "flags": [
         "custom-board"

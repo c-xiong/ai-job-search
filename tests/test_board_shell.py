@@ -28,21 +28,43 @@ class ShellMarkupTest(unittest.TestCase):
         cls.css = (static / "app.css").read_text(encoding="utf-8")
         cls.js = (static / "app.js").read_text(encoding="utf-8")
 
-    def test_workspace_has_the_five_approved_panels(self):
-        for marker in (
-                'id="collect-panel"', 'id="runs"', 'id="board-panel"',
-                'id="applications-panel"', 'id="job-panel"'):
+    def test_workspace_has_the_four_approved_panels(self):
+        """Applications merged into Runs: one ledger, in the rail, not two."""
+        for marker in ('id="collect-panel"', 'id="runs"', 'id="board-panel"',
+                       'id="job-panel"'):
             self.assertIn(marker, self.html)
+        for gone in ('id="applications-panel"', 'id="applicationlist"',
+                     'id="applicationcount"', 'apptable'):
+            self.assertNotIn(gone, self.html)
 
-    def test_all_four_painted_gaps_are_accessible_splitters(self):
-        for marker in (
-                'id="left-split"', 'id="right-split"',
-                'id="left-row-split"', 'id="centre-row-split"'):
+    def test_all_three_painted_gaps_are_accessible_splitters(self):
+        for marker in ('id="left-split"', 'id="right-split"',
+                       'id="left-row-split"'):
             self.assertIn(marker, self.html)
-        self.assertEqual(self.html.count('role="separator"'), 4)
-        self.assertEqual(self.html.count('tabindex="0"'), 4)
+        self.assertNotIn('id="centre-row-split"', self.html)
+        self.assertEqual(self.html.count('role="separator"'), 3)
+        self.assertEqual(self.html.count('tabindex="0"'), 3)
         self.assertIn("aria-valuenow", self.js)
         self.assertIn("setPointerCapture", self.js)
+
+    def test_the_runs_ledger_navigates_only_by_link_and_has_no_expanded_form(self):
+        """A row is a card, not a hit target: only its links open a run, and a
+        run's link goes straight to its Tailor view - there is no ledger page
+        in between."""
+        self.assertNotIn("data-expand=\"runs\"", self.html)
+        self.assertNotIn("expanded-runs", self.css)
+        self.assertNotIn("expanded-runs", self.js)
+        self.assertNotIn("cursor:pointer", self.css.split(".runitem{")[1].split("}")[0])
+        runlist = self.js.split("function renderRuns(){")[1].split("async function pollRuns")[0]
+        # The link has to look like one: accent chip plus an arrow glyph.
+        self.assertIn(".runopen{", self.css)
+        for marker in ('data-run="${esc(r.id)}"', "Watch run", "Open run",
+                       'class="runarrow">↗', 'class="linkish runopen"',
+                       'data-preview="${esc(r.id)}"', 'data-revise="${esc(r.id)}"',
+                       '"attempt "+r.attempt', "drafted"):
+            self.assertIn(marker, runlist)
+        self.assertNotIn('<div class="runitem ${running?"live":""} ${ACTIVE_RUN===r.id?"selected":""}" data-run=', runlist)
+        self.assertNotIn("function renderApplications", self.js)
 
     def test_theme_is_a_named_three_state_button_outside_the_layout_blob(self):
         self.assertIn('id="theme-toggle"', self.html)
@@ -83,7 +105,7 @@ class ShellMarkupTest(unittest.TestCase):
                       '+"/preview"', '+"/revise"', '"/companies?f="'):
             self.assertIn(route, self.js)
         # ...and every one of them is reachable coming back the other way.
-        for head in ('head==="board"', 'head==="applications"', 'head==="job"',
+        for head in ('head==="board"', 'head==="job"',
                      'head==="companies"', 'head==="run"',
                      'second==="preview"', 'second==="revise"'):
             self.assertIn(head, self.js)
@@ -102,8 +124,68 @@ class ShellMarkupTest(unittest.TestCase):
                        "data-run-base", "data-base-start", "latestApplications",
                        "retry_of"):
             self.assertIn(marker, self.js if marker != "failure-card" else self.css)
+        # The job identity lives in the body, in sentence case - never in the
+        # app bar's uppercase slot, and never twice.
+        self.assertIn(".runtitle h1{", self.css)
+        self.assertIn("const runTitle=run=>", self.js)
+        for view in ('openView("tailor",[crumbRun(run)]',
+                     'openView("preview",[crumbRun(run),{label:"Preview"}]',
+                     'openView("revise",[crumbRun(run),{label:"Revise"}]'):
+            self.assertIn(view, self.js)
+        self.assertNotIn("Back to board", self.js)
         self.assertIn("overflow-wrap:anywhere", self.css)
         self.assertIn(".writing>div:not(.label)", self.css)
+
+    def test_the_app_bar_separates_navigation_from_state(self):
+        """Left of the hairline you move; right of it you read the machine.
+
+        The bar used to mix all three: a dead `JobFlow` wordmark, a back arrow
+        that only existed inside a parked view, a slot printing the raw view
+        kind, and `Target companies` filed next to the theme control as though a
+        destination and a setting were the same kind of thing.
+        """
+        # Identity is the way home.
+        self.assertIn('<button class="brand" data-nav="board"', self.html)
+        self.assertIn(".brand{", self.css)
+        self.assertIn("font-size:15px;font-weight:700", self.css)
+        # Exactly two tabs. Runs is not one of them (§0.3): it has no
+        # full-width form, so a run is reached from the rail and sits under
+        # Board, which stays lit while you are inside one.
+        self.assertIn('<nav class="nav" aria-label="Primary">', self.html)
+        for tab in ('<button class="navitem" data-nav="board">Board</button>',
+                    '<button class="navitem" data-nav="companies">Companies</button>'):
+            self.assertIn(tab, self.html)
+        self.assertNotIn('data-nav="runs"', self.html)
+        self.assertIn('VIEW==="companies"?"companies":"board"', self.js)
+        # Underlined, not filled - a top-level tab must not read as a chip.
+        self.assertIn(".navitem.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--selbar)}", self.css)
+        self.assertIn('node.setAttribute("aria-current","page")', self.js)
+        # The modal back arrow and the raw-view-kind slot are both gone; one
+        # nav handler now serves the wordmark, the tabs and the Board crumb.
+        for gone in ('id="restore"', 'class="back"', 'id="local"', 'id="companies-open"'):
+            self.assertNotIn(gone, self.html)
+        self.assertIn('const nav=event.target.closest("[data-nav]");', self.js)
+
+    def test_the_crumb_reports_location_and_only_links_upwards(self):
+        """Every segment but the last is a link, and none of them is a company."""
+        self.assertIn('<div class="crumb" id="crumb" hidden></div>', self.html)
+        self.assertIn("function renderCrumb(", self.js)
+        self.assertIn("const last=index===parts.length-1", self.js)
+        self.assertIn('`<span class="crumbseg here"', self.js)
+        # The trail starts below the lit tab: a leading "Board" segment would
+        # be the same word twice in a row, 40px apart.
+        self.assertNotIn("CRUMB_BOARD", self.js)
+        # The run segment goes to the run's own Tailor view, reusing the
+        # existing data-run handler - there is no company page behind it.
+        self.assertIn('const crumbRun=run=>({label:run.company,sub:run.role,run:run.id});', self.js)
+        self.assertIn('seg.run?`data-run="${esc(seg.run)}"`', self.js)
+        # Position in the reader queue is a count, not another layer.
+        self.assertIn('count:`${sel+1} of ${rows.length}`', self.js)
+        self.assertIn('`<span class="count">${esc(seg.count)}</span>`', self.js)
+        # A long role truncates instead of pushing the run pill off the bar.
+        self.assertIn("text-overflow:ellipsis", self.css.split(".crumbsub{")[1].split("}")[0])
+        # The right-hand hairline appears only when there is state to fence off.
+        self.assertIn('el("right-sep").hidden=!active;', self.js)
 
     def test_job_reader_and_compiled_pdf_preview_are_real_views(self):
         for marker in ("reader-shell", "reader-queue", "reader-decide",
@@ -113,26 +195,42 @@ class ShellMarkupTest(unittest.TestCase):
                        "data-preview-filter", "data-recompile",
                        "/api/pdf/", "Rendered from the compiled PDFs"):
             self.assertIn(marker, self.js)
-        self.assertIn('iframe title="Compiled CV"', self.js)
-        self.assertIn('iframe title="Compiled cover letter"', self.js)
+        # The frames are built per document kind now, so the titles are in the
+        # branch rather than in two literal tags.
+        self.assertIn('"Compiled CV"', self.js)
+        self.assertIn('"Compiled cover letter"', self.js)
+        self.assertIn('class="pdf-frame ${kind}"', self.js)
+
+    def test_a_run_can_be_asked_for_one_document_instead_of_both(self):
+        """Some postings are worth a letter and not a fresh CV, and the choice
+        has to survive the poll that rebuilds the panel it lives in."""
+        for marker in ("data-scope-start", "data-run-scope", "scopeOptions",
+                       "TAILOR_LABEL", "DRAFT_LABEL", "docKinds",
+                       "Cover letter only", "const START={base:", "const base_cv=START.base,scope=START.scope"):
+            self.assertIn(marker, self.js)
+        # The approval card sends the scope it is showing, not a default.
+        self.assertIn('scope:document.querySelector("[data-run-scope]")?.value||"both"',
+                      self.js)
 
     def test_revise_and_companies_artboards_are_on_the_runtime_surface(self):
-        self.assertIn('id="companies-open"', self.html)
+        self.assertIn('data-nav="companies"', self.html)
         for marker in ("revise-shell", "grid-template-columns:268px", "428px",
-                       "companies-shell", "396px", "company-table"):
+                       "companies-shell", "360px", "company-table"):
             self.assertIn(marker, self.css)
-        # The companies view speaks plain language now: the add button is
-        # "Add company" rather than "Add & resolve", and the request-budget
-        # hint was replaced by a sentence about what the system does. Resolving
-        # everything at once is a first-class button instead of a per-row
-        # action, so `resolve-all` is what pins it.
+        # Target companies is a focused careers-page-to-ATS workflow. Internal
+        # registry metadata is deliberately absent from the UI.
         for marker in ("renderRevise", "/api/prefs", "data-restore-version",
                        "--fork-session", "renderCompanies", "/api/companies",
-                       "Add company", "resolve-all", "Automatically check all",
-                       "data-company-confirm"):
+                       "Save company", "company-careers", "countries", "health-check",
+                       "Check monitoring health", "handleCompanyHealthClick", "company-batch-status",
+                       "data-company-confirm", "data-company-test-fetch", "company-settings",
+                       "monitoring_status", "will_be_searched"):
             if marker == "--fork-session":
                 continue
             self.assertIn(marker, self.js)
+        for removed in ("Technical details", "Suggested companies", "<dt>Priority</dt>",
+                        "<dt>Source</dt>", "<dt>Tags</dt>", "<dt>Notes</dt>"):
+            self.assertNotIn(removed, self.js)
 
     def test_source_column_custom_text_modal_and_no_price_chrome(self):
         self.assertIn('<th class="sourcecol">Source</th>', self.html)
@@ -417,6 +515,263 @@ class RouteBehaviourTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "probe.js"
             probe.write_text(ROUTE_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(app)],
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         (result.stdout + result.stderr).strip())
+
+
+HEALTH_CHECK_HARNESS = r"""
+const fs=require("fs");
+const src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf("async function checkCompanyHealth("),end=src.indexOf('document.addEventListener("click"',start);
+if(start<0||end<start)throw new Error("health-check functions were not found in app.js");
+
+(async()=>{
+  const checked={mtime:"new",companies:[],health_check:{tested:3,succeeded:2,failed:1}};
+  const ctx={COMPANIES:{mtime:"old",companies:[]},requests:[],toasts:[],rendered:[],
+    fetch:async(url,opts)=>{ctx.requests.push({url,opts});return {ok:true,json:async()=>checked}}};
+  const build=new Function("ctx",`
+    let COMPANIES=ctx.COMPANIES,T="token",COMPANY_HEALTH_RUNNING=false,COMPANY_HEALTH_RESULT=null;
+    const fetch=ctx.fetch,toast=(...args)=>ctx.toasts.push(args),renderCompanies=value=>ctx.rendered.push(value);
+    ${src.slice(start,end)}
+    return {handleCompanyHealthClick,state:()=>COMPANIES,result:()=>COMPANY_HEALTH_RESULT};
+  `);
+  const R=build(ctx),button={disabled:false,textContent:""};
+  const event={target:{closest:selector=>selector==="#company-health-check"?button:null}};
+  let bad=0;
+  const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
+  const pending=R.handleCompanyHealthClick(event);
+  t("click disables immediately",button.disabled===true);
+  t("click shows progress",button.textContent.includes("Testing"));
+  await pending;
+  t("one click makes one request",ctx.requests.length===1);
+  t("the health endpoint is used",ctx.requests[0].url==="/api/companies/health-check?t=token");
+  t("the request is POST",ctx.requests[0].opts.method==="POST");
+  t("the current registry version is sent",JSON.parse(ctx.requests[0].opts.body).mtime==="old");
+  t("the checked registry replaces local state",R.state()===checked);
+  t("the running and completed states rerender",ctx.rendered.length===2&&ctx.rendered.every(value=>value===false));
+  t("the final result stays visible",R.result().state==="error"&&R.result().message.includes("2 succeeded"));
+  t("a disabled button cannot start a second batch",R.handleCompanyHealthClick(event)===null&&ctx.requests.length===1);
+
+  const failed={COMPANIES:{mtime:"old",companies:[]},requests:[],toasts:[],rendered:[],
+    fetch:async(url,opts)=>{failed.requests.push({url,opts});return {ok:false,json:async()=>({error:"resolver timed out"})}}};
+  const F=build(failed),failedButton={disabled:false,textContent:""};
+  await F.handleCompanyHealthClick({target:{closest:()=>failedButton}});
+  t("an error remains visible",F.result().state==="error"&&F.result().message==="resolver timed out");
+  t("an error also rerenders the status",failed.rendered.length===2);
+  process.exit(bad?1:0);
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+
+
+class HealthCheckClickTest(unittest.TestCase):
+    """The visible health button must invoke exactly one real batch request."""
+
+    def test_click_posts_the_registry_version_and_applies_the_result(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed; resolve-all click is unchecked")
+        app = ROOT / "tools" / "board" / "static" / "app.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "health-check.js"
+            probe.write_text(HEALTH_CHECK_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(app)],
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         (result.stdout + result.stderr).strip())
+
+
+COMPANY_ROW_HARNESS = r"""
+const fs=require("fs");
+const src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf("function selectCompanyRow("),end=src.indexOf('document.addEventListener("click"',start);
+if(start<0||end<start)throw new Error("selectCompanyRow was not found in app.js");
+const ctx={calls:[]};
+const build=new Function("ctx",`
+  let COMPANY_SELECTED=null;
+  const renderCompanies=(...args)=>ctx.calls.push(args);
+  ${src.slice(start,end)}
+  return {selectCompanyRow,selected:()=>COMPANY_SELECTED};
+`);
+const R=build(ctx),table={scrollTop:847};
+const row={dataset:{companyRow:"Company Near The Bottom"},closest:selector=>selector===".tablewrap"?table:null};
+R.selectCompanyRow(row);
+let bad=0;
+const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
+t("the clicked company remains selected",R.selected()==="Company Near The Bottom");
+t("selection renders without reloading",ctx.calls.length===1&&ctx.calls[0][0]===false);
+t("the old scroll position is carried into the render",ctx.calls[0][1]===847);
+process.exit(bad?1:0);
+"""
+
+
+class CompanyRowClickTest(unittest.TestCase):
+    """Selecting a lower row must not throw the table back to its first row."""
+
+    def test_click_preserves_scroll_and_the_exact_selected_company(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed; company row clicks are unchecked")
+        app = ROOT / "tools" / "board" / "static" / "app.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "company-row.js"
+            probe.write_text(COMPANY_ROW_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(app)],
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         (result.stdout + result.stderr).strip())
+
+
+ATS_ONLY_HARNESS = r"""
+const fs=require("fs");
+const src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf("async function renderCompanies("),end=src.indexOf("function openView(",start);
+if(start<0||end<start)throw new Error("renderCompanies was not found in app.js");
+
+(async()=>{
+  const ctx={nodes:{},tablewrap:{scrollTop:0},companies:{mtime:"1",companies:[
+    {name:"ATS Co",route:"ats",status:"unresolved",countries:["CH"]},
+    {name:"Legacy Ready",route:"ats",status:"verified",vendor:"ashby",token:"legacy",countries:["CH","DE"]},
+    {name:"LinkedIn Co",route:"linkedin",status:"verified"},
+    {name:"Manual Co",route:"manual",status:"paused"},
+    {name:"Legacy ATS Co",status:"unresolved",countries:["DE"]}
+  ]}};
+  const build=new Function("ctx",`
+    const el=id=>ctx.nodes[id]||(ctx.nodes[id]={innerHTML:"",querySelector:()=>ctx.tablewrap});
+    const esc=value=>String(value??"");
+    const openView=()=>{},toast=()=>{};
+    let COMPANIES=ctx.companies,COMPANY_FILTER="all",COMPANY_SELECTED=null,T="token",COMPANY_HEALTH_RUNNING=false,COMPANY_HEALTH_RESULT=null,COMPANY_TEST_RESULTS={},COMPANY_SOURCE_RESULTS={};
+    const fetch=async()=>{throw new Error("render should use the loaded registry")};
+    ${src.slice(start,end)}
+    return {renderCompanies};
+  `);
+  await build(ctx).renderCompanies(false,612);
+  const html=ctx.nodes["tailor-view"].innerHTML;
+  let bad=0;
+  const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
+  t("ATS company is visible",html.includes("ATS Co"));
+  t("legacy rows default to ATS",html.includes("Legacy ATS Co"));
+  t("LinkedIn company is hidden",!html.includes("LinkedIn Co"));
+  t("manual company is hidden",!html.includes("Manual Co"));
+  t("the All count excludes other sources",html.includes("All<span class=\"n\">3</span>"));
+  t("legacy API fields do not become all No",html.includes("1 of 3 companies will be searched"));
+  t("a mixed frontend/backend version asks for restart",html.includes("Backend restart required"));
+  t("a company rerender restores the table position",ctx.tablewrap.scrollTop===612);
+  process.exit(bad?1:0);
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+
+
+class AtsOnlyCompaniesViewTest(unittest.TestCase):
+    """Target Companies is an ATS monitor, not a LinkedIn/manual registry view."""
+
+    def test_linkedin_and_manual_companies_are_not_rendered_or_counted(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed; ATS-only rendering is unchecked")
+        app = ROOT / "tools" / "board" / "static" / "app.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "ats-only.js"
+            probe.write_text(ATS_ONLY_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(app)],
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         (result.stdout + result.stderr).strip())
+
+
+# A poll may repaint the tailor view and nothing else.  openView marks *every*
+# parked view "tailor-mode" because they share one layout, so a guard that read
+# the class list matched the companies view as well: opening Target companies
+# lasted until the next three-second poll, which painted the last watched run
+# over it - or, when that run had been pruned from the snapshot, dropped the
+# user back on the workspace.  This harness runs the real openView against the
+# real guard.
+VIEW_HARNESS = r"""
+const fs=require("fs");
+const src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf("const crumbRun="),end=src.indexOf("// Routing.");
+if(start<0||end<start)throw new Error("the view block was not found in app.js");
+const guards=src.match(/if\([^;{}]*\)renderTailor\(RUNS\.find\(r=>r\.id===ACTIVE_RUN\)\);/g)||[];
+if(guards.length!==2)throw new Error("expected two live-refresh guards, found "+guards.length);
+if(guards[0]!==guards[1])throw new Error("the live-refresh guards disagree:\n"+guards.join("\n"));
+
+const build=new Function("ctx",`
+  const nodes={};
+  const el=id=>nodes[id]||(nodes[id]={id,hidden:false,textContent:"",dataset:{},
+    classList:{seen:new Set(),
+      add(...c){c.forEach(x=>this.seen.add(x))},
+      remove(...c){c.forEach(x=>this.seen.delete(x))},
+      contains(c){return this.seen.has(c)}}});
+  const esc=value=>String(value==null?"":value).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const makeTab=nav=>{const node={dataset:{nav},state:{}};
+    node.classList={toggle:(cls,on)=>{node.state[cls]=on}};
+    node.setAttribute=(key,value)=>{node.state[key]=value};
+    node.removeAttribute=key=>{delete node.state[key]};
+    return node};
+  ctx.tabs=[makeTab("board"),makeTab("companies")];
+  const document={querySelectorAll:()=>ctx.tabs};
+  const RUNS=ctx.RUNS;
+  let ACTIVE_RUN=null,VIEW=null;
+  const setRoute=route=>ctx.routes.push(route);
+  const renderTailor=run=>{ctx.painted.push(run?run.id:"workspace")};
+  ${src.slice(start,end)}
+  return {openView,restoreWorkspace,watch:id=>{ACTIVE_RUN=id},
+          crumb:()=>el("crumb").innerHTML,lit:()=>ctx.tabs.filter(t=>t.state.on).map(t=>t.dataset.nav),
+          run:crumbRun,
+          poll:()=>{${guards[0]}}};
+`);
+
+const ctx={RUNS:[{id:"r-1",company:"Example",role:"Engineer"}],routes:[],painted:[]};
+const R=build(ctx);
+let bad=0;
+const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
+
+const RUN=ctx.RUNS[0];
+
+R.watch("r-1");  // the user watched a run earlier in the session
+for(const kind of ["companies","reader","preview","revise"]){
+  ctx.painted=[];R.openView(kind,null,"/"+kind);R.poll();
+  t("the "+kind+" view survives a poll",ctx.painted.length===0);
+}
+ctx.painted=[];R.openView("tailor",[R.run(RUN)],"/run/r-1");R.poll();
+t("the tailor view still refreshes itself",ctx.painted[0]==="r-1");
+ctx.painted=[];R.restoreWorkspace();R.poll();
+t("the workspace is left alone",ctx.painted.length===0);
+
+// Exactly one tab is lit, and a run keeps you under Board.
+R.openView("companies",null,"/companies");
+t("Companies lights its own tab",String(R.lit())==="companies");
+R.openView("preview",[R.run(RUN),{label:"Preview"}],"/run/r-1/preview");
+t("a run stays under Board",String(R.lit())==="board");
+R.restoreWorkspace();
+t("home lights Board",String(R.lit())==="board");
+
+// A crumb segment links only while something sits below it.
+R.openView("tailor",[R.run(RUN)],"/run/r-1");
+t("the run is plain text when it is where you are",!R.crumb().includes('data-run='));
+t("the trail does not repeat the lit tab",!R.crumb().includes("Board"));
+R.openView("preview",[R.run(RUN),{label:"Preview"}],"/run/r-1/preview");
+t("the run becomes a link once Preview sits below it",R.crumb().includes('data-run="r-1"'));
+t("Preview is where you are",R.crumb().includes('class="crumbseg here" title="Preview"'));
+R.restoreWorkspace();
+t("the workspace carries no crumb",R.crumb()==="");
+
+process.exit(bad?1:0);
+"""
+
+
+class LiveRefreshTest(unittest.TestCase):
+    """Only the view that shows a run may be repainted by a run poll."""
+
+    def test_a_poll_repaints_the_tailor_view_and_nothing_else(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed; the refresh guard is unchecked")
+        app = ROOT / "tools" / "board" / "static" / "app.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "probe.js"
+            probe.write_text(VIEW_HARNESS, encoding="utf-8")
             result = subprocess.run([node, str(probe), str(app)],
                                     capture_output=True, text=True)
         self.assertEqual(result.returncode, 0,

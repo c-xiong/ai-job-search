@@ -5,7 +5,7 @@ description: >
   and preparing for interviews. Triggers on keywords like: job posting, job application, CV,
   cover letter, resume, interview prep, job fit, career, application, apply, ansøgning, stilling
 allowed-tools: Read, Glob, Grep, WebFetch, WebSearch, Bash, Edit, Write, AskUserQuestion
-framework_version: 1.3.3
+framework_version: 1.4.0
 ---
 
 # Job Application Assistant
@@ -27,16 +27,18 @@ When the user provides a job posting (URL or text), follow this workflow:
 - Ask the user if they want to proceed with an application
 
 ### Step 2: Tailor CV
-- Read `cv/my_cv.tex`, using the selected `sde`, `ai`, or `ml` content base as the starting point; existing tailored CVs are phrasing references only
+- Read `cv/my_cv.tex`, using the selected `sde` or `ai` content base as the starting point; existing tailored CVs are phrasing references only
 - Follow the guidelines in `05-cv-templates.md`
 - Create `cv/main_<company>_<role>.tex` with tailored content
 - Adjust: profile statement, skills section, experience bullet emphasis, section order
+- Apply `/apply`'s Skill Admission Gate: add exact, role-specific hard-skill keywords when documented or credibly adjacent and interview-ready; keep inferred terms at skills level only, never inventing project use. Ignore broad graduate-programme language as keyword targets
 
 ### Step 3: Write Cover Letter
 - Follow the writing style rules in `03-writing-style.md` (critical: no em-dashes, no cliches)
 - Follow the template structure in `06-cover-letter-templates.md`
+- Start from `cover_letters/my_cover.tex`: preserve unbracketed personal narrative by default and fill its role-fit/company slots; do not silently regenerate the whole letter
 - Create `cover_letters/cover_<company>_<role>.tex`
-- Ensure the letter connects specific experience to the role requirements
+- Ensure the letter connects the strongest specific experience to the role rather than answering every requirement; use no more than one honest adjacent-skill bridge and omit generic programme language
 
 ### Step 3b: Record the Application
 - Run this once both documents exist. A CV or cover letter drafted alone is not yet an application.

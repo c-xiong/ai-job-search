@@ -43,8 +43,26 @@ FINAL_STATUSES = {
     "no response", "offer declined",
 }
 VERIFY_STATES = {"pass", "flag", "fail", "skipped", "unverified"}
+# A run does not have to produce both documents: the board can ask for a CV
+# only, or a cover letter only, and `scope` on the record says which. Compile,
+# snapshot, verification, restore and the tracker row all iterate this instead
+# of the hardcoded pair, so a document the run never owned is never compiled,
+# never page-checked and never overwritten.
+DOC_LABELS = {"cv": "CV", "cover": "cover letter"}
+EXPECTED_PAGES = {"cv": 2, "cover": 1}
 LATEX_ENGINES = {"lualatex", "xelatex", "pdflatex"}
 LATEX_CLEAN = (".aux", ".log", ".out", ".fls", ".fdb_latexmk", ".synctex.gz")
+
+
+def doc_kinds(record):
+    """The document kinds one run owns, in display order."""
+    scope = (record or {}).get("scope") or "both"
+    return ("cv", "cover") if scope == "both" else (scope,)
+
+
+def doc_phrase(kinds):
+    """Name the documents in prose: CV, cover letter, or CV and cover letter."""
+    return " and ".join(DOC_LABELS[kind] for kind in kinds)
 
 
 class DocumentError(RuntimeError):
@@ -229,7 +247,9 @@ def build_verify(record, pdfs, compile_evidence, keywords):
     """Machine-produce verify.json. Visual checks await evidence from pass C."""
     checks = []
     extracted = {}
-    for kind, expected in (("cv", 2), ("cover", 1)):
+    kinds = doc_kinds(record)
+    for kind in kinds:
+        expected = EXPECTED_PAGES[kind]
         pdf = pdfs[kind]
         pages = pdf_pages(pdf)
         checks.append(_check(
@@ -272,7 +292,8 @@ def build_verify(record, pdfs, compile_evidence, keywords):
     for keyword in keywords:
         (covered if keyword.casefold() in combined else absent).append(keyword)
     checks.append(_check("visual_layout", "Visual layout was inspected", "unverified",
-                         "Pass C has not yet proved it read both PDFs"))
+                         "Pass C has not yet proved it read the compiled %s"
+                         % doc_phrase(kinds)))
     verify = {"schema": "jobflow.verify/1", "run_id": record["id"],
               "checks": checks,
               "keywords": {"covered": covered, "absent": absent, "source": "posting"}}
@@ -350,12 +371,13 @@ def apply_inspection(record, pdfs, inspect_payload, normal_success, stream_path,
         if check["id"] == "visual_layout":
             if not proven:
                 missing = problems or (["normal completion missing"] if not normal_success
-                                       else ["both exact PDF Read results not found"])
+                                       else ["exact PDF Read results not found"])
                 check.update(state="unverified",
                              detail="Inspection evidence missing: " + "; ".join(missing),
                              evidence={"read": sorted(evidence), "expected": sorted(wanted)})
             elif inspect_payload["verdict"] == "clean":
-                check.update(state="pass", detail="Pass C read both PDFs and found no issues",
+                check.update(state="pass",
+                             detail="Pass C read %d PDF(s) and found no issues" % len(wanted),
                              evidence={"inspect": inspect_payload, "read": sorted(evidence)})
             else:
                 check.update(state="fail" if inspect_payload["verdict"] == "blocked" else "flag",
@@ -367,7 +389,7 @@ def apply_inspection(record, pdfs, inspect_payload, normal_success, stream_path,
 
 
 def compile_record(record):
-    """Compile both targets, create machine verification and snapshot version."""
+    """Compile this run's targets, verify them and snapshot the version."""
     run_id = record["id"]
     request_path = run_registry.run_dir(run_id) / "verify_request.json"
     try:
@@ -379,7 +401,7 @@ def compile_record(record):
         raise DocumentError("verify_request.json has no valid keywords")
 
     pdfs, evidence = {}, {}
-    for kind in ("cv", "cover"):
+    for kind in doc_kinds(record):
         pdfs[kind], evidence[kind] = compile_one(kind, record["targets"][kind])
         activity.emit("latex", "%s compiled %s" % (run_id, kind),
                       cmd=" ".join(evidence[kind]["cmd"]), exit_code=0, run_id=run_id)
@@ -392,7 +414,7 @@ def snapshot_record(record, pdfs):
     target = run_registry.run_dir(record["id"])
     target.mkdir(parents=True, exist_ok=True)
     artefacts = {}
-    for kind in ("cv", "cover"):
+    for kind in doc_kinds(record):
         source = ROOT / record["targets"][kind]
         source_copy = target / ("%s_source%s" % (kind, source.suffix))
         pdf_copy = target / ("%s.pdf" % kind)
@@ -404,16 +426,18 @@ def snapshot_record(record, pdfs):
 
 
 def restore_record(version, current):
-    """Restore one immutable snapshot into the only live source pair, then compile.
+    """Restore one immutable snapshot onto the live sources, then compile.
 
-    Both sources are replaced as one document transaction. If compilation fails,
-    the previous bytes are put back before the error reaches the HTTP caller.
+    Every source the snapshot holds is replaced as one document transaction. If
+    compilation fails, the previous bytes are put back before the error reaches
+    the HTTP caller. A CV-only or cover-only version restores only its own
+    document and leaves the other one alone.
     """
     version_dir = run_registry.run_dir(version["id"]).resolve()
     if version.get("slug") != current.get("slug"):
         raise DocumentError("version belongs to a different application")
     sources, backups = {}, {}
-    for kind in ("cv", "cover"):
+    for kind in doc_kinds(version):
         saved = version_dir / ("%s_source%s" %
                                (kind, Path(current["targets"][kind]).suffix))
         try:
@@ -434,7 +458,15 @@ def restore_record(version, current):
             temp = live.with_name(live.name + ".restore-%d" % os.getpid())
             shutil.copyfile(saved, temp)
             os.replace(temp, live)
-        return compile_record(current)
+        # Compile the union: the documents the application already had, plus
+        # the one this snapshot just put back. Narrowing to the version's own
+        # scope would leave a live document uncompiled and its verification
+        # stale; narrowing to the current run's scope would make restoring a
+        # document it never had a silent no-op.
+        kinds = [kind for kind in ("cv", "cover")
+                 if kind in set(doc_kinds(version)) | set(doc_kinds(current))]
+        scope = "both" if len(kinds) == 2 else kinds[0]
+        return compile_record(dict(current, scope=scope))
     except Exception:
         for kind, (_saved, live) in sources.items():
             old = backups[kind]
@@ -491,9 +523,13 @@ def merge_tracker(record):
         "channel": fit.get("channel") or "", "status": "drafted",
         "contact_person": fit.get("contact_person") or "",
         "fit_rating": fit.get("overall", ""), "notes": "",
-        "cv_file": record["targets"]["cv"], "cover_letter_file": record["targets"]["cover"],
+        "cv_file": "", "cover_letter_file": "",
         "source": record["job_url"], "deadline": fit.get("deadline") or "",
     }
+    kinds = doc_kinds(record)
+    columns = {"cv": "cv_file", "cover": "cover_letter_file"}
+    for kind in kinds:
+        values[columns[kind]] = record["targets"][kind]
     with _tracker_lock():
         rows = []
         header = list(CANONICAL_HEADER)
@@ -521,7 +557,7 @@ def merge_tracker(record):
         if open_matches:
             row = rows[open_matches[-1]]
             old_status = row[indexes["status"]]
-            for key in ("cv_file", "cover_letter_file", "fit_rating", "source"):
+            for key in [columns[kind] for kind in kinds] + ["fit_rating", "source"]:
                 row[indexes[key]] = str(values[key])
             if values["deadline"]:
                 row[indexes["deadline"]] = values["deadline"]

@@ -86,7 +86,7 @@ Last Updated on \today
 
 \newcommand{\companyaddress}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\}\mbox{}\\\mbox{}\\ \normalfont}
 
-\newcommand{\currentdate}[1]{\raggedleft\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\} \normalfont}
+\newcommand{\currentdate}[1]{{\raggedleft\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont #1\par}}
 
 % Letter content command
 \newcommand{\lettercontent}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\}\mbox{}\\ \normalfont}
@@ -94,3 +94,24 @@ Last Updated on \today
 \newcommand{\closing}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\}\mbox{}\\\mbox{}\\ \normalfont}
 
 \newcommand{\signature}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\} \normalfont}
+
+% Formal Swiss/German business-letter blocks
+\newcommand{\senderblock}[2]{%
+\begin{flushright}
+{\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Bol}\fontsize{16pt}{19pt}\selectfont #1\par}
+\vspace{2pt}
+{\color{headings}\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{9.5pt}{12pt}\selectfont #2\par}
+\end{flushright}
+\vspace{5mm}
+}
+
+\newcommand{\recipientblock}[1]{%
+{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{10.5pt}{13pt}\selectfont #1\par}
+\vspace{3mm}
+}
+
+\newcommand{\subjectline}[1]{%
+\vspace{2mm}
+{\raggedright\noindent\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Bol}\fontsize{11pt}{13pt}\selectfont #1\par}
+\vspace{4mm}
+}

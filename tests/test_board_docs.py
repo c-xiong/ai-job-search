@@ -141,6 +141,33 @@ class DocsTest(unittest.TestCase):
             stream_offset=stream.stat().st_size)
         self.assertFalse(proven, "a later inspection may not reuse an earlier pass's Reads")
 
+    def test_a_cover_only_run_is_verified_as_one_document(self):
+        """A CV that was never drafted has no page count to check and no text
+        layer to extract - checking it anyway would invent a failing document."""
+        cover = self.root / "cover.pdf"
+        cover.write_bytes(PDF_TWO.replace(b"/Count 2", b"/Count 1").replace(
+            b"3 0 obj <</Type /Page>> endobj\n", b""))
+        evidence = {"cover": {"toolchain": "latex", "cmd": ["y"], "exit": 0}}
+        record = dict(self.record, scope="cover")
+        with mock.patch.object(docs, "extract_text",
+                               return_value=("Name\nemail@example.test\nDear",
+                                             {"exit": 0})), \
+             mock.patch.object(docs, "_contact_literals",
+                               return_value=["email@example.test"]):
+            result = docs.build_verify(record, {"cover": cover}, evidence, ["LLM"])
+        states = {check["id"]: check["state"] for check in result["checks"]}
+        self.assertEqual(states["cover_page_count"], "pass")
+        self.assertNotIn("cv_page_count", states)
+        self.assertEqual(docs.doc_kinds(record), ("cover",))
+
+    def test_a_cover_only_redraft_keeps_the_cv_the_tracker_already_has(self):
+        self.assertEqual(docs.merge_tracker(self.record), "appended")
+        self.assertEqual(docs.merge_tracker(dict(self.record, scope="cover")), "updated")
+        with open(docs.TRACKER, newline="") as handle:
+            row = list(csv.DictReader(handle))[0]
+        self.assertEqual(row["cv_file"], "cv/main_acme.tex")
+        self.assertEqual(row["cover_letter_file"], "cover_letters/cover_acme.tex")
+
     def test_tracker_append_update_and_final_append(self):
         self.assertEqual(docs.merge_tracker(self.record), "appended")
         with open(docs.TRACKER, newline="") as handle:

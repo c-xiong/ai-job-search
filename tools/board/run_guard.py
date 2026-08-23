@@ -305,21 +305,25 @@ def validate_fit(payload):
     return problems
 
 
-def validate_drafts(payload, targets):
-    """[] when `drafts.json` names exactly this run's two allowlisted targets.
+def validate_drafts(payload, targets, kinds=("cv", "cover")):
+    """[] when `drafts.json` names exactly this run's allowlisted targets.
 
     The supervisor compiles what this file points at, so "some path the model
-    wrote" is not good enough: it has to be the pair the guard authorised, or
-    the run failed and is not allowed to look like it succeeded.
+    wrote" is not good enough: it has to be the paths the guard authorised, or
+    the run failed and is not allowed to look like it succeeded. `kinds` is the
+    run's scope - a CV-only run is judged on `cv_source` alone, and whatever it
+    says about the document it was not allowed to write is ignored.
     """
     problems = []
     if not isinstance(payload, dict):
         return ["drafts.json is not a JSON object"]
     if payload.get("schema") != "jobflow.drafts/1":
         problems.append("schema is %r, expected 'jobflow.drafts/1'" % (payload.get("schema"),))
-    for key, expected in (("cv_source", targets["cv"]), ("cover_source", targets["cover"])):
-        actual = payload.get(key)
+    keys = {"cv": "cv_source", "cover": "cover_source"}
+    for kind in kinds:
+        key = keys[kind]
+        expected, actual = targets[kind], payload.get(key)
         if actual != expected:
-            problems.append("%s is %r, expected %r - the run may only write the two paths "
+            problems.append("%s is %r, expected %r - the run may only write the paths "
                             "it was given" % (key, actual, expected))
     return problems

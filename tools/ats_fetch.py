@@ -480,7 +480,9 @@ def bump_german_gated(counts, log):
             if not company:
                 continue
             stats = company.setdefault(
-                "stats", {"jobs_seen": 0, "german_gated": 0, "eligible_jobs": 0, "last_eligible_at": None})
+                "stats", {"jobs_seen": 0, "german_gated": 0, "eligible_jobs": 0,
+                          "last_eligible_at": None, "last_jobs_seen": None,
+                          "last_eligible_jobs": None})
             stats["german_gated"] = stats.get("german_gated", 0) + count
             touched += 1
         if touched:

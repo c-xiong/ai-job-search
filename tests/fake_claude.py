@@ -21,7 +21,9 @@ rather than quietly reusing an old one.
 
 `FAKE_MODE=auto` picks pass A or pass B from the prompt. The others are failure
 injections: `noguard`, `badfit`, `nofit`, `noposting`, `nowrite`, `hang`,
-`crash`, `rate_limit`. `FAKE_SKIP=drafts|verify` omits one pass-B contract file.
+`crash`, `rate_limit`. `FAKE_SKIP=drafts|verify` omits one pass-B contract file, and
+`FAKE_SCOPE=ignore` makes pass B write both documents whatever scope it was
+given.
 
 The real CLI's behaviour is pinned separately by `tests/test_live_cli_contract.py`,
 which runs against the installed binary and is skipped unless asked for.
@@ -53,7 +55,7 @@ def mode(argv):
     if chosen != "auto":
         return chosen
     prompt = prompt_of(argv)
-    if "Inspect the two compiled PDFs" in prompt:
+    if "Inspect the compiled PDF" in prompt:
         return "inspect"
     if "Apply only the following verified visual-layout repairs" in prompt:
         return "repair"
@@ -144,7 +146,7 @@ def main():
                         "probe")
 
     if chosen == "inspect":
-        paths = re.findall(r"- (?:CV|Cover): `([^`]+)`", prompt)
+        paths = re.findall(r"- (?:CV|Cover(?: letter)?): `([^`]+)`", prompt)
         if os.environ.get("FAKE_INSPECT") == "noread":
             paths = []
         for index, path in enumerate(paths):
@@ -168,7 +170,7 @@ def main():
         return 0
 
     if chosen == "repair":
-        for path in (os.environ["JOBFLOW_CV_TARGET"], os.environ["JOBFLOW_COVER_TARGET"]):
+        for path in re.findall(r"^(?:CV|Cover letter): `([^`]+)`", prompt, re.M):
             write_through_guard(path, "%% repaired at %s\n" % time.time())
         emit({"type": "result", "subtype": "success", "is_error": False,
               "result": "repaired", "total_cost_usd": 0.08, "session_id": session})
@@ -184,6 +186,11 @@ def main():
             selected = (cv,)
         elif "Scope: cover." in prompt:
             selected = (cover,)
+        # A model that ignores the stated scope and writes the other document
+        # anyway: the run must be stopped by the write allowlist, not by the
+        # model's good manners.
+        if os.environ.get("FAKE_SCOPE") == "ignore":
+            selected = (cv, cover)
         for path in selected:
             if not write_through_guard(path, "%% draft for %s at %s\n" % (path, time.time())):
                 emit({"type": "result", "subtype": "success", "is_error": True,

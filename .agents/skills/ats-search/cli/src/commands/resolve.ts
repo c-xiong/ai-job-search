@@ -103,8 +103,11 @@ export function identityMatches(company: Company, identity: string | null): bool
 
 async function careersHtml(company: Company, get: Transport): Promise<{ html: string; pages: string[]; requests: number }> {
   const domain = (company.domain ?? "").replace(/^https?:\/\//, "").replace(/\/+$/, "")
-  if (!domain) return { html: "", pages: [], requests: 0 }
-  const urls = [`https://${domain}/careers`, `https://${domain}/jobs`, `https://${domain}`]
+  const urls = [company.careers_url, domain && `https://${domain}/careers`,
+    domain && `https://${domain}/jobs`, domain && `https://${domain}`]
+    .filter((url): url is string => Boolean(url))
+    .filter((url, index, all) => all.indexOf(url) === index)
+  if (!urls.length) return { html: "", pages: [], requests: 0 }
   let html = ""
   const pages: string[] = []
   let requests = 0
@@ -138,8 +141,8 @@ async function resolveOne(
     requests: 0,
     detail: "",
   }
-  if (!company.domain) {
-    report.detail = "no `domain` in the registry - resolve cannot look at a careers page without one"
+  if (!company.domain && !company.careers_url) {
+    report.detail = "no `careers_url` or `domain` in the registry - resolve has no careers page to inspect"
     return report
   }
 

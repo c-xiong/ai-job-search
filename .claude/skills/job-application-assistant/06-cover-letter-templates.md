@@ -1,18 +1,40 @@
 ---
-framework_version: 1.0.1
+framework_version: 1.3.0
 ---
 
 # Cover Letter Templates and Tailoring Guide
 
-The personal fill-in skeleton is `cover_letters/my_cover.tex`. Keep layout and
-reusable structure there, with explicit bracketed slots for the opening,
-evidence, company connection and closing. It is one shared skeleton for SDE,
-AI and ML applications; role-specific evidence comes from the selected CV base
-and the posting, not from copied cover-letter templates.
+The personalized content base is `cover_letters/my_cover.tex`. It contains the
+candidate's stable personal narrative plus explicit square-bracketed tailoring
+slots. When generating an application, preserve the unbracketed prose's voice,
+facts and argument by default; fill the role-fit and company-motivation slots
+from the posting and independently verified research. Reorder or trim fixed
+evidence only when the role's relevance or the one-page limit requires it, and
+report any material rewrite. It is one shared base for SDE, AI and ML
+applications; existing job-specific letters are phrasing references only.
+
+### Base-content contract
+
+- **Stable by default:** personal background, core evidence, strengths, working stack, and desired direction.
+- **Tailor every time:** salutation, role, company, `[ROLE FIT]`, and `[WHY THIS COMPANY]`.
+- **Selective edits allowed:** reorder the three evidence bullets, remove the least relevant one, or tighten wording to preserve one page.
+- **Do not silently regenerate:** changing the candidate's core narrative, goals, or emphasis requires a stated reason in the final tailoring report.
 
 ## Template: Custom cover.cls (XeLaTeX)
 
 Cover letters use a custom LaTeX document class (`cover.cls`) with Lato/Raleway fonts.
+
+### Swiss/German formal-letter layout
+
+For a PDF attachment, use an **A4 formal business-letter frame** rather than a centred personal-brand header:
+
+1. Candidate name and contact details at the top right, including email, phone, Website, LinkedIn and GitHub where available
+2. Employer/contact postal block on the left
+3. Place and current date on the right
+4. Bold application subject naming the exact role and any reference number, without the label `Subject`
+5. Personal salutation, body, closing, signature space and typed full name, all left aligned
+
+This is the default for Swiss and German applications. If the application is pasted into a portal text field rather than uploaded as a PDF, omit the letter frame and provide body text only. Never invent a street address for either party. The reusable base may retain bracketed address slots; a final application must fill them from a verified source or remove unresolved optional lines, never ship visible placeholders.
 
 **Output file:** `cover_letters/cover_<company>_<role>.tex`
 **Compile with:** XeLaTeX (cover.cls requires fontspec)
@@ -68,7 +90,7 @@ The font wrapper is mandatory — if you just move `\begin{itemize}` outside `\l
 % Cover Letter - [Company], [Role]
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\documentclass[]{cover}
+\documentclass[a4paper]{cover}
 \usepackage{fancyhdr}
 
 \pagestyle{fancy}
@@ -79,17 +101,22 @@ The font wrapper is mandatory — if you just move `\begin{itemize}` outside `\l
 \renewcommand{\headrulewidth}{0pt}
 \begin{document}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%     TITLE NAME
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\namesection{}{\Huge{[YOUR_NAME]}}{  \href{mailto:[YOUR_EMAIL]}{[YOUR_EMAIL]} | [YOUR_PHONE] |  \urlstyle{same}\href{[YOUR_LINKEDIN_URL]}{LinkedIn}
+\senderblock{[YOUR_NAME]}{
+  [CITY, COUNTRY]\\
+  \href{mailto:[YOUR_EMAIL]}{[YOUR_EMAIL]} \enspace|\enspace [YOUR_PHONE]\\
+  \href{[YOUR_WEBSITE_URL]}{Website} \enspace|\enspace
+  \href{[YOUR_LINKEDIN_URL]}{LinkedIn} \enspace|\enspace
+  \href{[YOUR_GITHUB_URL]}{GitHub}
 }
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%     MAIN COVER LETTER CONTENT
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\recipientblock{[COMPANY]\\
+{[CONTACT PERSON OR HIRING TEAM]}\\
+{[DEPARTMENT, IF KNOWN]}\\
+{[STREET AND NUMBER]}\\
+{[POSTCODE, CITY, COUNTRY]}}
 
-\currentdate{\today}
+\currentdate{[CITY], \today}
+\subjectline{Application for [ROLE] [REFERENCE NUMBER, IF APPLICABLE]}
 \lettercontent{Dear [Name/Team],}
 
 \lettercontent{[Opening paragraph - role, connection to background, 2-3 sentences]}
@@ -109,13 +136,11 @@ The font wrapper is mandatory — if you just move `\begin{itemize}` outside `\l
 
 \lettercontent{I look forward to hearing from you.}
 
-\begin{flushright}
 % No trailing \\ inside \closing{} - cover.cls appends its own \\, and a
 % doubled break triggers "! LaTeX Error: There's no line here to end."
 \closing{Kind regards,}
 
 \signature{[YOUR_NAME]}
-\end{flushright}
 \end{document}
 ```
 
@@ -130,6 +155,16 @@ The font wrapper is mandatory — if you just move `\begin{itemize}` outside `\l
 | `\signature{name}` | Printed name below signature |
 
 ## Tailoring Guidelines
+
+### Requirement selectivity
+
+The cover letter is a short argument, not a requirement checklist or ATS keyword dump.
+
+- Lead with the two or three strongest documented matches and show what the candidate can do for this role.
+- Ignore generic graduate-programme language as copy targets. Demonstrate a useful trait through evidence instead of repeating words such as curious, analytical, collaborative, adaptable, or eager to learn.
+- A specific hard skill inferred from close adjacent evidence may be mentioned at most once and only at the honest level of `familiarity` or `working knowledge`. Never imply that it was used in a named project or production system unless a factual source says so.
+- Do not confess every missing nice-to-have. Bridge an unsupported gap only when it is decisive to the role and the adjacent experience makes a credible case.
+- Eligibility facts such as language, certification, clearance, degree status, availability, and work authorization are never inferred.
 
 ### Salutation
 - If you know the hiring manager's name: "Dear [First Last],"
@@ -163,9 +198,15 @@ The font wrapper is mandatory — if you just move `\begin{itemize}` outside `\l
 - Adjust closing to local convention (e.g. "Med venlig hilsen," for Danish)
 
 ## Checklist Before Finalizing
+- [ ] PDF uses A4 and the formal Swiss/German letter frame
+- [ ] Candidate contact block is top right and includes working email, phone, Website, LinkedIn and GitHub links
+- [ ] Verified employer/contact address is left aligned; unresolved optional lines are removed, with no visible placeholders
+- [ ] Place/date is right aligned; the exact role and any reference number appear in a bold, left-aligned subject line
 - [ ] No em-dashes (use commas or periods instead)
 - [ ] No cliches or empty filler
 - [ ] Every claim backed by specific example
+- [ ] No generic programme-language keyword stuffing or requirement-by-requirement narration
+- [ ] Any adjacent inferred skill is levelled honestly and does not imply invented usage
 - [ ] Forward-looking framing: focuses on tasks you'll solve, not just past duties
 - [ ] Motivation section references this specific company's mission/values
 - [ ] Company name and role are correct throughout

@@ -49,6 +49,20 @@ describe("evidence-first resolution", () => {
     expect(typeof company.cadence_days).toBe("number")
   })
 
+  test("the exact careers URL is tried before guessed domain paths", async () => {
+    const session = newSession()
+    const registry = JSON.parse(readFileSync(session.registryPath, "utf-8"))
+    const company = registry.companies.find((c: { name: string }) => c.name === "ResolveAshby")
+    company.careers_url = "https://resolve-ashby.test/careers"
+    company.domain = "wrong-domain.test"
+    require("fs").writeFileSync(session.registryPath, JSON.stringify(registry), "utf-8")
+
+    const { payload, res } = await resolve(["ResolveAshby"], [], session)
+    expect(res.requests[0]).toBe("https://resolve-ashby.test/careers")
+    expect(payload.results[0].status).toBe("verified")
+    expect(res.requests.some((url) => url.includes("wrong-domain.test"))).toBe(false)
+  })
+
   test("a board that says it belongs to someone else is ambiguous, never verified", async () => {
     const { payload } = await resolve(["ResolveConflict"])
     const report = payload.results[0]

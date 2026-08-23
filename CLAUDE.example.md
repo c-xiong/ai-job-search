@@ -113,13 +113,14 @@ After creating or updating a CV or cover letter, re-read the generated file and 
 
 ### Targeting
 - [ ] Profile statement / opening paragraph is tailored to the specific role (not generic)
-- [ ] Skills and experience bullets are reframed to match the job requirements
-- [ ] Key job requirements are addressed (with gaps acknowledged where relevant)
+- [ ] Skills and experience bullets are reframed to match the job requirements; exact specific skills are added only when documented or credibly adjacent and interview-ready
+- [ ] Broad graduate-programme language is not mechanically copied; decisive gaps are bridged only where useful rather than every gap being narrated
 - [ ] Nice-to-have requirements are highlighted where there is a match
 
 ### Consistency
 - [ ] CV follows the standard 2-page moderncv/banking format
 - [ ] Cover letter uses cover.cls template and established structure
+- [ ] Swiss/German PDF cover letter is A4 with candidate contacts/links top right, verified employer block left, place/date right, bold role subject, and no unresolved placeholders
 - [ ] Tone is consistent across CV and cover letter
 - [ ] No contradictions between CV and cover letter content
 
@@ -144,4 +145,4 @@ ATS parsers read the PDF's embedded text layer, not the rendered page. Extract i
 - [ ] CV text layer extracts cleanly - no `(cid:*)` markers, `�` replacement characters, or text visible in the PDF but absent from the extraction
 - [ ] Email and phone appear as **literal text** in the extraction (icon-glyph noise like `MOBILE-ALT`/`Envelope` is harmless, but a contact detail carried only by an icon or hyperlink is invisible to ATS)
 - [ ] Reading order of the extracted text matches the visual order (single-column stock template is safe; multi-column custom templates are where this breaks)
-- [ ] Posting keywords covered or honestly absent - synonym-only matches tightened to the posting's exact term where truthfully applicable, keywords the profile genuinely supports added to experience bullets, genuine gaps left visible and **never stuffed**
+- [ ] Specific posting keywords are covered or intentionally absent: documented terms sit beside real evidence, credible-adjacent/interview-ready terms appear only at skills level and are flagged for interview preparation, generic programme language is ignored, and unsupported gaps are never stuffed
