@@ -6,7 +6,7 @@
 % test for cover.cls: it must always compile with xelatex to exactly 1 page.
 % It demonstrates the correct itemize pattern: the list sits OUTSIDE
 % \lettercontent{} (whose trailing \\ errors on \end{itemize}) and is
-% wrapped in Raleway-Medium so the bullet font matches the body.
+% wrapped in \letterbodyfont so XCharter, size and leading match the body.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \documentclass[a4paper]{cover}
@@ -26,7 +26,7 @@
 \senderblock{[YOUR NAME]}{
   [CITY, COUNTRY]\\
   \href{mailto:your.email@example.com}{your.email@example.com} \enspace|\enspace [+XX XXXXXXXXXX]\\
-  \href{https://example.com}{Website} \enspace|\enspace
+  \href{https://example.com}{yourwebsite.com} \enspace|\enspace
   \href{https://www.linkedin.com/in/yourprofile}{LinkedIn} \enspace|\enspace
   \href{https://github.com/yourprofile}{GitHub}
 }
@@ -46,7 +46,7 @@
 
 \lettercontent{[Body paragraph: your most relevant experience, framed toward the tasks in the posting. Follow with 3--5 concrete bullets:]}
 
-{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont
+{\raggedright\letterbodyfont
 \begin{itemize}
     \item \textbf{[Achievement 1]:} [concrete result with a number where possible]
     \item \textbf{[Achievement 2]:} [skill or project mapped to a posting requirement]

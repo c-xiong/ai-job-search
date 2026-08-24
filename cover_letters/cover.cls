@@ -9,12 +9,13 @@
 \LoadClass{article}
 
 % Package Imports
-\usepackage[hmargin=2.3cm, vmargin=2.3cm]{geometry}
+\usepackage[hmargin=2.6cm, vmargin=2.3cm]{geometry}
 \usepackage[hidelinks]{hyperref}
 \usepackage[usenames,dvipsnames]{xcolor}
 \usepackage{titlesec}
 \usepackage[absolute]{textpos}
 \usepackage{fontspec,xltxtra,xunicode}
+\usepackage[lining]{XCharter}
 
 % Publications
 \usepackage{cite}
@@ -25,16 +26,24 @@
 \definecolor{primary}{HTML}{2b2b2b}
 \definecolor{headings}{HTML}{6A6A6A}
 \definecolor{subheadings}{HTML}{333333}
+\definecolor{accentcolor}{RGB}{26,66,138}
 
-% Set main fonts
-\setmainfont[Color=primary, Path = OpenFonts/fonts/lato/,BoldItalicFont=Lato-RegIta,BoldFont=Lato-Reg,ItalicFont=Lato-LigIta]{Lato-Lig}
-\setsansfont[Scale=MatchLowercase,Mapping=tex-text, Path = OpenFonts/fonts/raleway/]{Raleway-ExtraLight}
+% XCharter is the body family, matching the CV. Sans faces are reserved for
+% the sender block, metadata and subject hierarchy.
+\setsansfont[Scale=MatchLowercase,Mapping=tex-text,Path=OpenFonts/fonts/raleway/,Extension=.otf]{Raleway-ExtraLight}
+\newfontfamily\latoheavyfont[Path=OpenFonts/fonts/lato/,Extension=.ttf]{Lato-Hai}
+\newfontfamily\latolightfont[Path=OpenFonts/fonts/lato/,Extension=.ttf]{Lato-Lig}
+\newfontfamily\latoboldfont[Path=OpenFonts/fonts/lato/,Extension=.ttf]{Lato-Bol}
+\newfontfamily\latoregularfont[Path=OpenFonts/fonts/lato/,Extension=.ttf]{Lato-Reg}
+\newfontfamily\ralewaymediumfont[Path=OpenFonts/fonts/raleway/,Extension=.otf]{Raleway-Medium}
+\newfontfamily\ralewayextralightfont[Path=OpenFonts/fonts/raleway/,Extension=.otf]{Raleway-ExtraLight}
+\newcommand{\letterbodyfont}{\rmfamily\fontsize{10.7pt}{14pt}\selectfont}
 
 % Date command
 \setlength{\TPHorizModule}{1mm}
 \setlength{\TPVertModule}{1mm}
 \newcommand{\lastupdated}{\begin{textblock}{60}(155,5)
-\color{date}\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-ExtraLight}\fontsize{8pt}{10pt}\selectfont 
+\color{date}\ralewayextralightfont\fontsize{8pt}{10pt}\selectfont
 Last Updated on \today
 \end{textblock}}
 
@@ -42,12 +51,12 @@ Last Updated on \today
 \newcommand{\namesection}[3]{
 \centering{
 \fontsize{40pt}{60pt}
-\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Hai}\selectfont #1 
-\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Lig}\selectfont #2
+\latoheavyfont\selectfont #1
+\latolightfont\selectfont #2
 } \\[5pt]
 \centering{
 \color{headings}
-\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{14pt}\selectfont #3}
+\ralewaymediumfont\fontsize{11pt}{14pt}\selectfont #3}
 \noindent\makebox[\linewidth]{\color{headings}\rule{\paperwidth}{0.0pt}}
 \vspace{0pt}
 }
@@ -59,22 +68,22 @@ Last Updated on \today
 
 % Headings command
 \titleformat{\section}{\color{headings}
-\scshape\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Lig}\fontsize{16pt}{24pt}\selectfont \raggedright\uppercase}{}{0em}{}
+\scshape\latolightfont\fontsize{16pt}{24pt}\selectfont \raggedright\uppercase}{}{0em}{}
 
 % Subeadings command
 \titleformat{\subsection}{
-\color{subheadings}\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Bol}\fontsize{12pt}{12pt}\selectfont\bfseries\uppercase}{}{0em}{}
+\color{subheadings}\latoboldfont\fontsize{12pt}{12pt}\selectfont\uppercase}{}{0em}{}
 
 \newcommand{\runsubsection}[1]{
-\color{subheadings}\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Bol}\fontsize{12pt}{12pt}\selectfont\bfseries\uppercase {#1} \normalfont}
+\color{subheadings}\latoboldfont\fontsize{12pt}{12pt}\selectfont\uppercase {#1} \normalfont}
 
 % Descriptors command
 \newcommand{\descript}[1]{
-\color{subheadings}\raggedright\scshape\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\} \normalfont}
+\color{subheadings}\raggedright\scshape\ralewaymediumfont\fontsize{11pt}{13pt}\selectfont {#1 \\} \normalfont}
 
 % Location command
 \newcommand{\location}[1]{
-\color{headings}\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{10pt}{12pt}\selectfont {#1\\} \normalfont}
+\color{headings}\raggedright\ralewaymediumfont\fontsize{10pt}{12pt}\selectfont {#1\\} \normalfont}
 
 % Bullet Lists with fewer gaps command
 \newenvironment{tightemize}{
@@ -82,36 +91,38 @@ Last Updated on \today
 {\end{itemize}\vspace{-\topsep}}
 
 % Cover Letter
-\newcommand{\companyname}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Bol}\fontsize{12pt}{14pt}\selectfont {#1 \\} \normalfont}
+\newcommand{\companyname}[1]{\raggedright\latoboldfont\fontsize{12pt}{14pt}\selectfont {#1 \\} \normalfont}
 
-\newcommand{\companyaddress}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\}\mbox{}\\\mbox{}\\ \normalfont}
+\newcommand{\companyaddress}[1]{\raggedright\ralewaymediumfont\fontsize{11pt}{13pt}\selectfont {#1 \\}\mbox{}\\\mbox{}\\ \normalfont}
 
-\newcommand{\currentdate}[1]{{\raggedleft\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont #1\par}}
+\newcommand{\currentdate}[1]{{\raggedleft\ralewaymediumfont\fontsize{11pt}{13pt}\selectfont #1\par}}
 
 % Letter content command
-\newcommand{\lettercontent}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\}\mbox{}\\ \normalfont}
+\newcommand{\lettercontent}[1]{\raggedright\letterbodyfont {#1 \\}\mbox{}\\ \normalfont}
 
-\newcommand{\closing}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\}\mbox{}\\\mbox{}\\ \normalfont}
+\newcommand{\closing}[1]{\raggedright\letterbodyfont {#1 \\}\mbox{}\\\mbox{}\\ \normalfont}
 
-\newcommand{\signature}[1]{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont {#1 \\} \normalfont}
+\newcommand{\signature}[1]{\raggedright\letterbodyfont {#1 \\} \normalfont}
 
 % Formal Swiss/German business-letter blocks
 \newcommand{\senderblock}[2]{%
 \begin{flushright}
-{\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Bol}\fontsize{16pt}{19pt}\selectfont #1\par}
+{\latoboldfont\fontsize{16pt}{19pt}\selectfont #1\par}
 \vspace{2pt}
-{\color{headings}\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{9.5pt}{12pt}\selectfont #2\par}
+{\color{headings}\latoregularfont\fontsize{9.5pt}{12pt}\selectfont #2\par}
+\vspace{2.5mm}
+{\color{accentcolor}\rule{7.2cm}{0.5pt}\par}
 \end{flushright}
-\vspace{5mm}
+\vspace{4mm}
 }
 
 \newcommand{\recipientblock}[1]{%
-{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{10.5pt}{13pt}\selectfont #1\par}
+{\raggedright\rmfamily\fontsize{10.5pt}{13pt}\selectfont #1\par}
 \vspace{3mm}
 }
 
 \newcommand{\subjectline}[1]{%
 \vspace{2mm}
-{\raggedright\noindent\fontspec[Path = OpenFonts/fonts/lato/]{Lato-Bol}\fontsize{11pt}{13pt}\selectfont #1\par}
+{\color{accentcolor}\raggedright\noindent\latoboldfont\fontsize{11pt}{13pt}\selectfont #1\par}
 \vspace{4mm}
 }

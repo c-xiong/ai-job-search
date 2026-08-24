@@ -1,5 +1,5 @@
 ---
-framework_version: 1.3.0
+framework_version: 1.4.0
 ---
 
 # Cover Letter Templates and Tailoring Guide
@@ -22,7 +22,7 @@ applications; existing job-specific letters are phrasing references only.
 
 ## Template: Custom cover.cls (XeLaTeX)
 
-Cover letters use a custom LaTeX document class (`cover.cls`) with Lato/Raleway fonts.
+Cover letters use a custom LaTeX document class (`cover.cls`) with XCharter for body copy and Lato/Raleway for the formal header and metadata. This mirrors the CV's Charter-led typography while keeping the letter hierarchy crisp.
 
 ### Swiss/German formal-letter layout
 
@@ -68,11 +68,11 @@ The `\lettercontent{}` macro appends `\\` to its argument. This breaks when the 
 \end{itemize}}
 ```
 
-**Correct — close `\lettercontent{}` before the list and wrap the list in the matching Raleway-Medium font so typography stays consistent:**
+**Correct — close `\lettercontent{}` before the list and wrap the list in `\letterbodyfont` so typography stays consistent:**
 ```latex
 \lettercontent{Here is how my experience maps:}
 
-{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont
+{\raggedright\letterbodyfont
 \begin{itemize}
     \item ...
 \end{itemize}\par}
@@ -81,7 +81,7 @@ The `\lettercontent{}` macro appends `\\` to its argument. This breaks when the 
 \lettercontent{[next paragraph]}
 ```
 
-The font wrapper is mandatory — if you just move `\begin{itemize}` outside `\lettercontent{}` without the `\fontspec` block, bullets render in the default body font (Lato) and visually mismatch the rest of the letter.
+The `\letterbodyfont` wrapper is mandatory: outside `\lettercontent{}`, a list otherwise loses the controlled XCharter size and leading even if it inherits the same base family.
 
 ## Document Structure
 
@@ -104,7 +104,7 @@ The font wrapper is mandatory — if you just move `\begin{itemize}` outside `\l
 \senderblock{[YOUR_NAME]}{
   [CITY, COUNTRY]\\
   \href{mailto:[YOUR_EMAIL]}{[YOUR_EMAIL]} \enspace|\enspace [YOUR_PHONE]\\
-  \href{[YOUR_WEBSITE_URL]}{Website} \enspace|\enspace
+  \href{[YOUR_WEBSITE_URL]}{[YOUR_LITERAL_DOMAIN]} \enspace|\enspace
   \href{[YOUR_LINKEDIN_URL]}{LinkedIn} \enspace|\enspace
   \href{[YOUR_GITHUB_URL]}{GitHub}
 }
@@ -123,7 +123,7 @@ The font wrapper is mandatory — if you just move `\begin{itemize}` outside `\l
 
 \lettercontent{[Body paragraph - most relevant experience, introducing the bullet list]}
 
-{\raggedright\fontspec[Path = OpenFonts/fonts/raleway/]{Raleway-Medium}\fontsize{11pt}{13pt}\selectfont
+{\raggedright\letterbodyfont
 \begin{itemize}
     \item [Concrete achievement/skill 1]
     \item [Concrete achievement/skill 2]
@@ -183,7 +183,7 @@ The cover letter is a short argument, not a requirement checklist or ATS keyword
 - Use `\vspace{.5cm}` between major sections for readability (only if space permits)
 
 ### Bullet Lists
-- Place `\begin{itemize}...\end{itemize}` **outside** a `\lettercontent{}` block (see "Known template pitfall" above), wrapped in the matching Raleway-Medium `\fontspec` so the bullet font matches the body
+- Place `\begin{itemize}...\end{itemize}` **outside** a `\lettercontent{}` block (see "Known template pitfall" above), wrapped in `\letterbodyfont` so the bullets use the same XCharter family and true bold face as the body
 - 3-5 bullets is ideal
 - Start each bullet with bold label or action verb
 - Use `\textbf{Label:}` for category-style bullets
@@ -199,7 +199,8 @@ The cover letter is a short argument, not a requirement checklist or ATS keyword
 
 ## Checklist Before Finalizing
 - [ ] PDF uses A4 and the formal Swiss/German letter frame
-- [ ] Candidate contact block is top right and includes working email, phone, Website, LinkedIn and GitHub links
+- [ ] Candidate contact block is top right and includes working email, phone, literal website domain, LinkedIn and GitHub links
+- [ ] Body uses XCharter; sans fonts are limited to header/metadata; bold labels render with a true bold face
 - [ ] Verified employer/contact address is left aligned; unresolved optional lines are removed, with no visible placeholders
 - [ ] Place/date is right aligned; the exact role and any reference number appear in a bold, left-aligned subject line
 - [ ] No em-dashes (use commas or periods instead)
