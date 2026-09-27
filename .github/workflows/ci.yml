@@ -1,11 +1,11 @@
 # CI for the framework itself: LaTeX smoke compiles, skill/command lint,
 # CLI typechecks, and (upstream only) placeholder integrity.
 #
-# Fork-friendly by design: forks personalize CLAUDE.md, the skill files, and
-# cv/main_example.tex via /setup, so the placeholder-integrity job and the
-# exact page-count/content assertions run only on the upstream template repo.
-# Compile success, lint correctness, and an extractable PDF text layer are
-# asserted everywhere.
+# The LaTeX smoke job compiles anonymous fixtures (tests/fixtures/latex/) with
+# the same engines the application pipeline uses - pdfLaTeX for the one-page
+# article CV layout, XeLaTeX for cover.cls - so CI never needs the owner's CV
+# repository, symlinks or local paths. Compile success, exact page counts, lint
+# correctness and an extractable PDF text layer are asserted everywhere.
 #
 # Deliberately NOT here: live smoke tests of the job-portal CLIs. They hit
 # real portals (network-flaky, and the linkedin-search skill is personal-use
@@ -103,7 +103,7 @@ jobs:
           fail-on-severity: high
 
   latex-smoke:
-    name: Compile example CV and cover letter
+    name: Compile anonymous CV and cover-letter fixtures
     runs-on: ubuntu-latest
     container: texlive/texlive:latest
     steps:
@@ -114,41 +114,31 @@ jobs:
             apt-get update
             apt-get install -y --no-install-recommends poppler-utils
           fi
-      - name: Compile CV example (lualatex)
+      - name: Compile CV fixture (pdflatex)
         run: |
-          cd cv
-          lualatex -interaction=nonstopmode -halt-on-error main_example.tex
-          test -f main_example.pdf
-          if grep -q '^!' main_example.log; then
-            echo '::error::lualatex reported errors compiling cv/main_example.tex'
-            grep -A3 '^!' main_example.log
+          mkdir -p build/ci
+          pdflatex -interaction=nonstopmode -halt-on-error -output-directory=build/ci \
+            tests/fixtures/latex/cv_fixture.tex
+          if grep -q '^!' build/ci/cv_fixture.log; then
+            echo '::error::pdflatex reported errors compiling the CV fixture'
+            grep -A3 '^!' build/ci/cv_fixture.log
             exit 1
           fi
-      - name: Compile cover letter example (xelatex)
+      - name: Compile cover-letter fixture (xelatex, from cover_letters/)
         run: |
           cd cover_letters
-          xelatex -interaction=nonstopmode -halt-on-error cover_example.tex
-          test -f cover_example.pdf
-          if grep -q '^!' cover_example.log; then
-            echo '::error::xelatex reported errors compiling cover_letters/cover_example.tex'
-            grep -A3 '^!' cover_example.log
+          xelatex -interaction=nonstopmode -halt-on-error -output-directory=../build/ci \
+            ../tests/fixtures/latex/cover_fixture.tex
+          if grep -q '^!' ../build/ci/cover_fixture.log; then
+            echo '::error::xelatex reported errors compiling the cover-letter fixture'
+            grep -A3 '^!' ../build/ci/cover_fixture.log
             exit 1
           fi
-      - name: Verify extractable PDF text
+      - name: Verify page counts and extractable PDF text
         run: |
-          python3 tools/verify_pdf.py cv/main_example.pdf --min-chars 100
-          python3 tools/verify_pdf.py cover_letters/cover_example.pdf --min-chars 100
-      - name: Assert stock PDF structure (upstream template only)
-        if: github.repository == 'MadsLorentzen/ai-job-search'
-        run: |
-          python3 tools/verify_pdf.py cv/main_example.pdf \
-            --pages 2 \
-            --contains '[your.email@example.com]' \
-            --contains 'Professional Experience'
-          python3 tools/verify_pdf.py cover_letters/cover_example.pdf \
-            --pages 1 \
-            --contains 'your.email@example.com' \
-            --contains 'Dear [Hiring Manager / Team]'
+          python3 tools/verify_pdf.py build/ci/cv_fixture.pdf --pages 1 --min-chars 100 \
+            --contains 'jane.placeholder@example.com'
+          python3 tools/verify_pdf.py build/ci/cover_fixture.pdf --pages 1 --min-chars 100
 
   discover-clis:
     # The matrix is discovered, not hardcoded, so a portal CLI added in a fork
@@ -217,8 +207,8 @@ jobs:
             fi
           }
           check CLAUDE.example.md '\[YOUR_NAME\]'
-          check cv/main_example.tex '\[YOUR_NAME\]'
-          check cover_letters/cover_example.tex '\[YOUR NAME\]'
+          check tests/fixtures/latex/cv_fixture.tex 'JOBFLOW-ANONYMOUS-FIXTURE'
+          check tests/fixtures/latex/cover_fixture.tex 'JOBFLOW-ANONYMOUS-FIXTURE'
           check .claude/skills/job-application-assistant/01-candidate-profile.example.md '<!-- SETUP'
           check .claude/skills/job-application-assistant/04-job-evaluation.example.md '\[YOUR_PRIMARY_SKILLS\]'
           check job_scraper/companies.example.json '\[YOUR_TARGET_COMPANY\]'

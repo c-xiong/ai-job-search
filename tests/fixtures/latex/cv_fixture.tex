@@ -1,0 +1,76 @@
+%=====================================================================
+%  ANONYMOUS TEST FIXTURE (JOBFLOW-ANONYMOUS-FIXTURE) - not a candidate.
+%---------------------------------------------------------------------
+%  Mirrors the shape of the personal CV master the pipeline reads through
+%  cv/my_cv.tex: an article-based, single-column, one-page layout with
+%  \cvrole / \cvcountry variant switches, compiled with pdfLaTeX (the
+%  glyphtounicode text layer is a pdfTeX feature). CI compiles it so the
+%  real toolchain is exercised without the owner's private repository.
+%
+%  Build: pdflatex -interaction=nonstopmode -halt-on-error cv_fixture.tex
+%  Target: exactly 1 page.
+%=====================================================================
+\documentclass[a4paper,10pt]{article}
+
+\providecommand{\cvrole}{sde}      % sde | ai
+\providecommand{\cvcountry}{ch}    % ch  | de
+
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{etoolbox}
+\usepackage{cmap}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{charter}
+\usepackage{microtype}
+\input{glyphtounicode}
+\pdfgentounicode=1
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{accentcolor}{RGB}{26, 66, 138}
+\newcommand{\pickrole}[3]{\ifdefstring{\cvrole}{#1}{#2}{#3}}
+\newcommand{\pickcountry}[3]{\ifdefstring{\cvcountry}{#1}{#2}{#3}}
+
+\titleformat{\section}{\large\bfseries\color{accentcolor}}{}{0em}{}[\titlerule]
+\titlespacing*{\section}{0pt}{8pt}{4pt}
+\setlist[itemize]{leftmargin=1.2em, itemsep=1pt, topsep=2pt}
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries Jane Placeholder}\\[2pt]
+  \pickrole{ai}{AI Engineer}{Software Engineer}\\[2pt]
+  Example City \,|\, jane.placeholder@example.com \,|\, +00 00 000 00 00
+\end{center}
+
+\section{Profile}
+Placeholder profile statement for an anonymous candidate. It exists only so the
+pipeline's LaTeX toolchain, page-count check and text-layer extraction can be
+tested without any personal data.
+
+\section{Experience}
+\textbf{Example Lab} \hfill 2024 -- present\\
+\textit{Research Assistant}
+\begin{itemize}
+  \item Built a placeholder data pipeline in Python and evaluated it end to end.
+  \item \pickrole{ai}{Evaluated retrieval-augmented generation (RAG) with an LLM judge.}
+        {Shipped a REST API with automated tests and CI.}
+\end{itemize}
+
+\section{Education}
+\textbf{Example University} \hfill 2022 -- 2024\\
+MSc Placeholder Studies
+
+\section{Skills}
+Python, SQL, Git, Docker\pickrole{ai}{, PyTorch, LLM, RAG}{, TypeScript, PostgreSQL}
+
+\section{Work authorisation}
+\pickcountry{de}{Placeholder statement for the de variant.}
+                {Placeholder statement for the ch variant.}
+
+\end{document}

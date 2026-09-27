@@ -1,9 +1,12 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Cover Letter - [Company], [Role]
 %
-% Example cover letter with placeholder content. This is the structural
-% reference for /apply (see 06-cover-letter-templates.md) and the CI smoke
-% test for cover.cls: it must always compile with xelatex to exactly 1 page.
+% ANONYMOUS TEST FIXTURE (JOBFLOW-ANONYMOUS-FIXTURE). Placeholder content only.
+% It is the CI smoke test for cover.cls and must compile with xelatex to
+% exactly 1 page, run from cover_letters/ so the class and fonts resolve:
+%   cd cover_letters && xelatex -output-directory=<dir> ../tests/fixtures/latex/cover_fixture.tex
+% It is NOT a fallback for the personal base: a missing
+% cover_letters/my_cover.tex stops a run instead of falling back to this file.
 % It demonstrates the correct itemize pattern: the list sits OUTSIDE
 % \lettercontent{} (whose trailing \\ errors on \end{itemize}) and is
 % wrapped in \letterbodyfont so XCharter, size and leading match the body.

@@ -311,8 +311,8 @@ class GitignoreNegationTests(GuardRepoFixture):
         self.assertIn("!salary_data.json", result.stdout)
 
     def test_allowlisted_negations_pass(self):
-        # The template's own benign negations (example CV/cover letter, fonts,
-        # .gitkeep placeholders) must keep passing.
+        # The template's own benign negations (fonts, .gitkeep placeholders)
+        # must keep passing.
         self.write_gitignore(
             list(security_guards.REQUIRED_IGNORE_RULES)
             + sorted(security_guards.ALLOWED_IGNORE_NEGATIONS)

@@ -108,7 +108,6 @@ REQUIRED_IGNORE_RULES = [
     "*_BehavioralReport.pdf",
     "linkedin_Profile.pdf",
     "cv/main_*.*",
-    "!cv/main_example.tex",
     # ATS text extractions (/apply step 5d) carry the CV's full text.
     "cv/*.txt",
     "cover_letters/cover_*.*",
@@ -119,6 +118,9 @@ REQUIRED_IGNORE_RULES = [
     "documents/diplomas/**",
     "documents/references/**",
     "documents/applications/**",
+    # Run directories hold a private snapshot of the CV master, every draft and
+    # every PDF an attempt produced, and the posting it was drafted from.
+    "documents/runs/**",
     "documents/postings/**",
     "documents/interview/**",
     "job_search_tracker.csv",
@@ -148,8 +150,6 @@ REQUIRED_IGNORE_RULES = [
 # ALLOWED_PERMISSIONS, so the widening is explicit and reviewable.
 ALLOWED_IGNORE_NEGATIONS = {
     "!cover_letters/OpenFonts/fonts/**",
-    "!cv/main_example.tex",
-    "!cover_letters/cover_example.tex",
     "!documents/**/.gitkeep",
     # NOTE: upstream also allows "!job_scraper/jobs.md". This fork is public, so
     # the optional export remains ignored: it can name every company considered
