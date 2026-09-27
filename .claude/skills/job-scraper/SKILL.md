@@ -42,7 +42,7 @@ Optional arguments:
 
 1. Read `job_scraper/seen_jobs.json` (create if missing - start with `{"seen": {}}`). This is
    the sole job-state source; statuses and notes are edited only through the local board.
-2. Read `job_search_tracker.csv` to extract already-applied companies+roles.
+2. If `job_scraper/notion_sync.json` exists, run `python3 tools/notion_sync.py pull` (Notion is the source of truth; the tracker is its cache; a failure is one warning line). Read `job_search_tracker.csv` to extract already-applied companies+roles.
 3. Read `search-queries.md` (this directory) for the search strategy.
 
 ### Step 1: Search
@@ -331,7 +331,7 @@ LinkedIn search links:
 After presenting, ask:
 > "Want me to evaluate any of these in detail? Just give me the number(s)."
 
-If the user picks a number, invoke the **job-application-assistant** skill workflow (fit evaluation first, then CV + cover letter if approved).
+If the user picks a number, invoke the **job-application-assistant** skill workflow (posting -> requested documents; a fit evaluation only if the user asks for one).
 
 If the run found many new jobs (roughly 8+), also suggest `/rank` - it batch-scores all new postings against the full fit framework and returns a ranked shortlist, which beats eyeballing a long table. (`/rank` sets the `ranked` and `expired` status values in `seen_jobs.json`; treat both as already-seen for dedup purposes.)
 

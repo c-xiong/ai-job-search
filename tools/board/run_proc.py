@@ -132,6 +132,8 @@ class Pass:
         self.canary_failed = False
         self.timed_out = False
         self.exit_code = None
+        self.rate_limit_type = None
+        self.elapsed_ms = None
         self._is_cancelled = cancelled or (lambda: False)
         # Shared with the supervisor's `cancel()`: the last cancellation check
         # and `Popen` have to be one indivisible step, or a cancel that lands
@@ -238,6 +240,7 @@ class Pass:
                         pass
 
         self.exit_code = proc.returncode
+        self.elapsed_ms = timer.ms
         self._refresh_canary()
         tail = [line for line in stderr_tail if line.strip()]
 
@@ -257,19 +260,29 @@ class Pass:
 
         if self.timed_out:
             raise RunFailure("%s exceeded its %ds wall clock and was killed"
-                             % (self.label, self.timeout))
+                             % (self.label, self.timeout), code="timeout",
+                             retryable=True)
         # A provider can reject the request before the model gets a turn, so no
         # tool call (including the canary) is possible. Preserve that actionable
         # verdict instead of replacing it with the secondary "canary unseen"
         # symptom. Other failures still have to prove the guard was active.
+        #
+        # Two different situations share HTTP 429 and need different advice: an
+        # exhausted allowance (session/usage limit, out of credits) does not come
+        # back by retrying, and a new session does not reset it; a transient rate
+        # limit usually does. Neither is retried automatically, and no reset
+        # time is invented when the provider did not state one.
         provider_status = (self.result or {}).get("api_error_status")
         provider_text = str((self.result or {}).get("result") or "")
-        provider_lower = provider_text.lower()
-        if provider_status == 429 or any(token in provider_lower for token in
-                                         ("out_of_credits", "session limit",
-                                          "rate limit", "rate_limit")):
+        provider_lower = provider_text.lower() + " " + (self.rate_limit_type or "").lower()
+        quota = any(token in provider_lower for token in
+                    ("out_of_credits", "session limit", "usage limit", "credit balance",
+                     "weekly limit", "quota"))
+        if quota or provider_status == 429 or any(token in provider_lower for token in
+                                                  ("rate limit", "rate_limit", "overloaded")):
             message = provider_text.strip() or "The model provider rejected this run (HTTP 429)."
-            raise RunFailure(message[:500], code="provider_rate_limit",
+            raise RunFailure(message[:500],
+                             code="quota_exhausted" if quota else "rate_limited",
                              retryable=True, model_started=False)
         if self.canary_failed or not self.canary_seen:
             raise RunFailure(
@@ -296,6 +309,27 @@ class Pass:
             raise RunFailure("%s failed: %s" % (self.label, str(
                 self.result.get("result") or tail[-1:] or "exit %s" % self.exit_code)[:500]))
         return self.result
+
+    def usage(self):
+        """What this pass reported spending, as recorded fields - never estimates.
+
+        `input_tokens` is uncached input only; `cache_read_input_tokens` is
+        cumulative across every request in the pass (a re-read prefix is counted
+        each time it is read), so it measures repeated context, not the size of
+        any single request. Thinking tokens are already inside `output_tokens`
+        and are not added again. A field the provider did not report is absent.
+        """
+        result = self.result or {}
+        raw = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        out = {"label": self.label, "cost_usd": round(self.cost, 4),
+               "elapsed_ms": self.elapsed_ms, "exit_code": self.exit_code,
+               "subtype": result.get("subtype"), "num_turns": result.get("num_turns"),
+               "session_id": self.session_id}
+        for key in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                    "cache_creation_input_tokens"):
+            if isinstance(raw.get(key), (int, float)):
+                out[key] = raw[key]
+        return out
 
     def _reportable_argv(self):
         """The real claude argv, with the prompt elided - it is thousands of
@@ -414,7 +448,11 @@ class Pass:
             return
         kind = event.get("type")
 
-        if kind == "system" and event.get("subtype") == "init":
+        if kind == "rate_limit_event":
+            info = event.get("rate_limit_info") or {}
+            if info.get("status") == "rejected":
+                self.rate_limit_type = str(info.get("rateLimitType") or "rejected")
+        elif kind == "system" and event.get("subtype") == "init":
             # `--fork-session` mints a new session id and this is where it
             # appears; the design does not get to assume it is the one we asked
             # for. It is the first event of every run.

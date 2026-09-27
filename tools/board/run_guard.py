@@ -202,13 +202,35 @@ def new_nonce():
     return uuid.uuid4().hex[:8]
 
 
-def write_allowlist(run_id, targets=(), nonce=""):
+def protected_masters():
+    """Realpaths of the read-only factual masters, and the aliases naming them.
+
+    `cv/my_cv.tex` is a symlink to an externally maintained repository. The
+    guard compares *resolved* paths, so listing the link's destination refuses
+    a write through the link, through any other alias, and to the upstream
+    path itself - whichever spelling the model uses.
+    """
+    root = run_registry.ROOT
+    paths = set()
+    for rel in ("cv/my_cv.tex", "cover_letters/my_cover.tex",
+                "cover_letters/my_cover_sde.tex", "cover_letters/my_cover_ai.tex"):
+        path = root / rel
+        paths.add(os.path.abspath(str(path)))
+        paths.add(os.path.realpath(str(path)))
+    return sorted(paths)
+
+
+def write_allowlist(run_id, targets=(), nonce="", whole_run_dir=True):
     """The per-run write boundary, as exact realpaths.
 
-    Pass A gets the run directory only; pass B additionally gets the two target
-    documents. `deny` names the files the supervisor writes into a directory the
-    model can otherwise write: the canary must stay refusable, and the transcript
-    must stay the supervisor's account of the run.
+    `targets` are the exact files this pass may write. `whole_run_dir` keeps
+    the older behaviour of letting the pass write anywhere in its run directory;
+    the staged pipeline passes `False`, so a reviewer can write its review and
+    nothing else, and an inspector cannot touch the sources it inspects.
+
+    `deny` always wins: the canary must stay refusable, the transcript and the
+    checkpoint manifest must stay the supervisor's account of the run, and the
+    factual masters are never writable by any pass.
     """
     directory = run_registry.state_dir(run_id)
     directory.mkdir(parents=True, exist_ok=True)
@@ -220,110 +242,126 @@ def write_allowlist(run_id, targets=(), nonce=""):
         reject_symlinks(target, "target document")
 
     path = directory / "allowlist.json"
-    deny = [str((run_dir / "stream.jsonl").resolve())]
+    deny = [str((run_dir / "stream.jsonl").resolve()),
+            str((run_dir / "checkpoint.json").resolve())]
     if nonce:
         deny.append(str((run_dir / probe_name(nonce)).resolve()))
+    deny += protected_masters()
+    files = sorted({str(Path(t).resolve()) for t in targets})
+    masters = set(protected_masters())
+    if any(item in masters for item in files):
+        raise PreflightError("a read-only master was named as a write target; refusing "
+                             "to start a pass that could modify it")
     body = {
         "run_id": run_id,
-        "dirs": [str(run_dir.resolve())],
-        "files": sorted({str(Path(t).resolve()) for t in targets}),
-        "deny": deny,
+        "dirs": [str(run_dir.resolve())] if whole_run_dir else [],
+        "files": files,
+        "deny": sorted(set(deny)),
     }
     jobs_md.write_json_atomic(path, body)
     return path
 
 
-# ------------------------------------------------------- the fit.json schema
+# ---------------------------------------------- the staged pipeline contracts
 
-FIT_GATES = ("PASS", "FLAG", "FAIL")
-FIT_VERDICTS = ("strong", "good", "moderate", "weak", "poor")
-FIT_SCORES = ("technical", "experience", "behavioural", "career")
-
-
-def _number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+BRIEF_STATUS = ("documented", "adjacent", "gap")
+REVIEW_VERDICTS = ("pass", "revise", "blocked")
+REVIEW_SEVERITY = ("must_fix", "suggest")
+REVIEW_CATEGORIES = ("grounding", "source_conflict", "omission", "exaggeration",
+                     "specificity", "clarity", "consistency", "voice")
 
 
-def validate_fit(payload):
-    """[] when `payload` is a valid `jobflow.fit/1` document, else the reasons.
+def validate_brief(payload):
+    """[] when `brief.json` is a valid `jobflow.brief/1` document.
 
-    "Valid JSON with arbitrary keys" is not a contract: the tracker row, the
-    approval card and `/upskill`'s arithmetic all read specific fields, and a
-    missing one has to fail the run rather than reach the UI as a blank.
+    The brief replaces the old numerical fit report: which decisive posting
+    requirements the application answers, with what real evidence, and the
+    exact CV keywords the mechanical check measures. It carries no score.
     """
-    problems = []
     if not isinstance(payload, dict):
-        return ["fit.json is not a JSON object"]
-    if payload.get("schema") != "jobflow.fit/1":
-        problems.append("schema is %r, expected 'jobflow.fit/1'" % (payload.get("schema"),))
-
+        return ["brief.json is not a JSON object"]
+    problems = []
+    if payload.get("schema") != "jobflow.brief/1":
+        problems.append("schema is %r, expected 'jobflow.brief/1'" % (payload.get("schema"),))
     for key in ("company", "role"):
         if not isinstance(payload.get(key), str) or not payload[key].strip():
             problems.append("%s must be a non-empty string" % key)
-    if not isinstance(payload.get("location"), str):
-        problems.append("location must be a string")
-
-    for key in ("language_gate", "location_gate"):
-        if payload.get(key) not in FIT_GATES:
-            problems.append("%s must be one of %s" % (key, list(FIT_GATES)))
-    if not isinstance(payload.get("language_note"), str):
-        problems.append("language_note must be a string")
-
-    scores = payload.get("scores")
-    if not isinstance(scores, dict):
-        problems.append("scores must be an object")
-    else:
-        for key in FIT_SCORES:
-            if not _number(scores.get(key)) or not 0 <= scores[key] <= 100:
-                problems.append("scores.%s must be a number 0-100" % key)
-
-    if not _number(payload.get("overall")) or not 0 <= payload["overall"] <= 100:
-        problems.append("overall must be a number 0-100")
-    if payload.get("verdict") not in FIT_VERDICTS:
-        problems.append("verdict must be one of %s" % list(FIT_VERDICTS))
-
-    for key in ("matches", "gaps"):
-        value = payload.get(key)
-        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-            problems.append("%s must be a list of strings" % key)
-
-    # Nullable, but never *absent*: a posting that does not state a sector must
-    # produce an empty tracker cell, and an explicit null is the model saying so.
-    # A missing key is the model forgetting, and the two must not look alike.
-    for key in ("deadline", "sector", "role_type", "contact_person", "channel"):
+    for key in ("location", "language", "deadline", "sector", "role_type",
+                "contact_person", "channel"):
         if key not in payload:
-            problems.append("%s is required (use null when the posting does not state it)" % key)
+            problems.append("%s is required (use null when the posting does not state it)"
+                            % key)
         elif payload[key] is not None and not isinstance(payload[key], str):
             problems.append("%s must be a string or null" % key)
     if payload.get("deadline") and not re.match(r"^\d{4}-\d{2}-\d{2}$", str(payload["deadline"])):
         problems.append("deadline must be YYYY-MM-DD or null")
     if payload.get("channel") not in (None, "portal", "online"):
         problems.append("channel must be 'portal', 'online' or null")
-    if not isinstance(payload.get("posting_chars"), int) or isinstance(
-            payload.get("posting_chars"), bool):
-        problems.append("posting_chars must be an integer")
+    conflicts = payload.get("hard_conflicts")
+    if not isinstance(conflicts, list) or not all(isinstance(c, str) for c in conflicts):
+        problems.append("hard_conflicts must be a list of strings (empty when none)")
+    keywords = payload.get("keywords")
+    if not isinstance(keywords, list) or not all(isinstance(k, str) and k.strip()
+                                                 for k in keywords):
+        problems.append("keywords must be a list of non-empty strings")
+    requirements = payload.get("requirements")
+    if not isinstance(requirements, list) or not requirements:
+        problems.append("requirements must be a non-empty list")
+    else:
+        for index, item in enumerate(requirements):
+            if not isinstance(item, dict):
+                problems.append("requirements[%d] is not an object" % index)
+                continue
+            for key in ("requirement", "evidence"):
+                if not isinstance(item.get(key), str):
+                    problems.append("requirements[%d].%s must be a string" % (index, key))
+            if item.get("status") not in BRIEF_STATUS:
+                problems.append("requirements[%d].status must be one of %s"
+                                % (index, list(BRIEF_STATUS)))
     return problems
 
 
-def validate_drafts(payload, targets, kinds=("cv", "cover")):
-    """[] when `drafts.json` names exactly this run's allowlisted targets.
+def validate_review(payload, reviewed):
+    """[] when `review.json` is a valid `jobflow.review/1` for `reviewed` items.
 
-    The supervisor compiles what this file points at, so "some path the model
-    wrote" is not good enough: it has to be the paths the guard authorised, or
-    the run failed and is not allowed to look like it succeeded. `kinds` is the
-    run's scope - a CV-only run is judged on `cv_source` alone, and whatever it
-    says about the document it was not allowed to write is ignored.
+    `reviewed` is what the supervisor asked about: document kinds plus
+    `consistency`. Findings must name one of them, so a reviewer cannot pass
+    a letter it was never shown or fail a CV nobody asked about.
     """
-    problems = []
     if not isinstance(payload, dict):
-        return ["drafts.json is not a JSON object"]
-    if payload.get("schema") != "jobflow.drafts/1":
-        problems.append("schema is %r, expected 'jobflow.drafts/1'" % (payload.get("schema"),))
-    keys = {"cv": "cv_source", "cover": "cover_source"}
-    for kind in kinds:
-        key = keys[kind]
-        expected, actual = targets[kind], payload.get(key)
-        if actual != expected:
-            problems.append("%s is %r, expected %r - the run may only write the paths "
-                            "it was given" % (key, actual, expected))
+        return ["review.json is not a JSON object"]
+    problems = []
+    if payload.get("schema") != "jobflow.review/1":
+        problems.append("schema is %r, expected 'jobflow.review/1'" % (payload.get("schema"),))
+    if payload.get("verdict") not in REVIEW_VERDICTS:
+        problems.append("verdict must be one of %s" % list(REVIEW_VERDICTS))
+    docs_ok = set(k for k in reviewed if k in ("cv", "cover"))
+    if "consistency" in reviewed:
+        docs_ok |= {"both"}
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        problems.append("findings must be a list (empty when there is nothing to fix)")
+        findings = []
+    for index, item in enumerate(findings):
+        if not isinstance(item, dict):
+            problems.append("findings[%d] is not an object" % index)
+            continue
+        if item.get("doc") not in docs_ok:
+            problems.append("findings[%d].doc must be one of %s" % (index, sorted(docs_ok)))
+        if item.get("severity") not in REVIEW_SEVERITY:
+            problems.append("findings[%d].severity must be one of %s"
+                            % (index, list(REVIEW_SEVERITY)))
+        if item.get("category") not in REVIEW_CATEGORIES:
+            problems.append("findings[%d].category must be one of %s"
+                            % (index, list(REVIEW_CATEGORIES)))
+        for key in ("issue", "fix"):
+            if not isinstance(item.get(key), str) or not item[key].strip():
+                problems.append("findings[%d].%s must be a non-empty string" % (index, key))
+    for key in ("source_conflicts", "tailoring_notes"):
+        value = payload.get(key, [])
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            problems.append("%s must be a list of strings" % key)
+    if payload.get("verdict") == "pass" and any(
+            isinstance(f, dict) and f.get("severity") == "must_fix" for f in findings):
+        problems.append("verdict is pass but a must_fix finding is present")
     return problems

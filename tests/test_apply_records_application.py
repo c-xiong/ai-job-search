@@ -288,7 +288,7 @@ class ApplyArchivesThePosting(unittest.TestCase):
          "never reconstruct it from memory",
          "a model that reached Step 6b without the text could satisfy none of "
          "item 7's constraints, and would write a remembered posting instead"),
-        (SKILL, "### Step 1: Research & Evaluate Fit",
+        (SKILL, "### Step 1: Save the Posting and Map Requirements",
          "full posting text verbatim",
          "the /scrape path never runs /apply Step 0, so nothing stops it "
          "compressing the posting before Step 3b archives it"),

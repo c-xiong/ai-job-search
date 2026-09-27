@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_jobs  # noqa: E402
 import jobs_md  # noqa: E402
 
-from . import activity, companies, docs, run_registry, runs, state  # noqa: E402
+from . import activity, companies, docs, notion, review, run_registry, runs, state  # noqa: E402
 
 TOKEN_FILE = jobs_md.ROOT / "job_scraper" / ".board-token"
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
@@ -196,7 +196,8 @@ def fetch_status():
 # pattern is a validator as well as a parser: a path segment that is not a run
 # id never reaches the supervisor.
 RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
-                      r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore|retry))?$")
+                      r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore|retry|continue"
+                      r"|marks|reveal|applied))?$")
 PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"/(?P<kind>cv|cover)$")
 COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
@@ -320,11 +321,12 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     payload = json.loads(path.read_text(encoding="utf-8"))
                 except FileNotFoundError:
-                    return self._send(404, json.dumps(
-                        {"error": "this run has no verification yet", "phase": record["phase"]}))
+                    # A run stopped before its build still has a screening.
+                    payload = {"schema": "jobflow.verify/1", "run_id": run_id, "checks": []}
                 except (OSError, ValueError):
                     return self._send(500, json.dumps({"error": "verification is unreadable"}))
-                return self._send(200, json.dumps(payload, ensure_ascii=False))
+                return self._send(200, json.dumps(review.view(record, payload),
+                                                  ensure_ascii=False))
             return self._send(200, json.dumps(record, ensure_ascii=False))
 
         pdf_match = PDF_PATH.fullmatch(parts.path)
@@ -355,7 +357,8 @@ class Handler(BaseHTTPRequestHandler):
         company_match = COMPANY_PATH.fullmatch(parts.path)
         known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/companies",
                                "/api/companies/resolve-all", "/api/companies/health-check") or \
-            (run_id and action in ("approve", "cancel", "kill", "compile", "restore", "retry"))
+            (run_id and action in ("approve", "cancel", "kill", "compile", "restore", "retry",
+                                   "continue", "marks", "reveal", "applied"))
         known = known or bool(company_match and company_match.group("action") in
                               ("resolve", "identity", "test-fetch", "manage"))
         if not known or not self._authed(parse_qs(parts.query)):
@@ -417,6 +420,39 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(exc.status, json.dumps({"error": str(exc)}))
             return self._send(200, json.dumps(body, ensure_ascii=False))
 
+        if run_id and action == "applied":
+            record = runs.get(run_id)
+            if record is None:
+                return self._send(404, json.dumps({"error": "unknown run"}))
+            # Notion first: the tracker is its cache, so it moves only once the
+            # Stage it mirrors has.
+            try:
+                stage = notion.mark_applied(record)
+            except notion.NotionError as exc:
+                return self._send(502, json.dumps({"error": "Notion: %s" % exc}))
+            body = {"notion": stage, "tracker": docs.mark_applied(record)}
+            activity.emit("board", "marked applied: %s - %s (Notion %s, tracker %s)"
+                          % (record["company"], record["role"], stage or "off",
+                             body["tracker"]), run_id=run_id)
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+
+        if run_id and action in ("marks", "reveal"):
+            record = runs.get(run_id)
+            if record is None:
+                return self._send(404, json.dumps({"error": "unknown run"}))
+            try:
+                if action == "marks":
+                    body = {"manual": review.mark(record, str(payload.get("id") or ""),
+                                                  payload.get("done") is True)}
+                else:
+                    kind = payload.get("kind")
+                    if kind not in ("cv", "cover"):
+                        return self._send(400, json.dumps({"error": "kind must be cv or cover"}))
+                    body = {"revealed": review.reveal(record, kind)}
+            except review.ReviewError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+
         if run_id:
             supervisor = runs.supervisor()
             if action == "approve":
@@ -432,7 +468,14 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "restore":
                 code, body = supervisor.restore(run_id)
             elif action == "retry":
+                # "Regenerate": a fresh attempt that keeps only the saved posting.
                 code, body = supervisor.retry(run_id)
+            elif action == "continue":
+                # Resume from the saved checkpoint; `proceed` is the owner's
+                # explicit override of a surfaced hard conflict.
+                code, body = supervisor.continue_run(run_id, {
+                    "proceed": payload.get("proceed") is True,
+                    "scope": payload.get("scope"), "base_cv": payload.get("base_cv")})
             else:
                 code, body = supervisor.kill(run_id)
             return self._send(code, json.dumps(body, ensure_ascii=False))
@@ -508,6 +551,7 @@ def main(argv=None):
         signal.signal(sig, handler)
 
     runs.supervisor()          # reconcile orphans before the first request
+    notion.start_background_pull()   # no-op unless job_scraper/notion_sync.json is set
 
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

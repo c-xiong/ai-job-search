@@ -7,26 +7,28 @@ money is a test nobody runs. What this fake reproduces is exactly the surface
 
 * `--output-format stream-json` on stdout - a `system`/`init` event carrying the
   session id, `assistant` events with `tool_use` blocks, and a final `result`
-  event with `total_cost_usd`;
+  event with `total_cost_usd` and `usage`;
 * **it calls the `PreToolUse` hook itself**, the way the CLI does, and honours
   the verdict, so the guard and the canary are exercised for real rather than
-  simulated. `FAKE_MODE=noguard` models a CLI with **no hook installed at all** -
-  every write succeeds, including the canary - which is precisely the failure the
-  canary exists to catch;
-* the files a compliant run writes into `$JOBFLOW_RUN_DIR`.
+  simulated. `FAKE_MODE=noguard` models a CLI with **no hook installed at all**;
+* the files a compliant pass of each stage writes.
 
-It reads the canary path **out of the prompt**, exactly as a real run would, so
-a supervisor that stopped minting a fresh nonce per pass would fail these tests
-rather than quietly reusing an old one.
+It reads the canary path and every target path **out of the prompt**, exactly
+as a real run would, so a supervisor that named the wrong file would fail these
+tests rather than be rescued by a hardcoded path.
 
-`FAKE_MODE=auto` picks pass A or pass B from the prompt. The others are failure
-injections: `noguard`, `badfit`, `nofit`, `noposting`, `nowrite`, `hang`,
-`crash`, `rate_limit`. `FAKE_SKIP=drafts|verify` omits one pass-B contract file, and
-`FAKE_SCOPE=ignore` makes pass B write both documents whatever scope it was
-given.
+Stage is read from the prompt (`stage: DRAFT`, `Inspect the compiled PDF`, ...).
+Failure injection:
 
-The real CLI's behaviour is pinned separately by `tests/test_live_cli_contract.py`,
-which runs against the installed binary and is skipped unless asked for.
+* `FAKE_MODE` - `auto` (default), or for every pass: `noguard`, `hang`, `crash`,
+  `rate_limit`, `quota`. `FAKE_ONLY=<stage>` limits it to one stage.
+* `FAKE_PREPARE` - `ok` (default) | `nothing`
+* `FAKE_DRAFT` - `ok` (default) | `cv_then_crash` | `truncate_cover` |
+  `conflict` | `nothing` | `badbrief` | `outside` (also tries to write the master)
+* `FAKE_REVIEW` - `pass` (default) | `revise_once` | `always_fix` | `blocked` | `bad`
+* `FAKE_INSPECT` - `clean` (default) | `fixable` | `fixable_once` | `blocked` | `noread`
+  (`FAKE_INSPECT_DOC` names the document an issue is raised on; default `cv`)
+* `FAKE_CALLS` - a file that gets one JSON line per invocation (stage + argv flags)
 """
 
 import json
@@ -35,36 +37,24 @@ import re
 import subprocess
 import sys
 import time
-import uuid
 from pathlib import Path
 
 RUN_DIR = Path(os.environ.get("JOBFLOW_RUN_DIR", "."))
 GUARD = os.environ.get("FAKE_GUARD", "")
-# `noguard` is a CLI with no hook installed at all - not one that skips the
-# canary and then politely asks permission for everything else. Modelling it as
-# the latter is how a test can pass while the real failure goes uncaught.
-if os.environ.get("FAKE_MODE") == "noguard":
-    GUARD = ""
-
 PROBE = re.compile(r"`([^`]*\.guard-probe-[0-9a-f]+)`")
-
-
-def mode(argv):
-    """`auto` reads the prompt, the way the real workflow does."""
-    chosen = os.environ.get("FAKE_MODE", "auto")
-    if chosen != "auto":
-        return chosen
-    prompt = prompt_of(argv)
-    if "Inspect the compiled PDF" in prompt:
-        return "inspect"
-    if "Apply only the following verified visual-layout repairs" in prompt:
-        return "repair"
-    return "draft" if ("Continue from Step 2" in prompt or
-                       "Resume this application" in prompt) else "fit"
 
 
 def prompt_of(argv):
     return argv[argv.index("-p") + 1] if "-p" in argv else ""
+
+
+def stage_of(prompt):
+    if "Inspect the compiled PDF" in prompt:
+        return "inspect"
+    if "Apply only the following verified visual-layout repairs" in prompt:
+        return "repair"
+    match = re.search(r"stage: ([A-Z]+)\.", prompt)
+    return match.group(1).lower() if match else "unknown"
 
 
 def emit(event):
@@ -96,133 +86,186 @@ def write_through_guard(path, text):
     return True
 
 
-FIT = {
-    "schema": "jobflow.fit/1", "company": "Acme", "role": "ML Engineer",
-    "location": "Zurich, CH", "deadline": None,
-    "language_gate": "PASS", "language_note": "English posting", "location_gate": "PASS",
-    "scores": {"technical": 80, "experience": 72, "behavioural": 77, "career": 85},
-    "overall": 78, "verdict": "good", "matches": ["LLM systems"], "gaps": ["Rust"],
-    "sector": "AI", "role_type": "Full-time", "contact_person": None,
-    "channel": "portal", "posting_chars": 4321,
+def read_tool(path, ident):
+    emit({"type": "assistant", "message": {"content": [{
+        "type": "tool_use", "id": ident, "name": "Read", "input": {"file_path": path}}]}})
+    emit({"type": "user", "message": {"content": [{
+        "type": "tool_result", "tool_use_id": ident, "is_error": False,
+        "content": "PDF rendered"}]}})
+
+
+def target(prompt, label):
+    match = re.search(r"^- %s: `([^`]+)`" % re.escape(label), prompt, re.M)
+    return match.group(1) if match else None
+
+
+def finish(session, cost, text="ok", is_error=False, code=0):
+    emit({"type": "result", "subtype": "success" if not is_error else "error_during_execution",
+          "is_error": is_error, "result": text, "total_cost_usd": cost,
+          "session_id": session, "num_turns": 3,
+          "usage": {"input_tokens": 1200, "output_tokens": 800,
+                    "cache_read_input_tokens": 5000, "cache_creation_input_tokens": 900}})
+    return code
+
+
+def latex(body):
+    return "\\documentclass{article}\n\\begin{document}\n%s\n\\end{document}\n" % body
+
+
+BRIEF = {
+    "schema": "jobflow.brief/1", "company": "Acme", "role": "ML Engineer",
+    "location": "Zurich, CH", "language": "en", "deadline": None, "sector": "AI",
+    "role_type": "Full-time", "contact_person": None, "channel": "portal",
+    "hard_conflicts": [], "keywords": ["LLM", "RAG"],
+    "requirements": [{"requirement": "LLM systems", "priority": "required",
+                      "evidence": "research pipeline", "status": "documented"}],
 }
+
+
+def counter(name):
+    path = RUN_DIR / (".fake-%s-count" % name)
+    count = int(path.read_text()) + 1 if path.exists() else 1
+    path.write_text(str(count))
+    return count
 
 
 def main():
     argv = sys.argv[1:]
-    chosen = mode(argv)
     prompt = prompt_of(argv)
+    stage = stage_of(prompt)
+    mode = os.environ.get("FAKE_MODE", "auto")
+    only = os.environ.get("FAKE_ONLY")
+    if only and only != stage:
+        mode = "auto"
+    global GUARD
+    if mode == "noguard":
+        GUARD = ""
 
-    session = "fake-session"
-    for flag in ("--session-id", "--resume"):
-        if flag in argv:
-            session = argv[argv.index(flag) + 1]
-    if "--fork-session" in argv:
-        session = str(uuid.uuid4())
+    session = argv[argv.index("--session-id") + 1] if "--session-id" in argv else "none"
+    calls = os.environ.get("FAKE_CALLS")
+    if calls:
+        with open(calls, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"stage": stage, "resume": "--resume" in argv,
+                                     "fork": "--fork-session" in argv,
+                                     "session": session,
+                                     "run": os.environ.get("JOBFLOW_RUN_ID")}) + "\n")
     emit({"type": "system", "subtype": "init", "session_id": session,
           "tools": ["Read", "Write"]})
 
-    if chosen == "rate_limit":
+    if mode in ("rate_limit", "quota"):
         emit({"type": "rate_limit_event", "rate_limit_info": {
-            "status": "rejected", "rateLimitType": "out_of_credits"}})
+            "status": "rejected",
+            "rateLimitType": "out_of_credits" if mode == "quota" else "five_hour"}})
         emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
-              "api_error_status": 429, "result": "You've hit your session limit",
+              "api_error_status": 429,
+              "result": ("You've hit your session limit" if mode == "quota"
+                         else "Rate limited, try again shortly"),
               "total_cost_usd": 0, "session_id": session})
         return 1
-    if chosen == "crash":
-        emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
-              "result": "something went wrong", "total_cost_usd": 0.01,
-              "session_id": session})
-        return 1
-    if chosen == "hang":
+    if mode == "crash":
+        return finish(session, 0.01, "something went wrong", True, 1)
+    if mode == "hang":
         time.sleep(600)
         return 0
 
-    # Every real run's first instruction: a write the allowlist excludes. The
-    # path is read from the prompt, so a stale nonce would not be refused. With
-    # no hook installed (`noguard`) the write simply succeeds, which is exactly
-    # the state the canary exists to detect.
     found = PROBE.search(prompt)
-    write_through_guard(found.group(1) if found else RUN_DIR / ".guard-probe-missing",
-                        "probe")
+    write_through_guard(found.group(1) if found else RUN_DIR / ".guard-probe-missing", "probe")
 
-    if chosen == "inspect":
-        paths = re.findall(r"- (?:CV|Cover(?: letter)?): `([^`]+)`", prompt)
-        if os.environ.get("FAKE_INSPECT") == "noread":
-            paths = []
-        for index, path in enumerate(paths):
-            ident = "read-%d" % index
-            emit({"type": "assistant", "message": {"content": [{
-                "type": "tool_use", "id": ident, "name": "Read",
-                "input": {"file_path": path}}]}})
-            emit({"type": "user", "message": {"content": [{
-                "type": "tool_result", "tool_use_id": ident, "is_error": False,
-                "content": "PDF rendered"}]}})
-        verdict = os.environ.get("FAKE_INSPECT", "clean")
-        if verdict == "noread":
-            verdict = "clean"
+    if stage == "prepare":
+        path = target(prompt, "write posting")
+        if os.environ.get("FAKE_PREPARE", "ok") == "ok" and path:
+            write_through_guard(path, "# Acme - ML Engineer\n\nWe are looking for an ML "
+                                "engineer. Requirements: 3+ years Python, experience with "
+                                "LLM systems and RAG, strong communication. You will build "
+                                "and evaluate retrieval pipelines with the team.\n" * 3)
+        return finish(session, 0.05, "prepared")
+
+    if stage == "draft":
+        how = os.environ.get("FAKE_DRAFT", "ok")
+        brief_path = target(prompt, "write brief")
+        cv = target(prompt, "write CV")
+        cover = target(prompt, "write cover letter")
+        if how == "outside":
+            write_through_guard(os.environ.get("FAKE_MASTER", "cv/my_cv.tex"), latex("x"))
+        if brief_path:
+            brief = dict(BRIEF)
+            if how == "conflict":
+                brief["hard_conflicts"] = ["German C1 is required"]
+            if how == "badbrief":
+                brief = {"schema": "wrong"}
+            write_through_guard(brief_path, json.dumps(brief))
+        if how == "conflict" and "proceed despite" not in prompt:
+            return finish(session, 0.2, "stopped on a hard conflict")
+        if how == "nothing":
+            return finish(session, 0.5, "did nothing")
+        if cv:
+            write_through_guard(cv, latex("Tailored CV for Acme at %s" % time.time()))
+        if how == "cv_then_crash":
+            return finish(session, 0.6, "budget exhausted mid-draft", True, 1)
+        if cover:
+            if how == "truncate_cover":
+                write_through_guard(cover, "\\documentclass{cover}\n\\begin{document}\nDear")
+            else:
+                write_through_guard(cover, latex("Dear Hiring Manager, Acme %s" % time.time()))
+        return finish(session, 0.87, "drafted")
+
+    if stage == "review":
+        how = os.environ.get("FAKE_REVIEW", "pass")
+        path = target(prompt, "write review")
+        items = re.search(r"Review items: ([^.]+)\.", prompt).group(1).split(", ")
+        findings = []
+        if how == "always_fix" or (how == "revise_once" and counter("review") == 1):
+            doc = "cv" if "cv" in items else items[0]
+            findings = [{"doc": doc, "severity": "must_fix", "category": "grounding",
+                         "quote": "Tailored", "issue": "metric not in the sources",
+                         "fix": "drop the metric"}]
+        verdict = "revise" if findings else "pass"
+        if how == "blocked":
+            verdict = "blocked"
+        body = {"schema": "jobflow.review/1", "verdict": verdict, "findings": findings,
+                "source_conflicts": ["profile and CV disagree on an end date"]
+                if how == "blocked" else [],
+                "tailoring_notes": ["led with the RAG evidence"]}
+        write_through_guard(path, "{not json" if how == "bad" else json.dumps(body))
+        return finish(session, 0.3, "reviewed")
+
+    if stage in ("fix", "revise"):
+        for label in ("edit CV", "edit cover letter"):
+            path = target(prompt, label)
+            if path:
+                text = Path(path).read_text(encoding="utf-8")
+                write_through_guard(path, text.replace("\\end{document}",
+                                                       "Fixed wording %s\n\\end{document}"
+                                                       % time.time()))
+        return finish(session, 0.2, "fixed")
+
+    if stage == "inspect":
+        paths = re.findall(r"^- (?:CV|Cover letter): `([^`]+)`", prompt, re.M)
+        how = os.environ.get("FAKE_INSPECT", "clean")
+        if how == "fixable_once":
+            how = "fixable" if counter("inspect") == 1 else "clean"
+        if how != "noread":
+            for index, path in enumerate(paths):
+                read_tool(path, "read-%d" % index)
+        verdict = "clean" if how == "noread" else how
         issues = [] if verdict == "clean" else [{
-            "doc": "cv", "page": 2, "kind": "orphaned heading",
-            "fix_hint": "add needspace"}]
+            "doc": os.environ.get("FAKE_INSPECT_DOC", "cv"), "page": 1,
+            "kind": "orphaned heading", "fix_hint": "add needspace"}]
         write_through_guard(RUN_DIR / "inspect.json", json.dumps({
             "schema": "jobflow.inspect/1", "verdict": verdict, "issues": issues}))
-        emit({"type": "result", "subtype": "success", "is_error": False,
-              "result": "inspected", "total_cost_usd": 0.08, "session_id": session})
-        return 0
+        return finish(session, 0.08, "inspected")
 
-    if chosen == "repair":
+    if stage == "repair":
         for path in re.findall(r"^(?:CV|Cover letter): `([^`]+)`", prompt, re.M):
-            write_through_guard(path, "%% repaired at %s\n" % time.time())
-        emit({"type": "result", "subtype": "success", "is_error": False,
-              "result": "repaired", "total_cost_usd": 0.08, "session_id": session})
-        return 0
+            text = Path(path).read_text(encoding="utf-8")
+            if os.environ.get("FAKE_REPAIR") == "truncate":
+                write_through_guard(path, text[: len(text) // 2])
+                continue
+            write_through_guard(path, text.replace(
+                "\\end{document}", "\\needspace{5\\baselineskip}\n\\end{document}"))
+        return finish(session, 0.08, "repaired")
 
-    if chosen == "draft":
-        cv = os.environ["JOBFLOW_CV_TARGET"]
-        cover = os.environ["JOBFLOW_COVER_TARGET"]
-        emit({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Task", "input": {"description": "reviewer"}}]}})
-        selected = (cv, cover)
-        if "Scope: cv." in prompt:
-            selected = (cv,)
-        elif "Scope: cover." in prompt:
-            selected = (cover,)
-        # A model that ignores the stated scope and writes the other document
-        # anyway: the run must be stopped by the write allowlist, not by the
-        # model's good manners.
-        if os.environ.get("FAKE_SCOPE") == "ignore":
-            selected = (cv, cover)
-        for path in selected:
-            if not write_through_guard(path, "%% draft for %s at %s\n" % (path, time.time())):
-                emit({"type": "result", "subtype": "success", "is_error": True,
-                      "result": "guard refused %s" % path, "total_cost_usd": 0.5,
-                      "session_id": session})
-                return 1
-        if os.environ.get("FAKE_SKIP") != "drafts":
-            write_through_guard(RUN_DIR / "drafts.json", json.dumps(
-                {"schema": "jobflow.drafts/1", "cv_source": cv, "cover_source": cover}))
-        if os.environ.get("FAKE_SKIP") != "verify":
-            write_through_guard(RUN_DIR / "verify_request.json", json.dumps(
-                {"schema": "jobflow.verify/1", "keywords": ["LLM", "RAG"]}))
-        emit({"type": "result", "subtype": "success", "is_error": False,
-              "result": "drafted", "total_cost_usd": 0.87, "session_id": session})
-        return 0
-
-    if chosen == "nowrite":
-        # Pass B that produces nothing but claims success - the shape that must
-        # not be rescued by last month's files sitting at the target paths.
-        emit({"type": "result", "subtype": "success", "is_error": False,
-              "result": "did nothing", "total_cost_usd": 0.87, "session_id": session})
-        return 0
-
-    if chosen == "badfit":
-        write_through_guard(RUN_DIR / "fit.json", json.dumps({"schema": "wrong", "company": "Acme"}))
-    elif chosen != "nofit":
-        write_through_guard(RUN_DIR / "fit.json", json.dumps(FIT))
-    if chosen != "noposting":
-        write_through_guard(RUN_DIR / "posting.md", "# Acme - ML Engineer\n\nthe posting.\n")
-    emit({"type": "result", "subtype": "success", "is_error": False,
-          "result": "evaluated", "total_cost_usd": 0.12, "session_id": session})
-    return 0
+    return finish(session, 0.01, "unknown stage", True, 1)
 
 
 if __name__ == "__main__":

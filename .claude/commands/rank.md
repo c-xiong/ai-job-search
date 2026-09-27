@@ -22,7 +22,7 @@ Follow these steps **in order**.
 ## Step 1: Load State
 
 1. Read `job_scraper/seen_jobs.json`. If the file is missing or has no entries, tell the user to run `/scrape` first and stop.
-2. Read `job_search_tracker.csv`. Build the exclusion set: any company+role already in the tracker is out of scope regardless of flags - it has been applied to or consciously tracked.
+2. If `job_scraper/notion_sync.json` exists, run `python3 tools/notion_sync.py pull` first so applications recorded in Notion are in the cache (a failure is one warning line, not a stop). Read `job_search_tracker.csv`. Build the exclusion set: any company+role already in the tracker is out of scope regardless of flags - it has been applied to or consciously tracked.
 3. Select candidates: entries with status `new` (or entries of any status with `--all`), minus the exclusion set, filtered by the focus area if one was given.
 4. If no candidates remain, say so ("Nothing new to rank - run /scrape to find fresh postings") and stop.
 5. Read the scoring framework and profile **once**:
@@ -149,9 +149,9 @@ Rules for the presentation:
 - Every table (shortlist, below threshold, excluded) includes the posting URL as a clickable link - link to the entry's `url` field in `seen_jobs.json` (not the entry's key, which for some portals is a company+title composite rather than the URL), so this never requires an extra lookup. Never drop the link for brevity.
 - A shortlisted job with `language_gate: FLAG` gets a ⚠ marker next to its Title (same treatment as a location FLAG) and its `language_note` quoted in that job's "Why these ranked highest" writeup, so the language-level gap is visible without digging into the raw JSON.
 - Every claim traces to fetched posting text or the profile - no invented details.
-- Say explicitly that these are **triage scores from the posting text only**, and that `/apply` will re-evaluate with company research before anything is drafted.
+- Say explicitly that these are **triage scores from the posting text only**. `/apply` does not re-score; it drafts the requested documents directly and stops only on an explicit hard conflict.
 - Then ask: "Want to apply to any of these? Give me the number(s) and I'll start with the full `/apply` workflow."
-- If the user picks one, run the `/apply` workflow on that job's URL, passing the triage verdict as prior context but **re-running the full Step 1 evaluation** - triage never substitutes for it.
+- If the user picks one, run the `/apply` workflow on that job's URL. Pass the triage verdict only as context; it is not a factual source for the documents.
 
 ---
 

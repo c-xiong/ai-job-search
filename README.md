@@ -54,7 +54,7 @@ Sixty-nine tailored applications, twenty first interviews, and one signed contra
 
 ## What this is
 
-A structured workflow that turns Claude Code into a full-stack job application assistant. The core workflow (self-profiling, fit evaluation, and the drafter-reviewer application pipeline) is **language- and country-agnostic**. The job portal search skills are built for the Danish market (Jobindex, Jobnet, Akademikernes Jobbank, etc.), but the pattern is designed to be swapped for your local job boards.
+A structured workflow that turns Claude Code into a full-stack job application assistant. The core workflow (self-profiling, optional fit triage, and the staged, checkpointed application pipeline) is **language- and country-agnostic**. The job portal search skills are built for the Danish market (Jobindex, Jobnet, Akademikernes Jobbank, etc.), but the pattern is designed to be swapped for your local job boards.
 
 ```
 /setup          /scrape              /apply <url>
@@ -79,7 +79,7 @@ The framework encodes career guidance best practices, including structured evalu
 - [Claude Code](https://claude.com/claude-code) (CLI). Using a different agent tool (Codex, Antigravity, Gemini CLI)? Start at [`AGENTS.md`](AGENTS.md) - the portal search skills work there out of the box, and [community forks](https://github.com/MadsLorentzen/ai-job-search/discussions/78) adapt the full workflow.
 - Python 3.10+
 - [Bun](https://bun.sh) (for job search CLI tools)
-- LaTeX distribution with `lualatex` and `xelatex`: [TeX Live](https://tug.org/texlive/), [MacTeX](https://tug.org/mactex/), [TinyTeX](https://yihui.org/tinytex/), or [MiKTeX](https://miktex.org/). The CV compiles with `lualatex` (pdflatex often fails on modern MiKTeX installs with `fontawesome5` font-expansion errors); the cover letter compiles with `xelatex` because `cover.cls` requires `fontspec`. If using a minimal TeX install such as TinyTeX or BasicTeX, install the extra packages listed in [SETUP.md](SETUP.md#minimal-tex-install-tinytexbasictex).
+- LaTeX distribution with `pdflatex` and `xelatex`: [TeX Live](https://tug.org/texlive/), [MacTeX](https://tug.org/mactex/), [TinyTeX](https://yihui.org/tinytex/), or [MiKTeX](https://miktex.org/). The CV compiles with `lualatex` (pdflatex often fails on modern MiKTeX installs with `fontawesome5` font-expansion errors); the cover letter compiles with `xelatex` because `cover.cls` requires `fontspec`. If using a minimal TeX install such as TinyTeX or BasicTeX, install the extra packages listed in [SETUP.md](SETUP.md#minimal-tex-install-tinytexbasictex).
 - Optional: `pdftotext` from [poppler](https://poppler.freedesktop.org/) (macOS: `brew install poppler`, Debian/Ubuntu: `apt install poppler-utils`, Windows: `choco install poppler`) — used by `/apply`'s ATS parseability check on the compiled CV. If missing, the check degrades gracefully to a visual keyword review.
 
 ## Quick start
@@ -174,7 +174,7 @@ Postings are treated as untrusted input (the workflow follows no instructions em
 
 - **`/interview`** preps you for a scheduled interview on a tracked application. It builds a stage-specific prep pack from the application's archive (the exact posting, the CV and cover letter the interviewer actually read, feedback recorded from earlier rounds), researches the company and interviewers with a verify-before-use rule, maps likely questions to your STAR examples, and offers a mock interview following the roleplay protocol in `07-interview-prep.md`. Gaps get honest bridge answers, never invented experience.
 - **`/outcome`** records what happened to an application - interview stages, offers, rejections, silence. It archives the submitted CV, cover letter, and posting text into `documents/applications/<company>_<role>/`, keeps `outcome.md` in the format `/setup` Path A parses, and updates the tracker. It also owns the stretch before there is an outcome to record: `/outcome followup` surfaces open applications that have gone quiet (default 10 days), drafts a short channel-appropriate follow-up in your writing style using only claims from the materials you already submitted (drafts only, never sends; at most twice per application), and offers a thank-you note in the same turn an interview stage is recorded. Once a few applications resolve, it points you back to `/setup` to calibrate the fit framework from what actually got interviews.
-- **`/notion-sync`** publishes a one-way, read-only view of the pipeline into a Notion database via the official Notion MCP server (OAuth, no API keys) - one row per ranked job plus every tracked application, with a write-once briefing page per row. The repo files stay the system of record: nothing syncs back, and documents sync as filenames only. Complements `/html-report`: that is the deep offline dashboard you regenerate at your desk; this is the glanceable live view from anywhere Notion runs (desktop, web, phone).
+- **`/notion-sync`** makes a Notion "Job Applications" database the source of truth for application status, with `job_search_tracker.csv` as its local cache. Each field has one writer: the board pushes a row's identity (title, company, URL, country, source) on publish; you set **Stage** in Notion; the pull (board start, then every 10 minutes, or `python3 tools/notion_sync.py pull`) mirrors Stage into the tracker and fills the empty derivable fields (Application/First Response/Follow-up dates, Furthest Stage). Uses a Notion integration token in the gitignored `job_scraper/notion_sync.json`; documents sync as filenames only.
 - **`/gmail-sync`** reads your Gmail (via the Gmail connector) for status signals on your open applications - interview invites, assessment links, offers, rejections - and proposes them as a batch for you to approve before anything is written to the tracker or `outcome.md`, citing the source email on every proposed change. Offers stop short of proposing `hired`/`offer_declined` since that's your call; conflicting or unmatched signals get flagged for a manual `/outcome` pass instead of guessed.
 - **`/rank`** bridges `/scrape` and `/apply`: it batch-scores all newly scraped postings against the fit framework (parallel agents fetch each posting and score the five evaluation dimensions) and returns a ranked shortlist with honest per-job strengths and gaps. Deal-breakers veto, deadlines get urgency flags, dead postings get marked expired. Pick a number and it hands off to the full `/apply` workflow.
 - **`/expand`** enriches your profile by scanning public sources you've already linked in it (GitHub repos, portfolio site, Kaggle, Google Scholar) and looking up syllabi for named courses and certifications. Discovered competencies are added to your profile with a source tag. Useful right after `/setup` to surface skills that documents alone don't make explicit.
@@ -202,7 +202,7 @@ ai-job-search/
 │   │   ├── gmail-sync.md              # /gmail-sync auto-detect application status from Gmail
 │   │   ├── interview.md               # /interview stage-specific prep pack + mock interview
 │   │   ├── html-report.md             # /html-report generate application tracker dashboard
-│   │   ├── notion-sync.md             # /notion-sync one-way pipeline view in a Notion database
+│   │   ├── notion-sync.md             # /notion-sync Notion as source of truth, tracker as cache
 │   │   └── reset.md                   # /reset wipe profile data or documents folder
 │   ├── skills/
 │   │   ├── job-application-assistant/  # Core application skill
@@ -225,11 +225,13 @@ ai-job-search/
 │   ├── linkedin-search/               # LinkedIn public job listings (country-agnostic)
 │   └── freehire-search/               # freehire.me tech job aggregator (multi-market, REST API)
 ├── cv/
-│   └── main_example.tex               # moderncv LaTeX template
+│   └── my_cv.tex                      # YOUR CV master (gitignored; read-only to the pipeline)
 ├── cover_letters/
 │   ├── cover.cls                      # Custom cover letter LaTeX class
-│   ├── cover_example.tex              # Example cover letter (structural reference + CI smoke test)
+│   ├── my_cover.tex                   # YOUR cover-letter base (gitignored)
+│   ├── my_cover_{sde,ai}.tex          # Optional per-role bases, picked by the CV variant (gitignored)
 │   └── OpenFonts/                     # Lato + Raleway fonts
+├── tests/fixtures/latex/              # Anonymous CV + letter fixtures CI compiles
 ├── templates/                         # Custom templates registered via /add-template
 │   └── README.md                      # Folder layout instructions
 ├── documents/                         # Career source materials for /setup Path A and /expand
@@ -255,26 +257,29 @@ ai-job-search/
 
 ## How `/apply` works
 
-The `/apply` command runs a **drafter-reviewer workflow** with mandatory PDF compilation:
+Give it a posting (URL or pasted text) and a scope - CV, cover letter, or both.
+There is no fit score and no approval pause; the one stop is an explicit hard
+conflict with your stated deal-breakers.
 
-1. **Parse** the job posting (URL or text)
-2. **Evaluate fit** against your profile (skills, experience, culture, location, career alignment)
-3. **Draft** a tailored CV and cover letter in LaTeX
-4. **Spawn a reviewer agent** that researches the company and critiques the drafts
-5. **Revise** based on the reviewer's feedback
-6. **Compile and inspect** both PDFs: lualatex for the CV, xelatex for the cover letter. Claude reads the rendered pages and iterates on the LaTeX until the CV is exactly 2 pages with no orphaned entry titles, and the cover letter is exactly 1 page with the signature visible and fonts consistent.
-7. **ATS-check the CV**: extract the PDF's text layer (`pdftotext`, optional dependency) and verify it the way an ATS parser sees it — contact details present as literal text, no garbled glyphs, sane reading order — then score the posting's keyword coverage against the extraction. Keywords the profile genuinely supports get added; genuine gaps stay visible, never stuffed.
-8. **Present** the final output with a verification checklist
+1. **Prepare materials** - save the complete posting once (pasted, the board's
+   stored copy, a direct fetch, or a short model fetch as a last resort). Nothing
+   is ever drafted from a title.
+2. **Write and check** - one drafting pass writes a requirement brief and the
+   requested documents from copies of your read-only masters; an independent
+   review pass checks grounding, exaggeration, omissions, specificity and
+   cross-document consistency, and at most one fix pass plus a focused re-check
+   follows.
+3. **Build and verify** - the supervisor compiles (pdfLaTeX CV, XeLaTeX letter,
+   exactly one page each), checks page counts, placeholders, the text layer and
+   CV keyword coverage *on the CV itself*, then a fresh pass visually inspects
+   the exact PDFs (proven by the transcript's Read results). At most two
+   automatic layout repairs. Only then are the files published.
 
-All claims in the CV and cover letter are verified against your actual profile. The system never fabricates skills or experience.
-
-### What makes this workflow different
-
-- **PDF verification loop.** Most LaTeX-resume templates produce "looks fine in the .tex" output that breaks in the PDF: job titles orphan to the next page, cover letters spill onto page 2, bullet fonts silently fall back to the body font. The `/apply` command compiles and visually inspects every PDF and applies targeted fixes (`\needspace`, `\enlargethispage`, font-matching wrappers for list items) until the layout is clean. This runs automatically on every application.
-- **ATS verification on the PDF text layer.** An ATS reads the PDF's embedded text, not the rendered page — and LaTeX can silently produce PDFs whose text extracts as garbage (icon glyphs where the email should be, interleaved lines from multi-column layouts). `/apply` extracts the compiled CV's text layer with `pdftotext` and verifies contact details, reading order, and the posting's keyword coverage against what a parser actually sees. Honesty rule enforced: a keyword the profile doesn't support is acknowledged as a gap, never stuffed in.
-- **Relevance-weighted CV cutting.** When a CV overflows 2 pages, the workflow does not cut mechanically from the "oldest" section. It scores each candidate line by (a) relevance to the target posting, (b) uniqueness in the document, and (c) whether the cover letter depends on it, and cuts the lowest-total-score line first. An older-role bullet that hits posting keywords survives ahead of a recent-role bullet that does not.
-- **Drafter-reviewer separation.** The drafter writes; a second Claude agent, spawned with a fresh context, researches the company and critiques the drafts. The drafter then revises. This catches missed keywords, weak framing, and generic language that a single pass often leaves in.
-- **Token-efficient reviewer dispatch.** The reviewer agent receives drafts inline rather than re-reading them, and the verification checklist runs once at the end of the workflow rather than being duplicated by both agents. Note: the new compile-and-inspect step in Step 5 spends some of those savings on PDF rendering and layout iteration — the workflow trades some end-to-end token cost for a real reduction in broken PDFs reaching the user.
+Every model pass is a fresh, short session with just the files it needs. Every
+validated artifact and check is recorded in a per-attempt checkpoint bound to
+file hashes, so an interrupted run can **Continue** - without the old session -
+and redo only what is missing or invalid; mechanical-only recovery starts no
+model at all. **Regenerate** starts fresh and keeps earlier versions.
 
 ## Customization
 
@@ -304,7 +309,7 @@ This re-runs the search configuration interview: which roles to target, which sk
 
 ### Custom templates
 
-The CV uses [moderncv](https://ctan.org/pkg/moderncv) (banking style). The cover letter uses a custom `cover.cls` with Lato/Raleway fonts. Both are LaTeX — the reference engine this repo ships and maintains.
+The stock pipeline expects your CV master as a one-page LaTeX `article` document compiled with pdfLaTeX (see `tests/fixtures/latex/cv_fixture.tex` for the shape). The cover letter uses a custom `cover.cls` with XCharter/Lato/Raleway fonts, compiled with XeLaTeX.
 
 To use your own template instead — LaTeX, [Typst](https://typst.app/), or any other toolchain that compiles to PDF from the command line — run:
 
@@ -316,7 +321,7 @@ Point it at your source file (a `.tex` file plus any `.cls`/`.sty` files or bund
 
 - `/add-template --list` shows registered templates
 - `/add-template --use <name>` switches between them
-- `/add-template --use default` reverts to the stock moderncv / cover.cls templates
+- `/add-template --use default` reverts to the stock pdfLaTeX CV / cover.cls toolchain
 
 If you prefer doing it by hand, the manual route still works: update the guidance in `05-cv-templates.md` and `06-cover-letter-templates.md`.
 

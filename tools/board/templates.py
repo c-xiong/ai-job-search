@@ -3,7 +3,7 @@
 `/add-template` writes an `ACTIVE-TEMPLATE` managed block at the head of
 `05-cv-templates.md` and `06-cover-letter-templates.md`. `/apply` resolves
 `<CV_EXT>`/`<CV_COMPILE>` from it and is explicitly forbidden from falling back
-to lualatex/xelatex when a custom command is declared.
+to the stock pdflatex/xelatex commands when a custom command is declared.
 
 The supervisor has to resolve the same two values, for two different reasons and
 at two different times:
@@ -35,11 +35,19 @@ GUIDANCE = {
     "cover": SKILL / "06-cover-letter-templates.md",
 }
 
-# What `/apply` Step 5a uses when no managed block is present. Kept here so the
-# stock path and the custom path go through one resolver, not two.
+# What the pipeline uses when no managed block is present. This is the one
+# place the personal pipeline's layout rules live - engine, page count and the
+# directory a source compiles from - so Python and the prose guidance cannot
+# carry two incompatible defaults. The CV is the article-based personal layout
+# (`cv/my_cv.tex`): pdfLaTeX, because `\pdfgentounicode`/`glyphtounicode` are
+# pdfTeX primitives the ATS text layer depends on, and one page. The letter is
+# `cover.cls`, which needs fontspec (XeLaTeX) and resolves its fonts relative
+# to `cover_letters/`, so it must compile with that directory as cwd.
 STOCK = {
-    "cv": {"ext": ".tex", "compile": "lualatex -interaction=nonstopmode", "name": "default"},
-    "cover": {"ext": ".tex", "compile": "xelatex -interaction=nonstopmode", "name": "default"},
+    "cv": {"ext": ".tex", "compile": "pdflatex -interaction=nonstopmode",
+           "name": "default", "pages": 1, "home": "cv"},
+    "cover": {"ext": ".tex", "compile": "xelatex -interaction=nonstopmode",
+              "name": "default", "pages": 1, "home": "cover_letters"},
 }
 
 BLOCK = re.compile(r"<!--\s*BEGIN ACTIVE-TEMPLATE.*?-->(.*?)<!--\s*END ACTIVE-TEMPLATE\s*-->",
@@ -54,7 +62,12 @@ def _first_backticked(value, fallback=None):
 
 
 def active(kind):
-    """`{name, ext, compile, source}` for `kind` in ('cv', 'cover')."""
+    """`{name, ext, compile, source, pages, home}` for `kind` in ('cv', 'cover').
+
+    `pages` is the exact page count the compiled PDF must have; a registered
+    template may override it with a `Page limit:` line. `home` is the
+    repository directory the source compiles from (template class and fonts
+    resolve relative to it)."""
     if kind not in GUIDANCE:
         raise ValueError("kind must be 'cv' or 'cover', got %r" % (kind,))
     stock = dict(STOCK[kind], source=None)
@@ -80,11 +93,17 @@ def active(kind):
     # A block that exists but does not declare an extension is a broken
     # registration, not a licence to guess: `/apply` would resolve `<CV_EXT>` to
     # nothing either. Report what was found and let the caller refuse.
+    pages = None
+    match_pages = re.search(r"\d+", fields.get("page limit", ""))
+    if match_pages:
+        pages = int(match_pages.group(0))
     return {
         "name": name or "custom",
         "ext": ext or None,
         "compile": command or None,
         "source": str(path.relative_to(jobs_md.ROOT)),
+        "pages": pages or STOCK[kind]["pages"],
+        "home": STOCK[kind]["home"],
     }
 
 

@@ -56,8 +56,12 @@ RUNS_LOCK = ROOT / "job_scraper" / ".runs.lock"
 
 CONFIG = ROOT / "job_scraper" / "board_config.json"
 
-PHASES = ("evaluating", "awaiting_approval", "queued", "drafting", "reviewing",
-          "compiling", "inspecting", "done", "failed", "cancelled", "orphaned")
+# `evaluating` and `awaiting_approval` belong to the retired fit-then-approve
+# flow. They stay valid so older records remain readable and continuable; no
+# new run enters them.
+PHASES = ("evaluating", "awaiting_approval", "queued", "preparing", "drafting",
+          "reviewing", "revising", "compiling", "inspecting", "publishing",
+          "done", "failed", "cancelled", "orphaned")
 TERMINAL = ("done", "failed", "cancelled")
 KINDS = ("apply", "revise", "redraft")
 
@@ -67,11 +71,27 @@ OWNER = uuid.uuid4().hex[:12]
 DEFAULT_CONFIG = {
     # "stops at about", not "will not exceed": `--max-budget-usd` stops the run
     # after the turn that crosses the line, ~1.75x over in the measured sample.
-    "budget_usd": {"pass_a": 0.40, "pass_b": 2.00, "pass_c": 0.35,
-                   "revise": 1.00, "redraft": 1.50},
+    #
+    # Per model stage of the staged pipeline: `prepare` fetches a posting the
+    # supervisor could not, `draft` writes the documents, `review` is the
+    # independent content check, `fix` applies its findings, `pass_c` is one
+    # visual inspection or layout repair. `revise`/`redraft` cap the edit pass
+    # of those two kinds. `pass_a`/`pass_b` are the retired flow's caps, kept so
+    # an older board_config.json still means something (see `config()`).
+    "budget_usd": {"prepare": 0.40, "draft": 2.00, "review": 0.60, "fix": 0.60,
+                   "pass_c": 0.35, "revise": 1.00, "redraft": 1.50,
+                   "pass_a": 0.40, "pass_b": 2.00},
     "daily_budget_usd": 10.0,
-    "session_budget_usd": 6.0,
-    "timeout_s": {"pass_a": 300, "pass_b": 900, "pass_c": 300},
+    # Cumulative across every attempt of one application (retries, Continue,
+    # revisions): a new attempt is not a way around it.
+    "session_budget_usd": 12.0,
+    "timeout_s": {"prepare": 300, "draft": 900, "review": 600, "fix": 600,
+                  "pass_c": 300, "pass_a": 300, "pass_b": 900},
+    # Off by default: the owner checks the compiled PDFs by hand from a
+    # checklist, so no model reviews, fixes, inspects or layout-repairs them.
+    # `true` restores the automated review/fix/inspect/repair loop, and only
+    # then does `inspection_enabled` mean anything.
+    "automated_review": False,
     "inspection_enabled": True,
     "canary_timeout_s": 120,
     "queue_depth": 5,
@@ -93,7 +113,42 @@ def config():
             merged[key].update(value)
         elif key in merged:
             merged[key] = value
+    # A config written for the two-pass flow names only pass_a/pass_b. Its
+    # owner raised those numbers on purpose, so the stages that inherited that
+    # work inherit the caps rather than silently dropping to the defaults.
+    for section in ("budget_usd", "timeout_s"):
+        given = override.get(section) if isinstance(override.get(section), dict) else {}
+        for stage, legacy in (("prepare", "pass_a"), ("review", "pass_a"),
+                              ("draft", "pass_b"), ("fix", "revise" if section ==
+                                                     "budget_usd" else "pass_a")):
+            if stage not in given and legacy in given:
+                merged[section][stage] = given[legacy]
     return merged
+
+
+def stage_budget(settings, kind="apply"):
+    """Worst-case cap per stage for one attempt, as reserved at admission.
+
+    Review may run twice (the focused re-check after fixes), and `pass_c`
+    covers the first inspection plus two repairs and their re-inspections. A
+    revision reuses the saved posting and drafts, so it reserves its own edit
+    pass instead of the posting and drafting stages.
+    """
+    caps = settings["budget_usd"]
+    if not settings.get("automated_review", False):
+        # Manual checking: the only model pass after drafting is one repair
+        # of a source that does not compile.
+        budget = {"pass_c": float(caps["pass_c"])}
+    else:
+        budget = {"review": 2 * float(caps["review"]), "fix": float(caps["fix"]),
+                  "pass_c": (5 * float(caps["pass_c"])
+                             if settings.get("inspection_enabled", True) else 0.0)}
+    if kind == "revise":
+        budget["revise"] = float(caps["revise"])
+    else:
+        budget["prepare"] = float(caps["prepare"])
+        budget["draft"] = float(caps["redraft" if kind == "redraft" else "draft"])
+    return budget
 
 
 # --------------------------------------------------------------------- lock
@@ -284,7 +339,7 @@ def reserved(data=None):
         if run.get("phase") in TERMINAL:
             continue
         budget = run.get("budget_usd") or {}
-        if run.get("kind") in ("revise", "redraft"):
+        if run.get("pipeline") == 2 or run.get("kind") in ("revise", "redraft"):
             spent = float((run.get("cost") or {}).get("total_usd", 0.0))
             total += max(0.0, sum(float(v or 0) for v in budget.values()) - spent)
             continue
@@ -294,6 +349,15 @@ def reserved(data=None):
         else:
             spent = float((run.get("cost") or {}).get("total_usd", 0.0))
             total += max(0.0, float(budget.get("pass_a", 0.0)) + pass_b - spent)
+    return round(total, 4)
+
+
+def application_spent(application_id, data=None):
+    """Reported cost across every attempt of one application."""
+    total = 0.0
+    for record in (data or load())["runs"]:
+        if (record.get("application_id") or record.get("id")) == application_id:
+            total += float((record.get("cost") or {}).get("total_usd", 0.0))
     return round(total, 4)
 
 

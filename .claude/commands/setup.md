@@ -223,7 +223,7 @@ Documents cover skills, experience, education, references, and behavioral signal
 - Commute or location constraints (if not visible from CV)
 - Job search configuration (use the questions from Path C Section 9 below)
 
-Then proceed to Step 3 to populate the non-skill files (`CLAUDE.md`, `cv/main_example.tex`, `.claude/skills/job-scraper/search-queries.md`). Step 3 will detect that the seven skill files are already populated and skip those substeps.
+Then proceed to Step 3 to populate the non-skill files (`CLAUDE.md`, `.claude/skills/job-scraper/search-queries.md`) and to run the CV readiness check. Step 3 will detect that the seven skill files are already populated and skip those substeps.
 
 ---
 
@@ -353,8 +353,21 @@ Add role-specific profile statement templates based on their background.
 ### 6. Update `07-interview-prep.md` *(Path B and C; skip if Path A populated it)*
 Create STAR examples from their actual experience (at least 3-4 examples). Path A leaves STAR stubs under "## STAR Candidates (Complete Manually)" rather than full examples; if any stubs are present, mention them in Step 4 so the user knows to flesh them out.
 
-### 7. Update `cv/main_example.tex`
-Replace placeholder personal data with their actual name, contact info, and add their education and most recent experience entries.
+### 7. CV readiness check (read-only)
+Setup **never creates, fills or edits a CV**. The application pipeline reads your own
+CV source at `cv/my_cv.tex` (a file, or a symlink to a CV kept in another repository)
+and treats it as a read-only master. Check only that it exists and is readable, and
+report the result:
+
+- present and readable -> say which variant switches it declares (`\cvrole`, `\cvcountry`), if any;
+- missing or unreadable -> tell the user to place their CV source there (or symlink it).
+  Do **not** generate one from examples or from the profile: a CV manufactured by setup
+  would become the fact source for every later application.
+
+Likewise confirm `cover_letters/my_cover.tex` exists (the optional role bases
+`my_cover_sde.tex` / `my_cover_ai.tex` override it for that CV variant); if it does not, tell the user to
+create their cover-letter base from `06-cover-letter-templates.md`. The anonymous
+fixtures under `tests/fixtures/latex/` are for CI and are never a fallback.
 
 ### 8. Generate `.claude/skills/job-scraper/search-queries.md`
 Replace all placeholder tokens in the search queries file with the user's actual information from Section 9 (or the equivalent follow-up questions in Path A's Step A7):
@@ -382,7 +395,7 @@ Present a summary:
 > - `.claude/skills/job-application-assistant/04-job-evaluation.md` - Personalized evaluation framework
 > - `.claude/skills/job-application-assistant/05-cv-templates.md` - CV templates with your profile statements
 > - `.claude/skills/job-application-assistant/07-interview-prep.md` - STAR examples from your experience
-> - `cv/main_example.tex` - Your LaTeX CV template
+> - `cv/my_cv.tex` - checked only (read-only master, never written by setup)
 > - `.claude/skills/job-scraper/search-queries.md` - Job search queries for `/scrape`
 >
 > **Privacy note:** the files above now contain your personal data and are *tracked by git*.

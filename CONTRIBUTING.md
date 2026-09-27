@@ -68,7 +68,7 @@ This is a decision, not a dogma: if cross-runtime standards mature to the point 
 
 - **Portal-skill contract**: `search`/`detail` commands, `--format json|table|plain`, stderr JSON errors with exit 1, backoff on 429/5xx, zero runtime dependencies by default. See `/add-portal`'s spec and `linkedin-search` as the reference implementation.
 - **Personal-use boundaries**: portal skills that touch ToS-restricted sources carry a prominent personal-use-only warning, and CI deliberately makes no live portal requests. Don't "fix" that.
-- **LaTeX changes**: both templates must compile (`lualatex` for the CV, `xelatex` for the cover letter) and hold their exact page counts. CI smoke-checks this.
+- **LaTeX changes**: the anonymous fixtures in `tests/fixtures/latex/` must compile (`pdflatex` for the CV, `xelatex` from `cover_letters/` for the letter) to exactly one page each. CI smoke-checks this.
 
 Questions and proposals are welcome in [Discussions](https://github.com/MadsLorentzen/ai-job-search/discussions) - an Idea thread costs nothing and can save you building the wrong thing :-)
 

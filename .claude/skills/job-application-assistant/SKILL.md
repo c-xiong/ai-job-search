@@ -14,17 +14,16 @@ framework_version: 1.4.0
 
 ## Workflow
 
-When the user provides a job posting (URL or text), follow this workflow:
+When the user provides a job posting (URL or text) and wants documents, follow the
+staged workflow in `.claude/commands/apply.md` (its "Shared rules" are the evidence,
+trust and skill-admission rules for every step below). There is no fit score or
+approval pause on this path; a fit evaluation runs only when the user asks for one.
 
-### Step 1: Research & Evaluate Fit
+### Step 1: Save the Posting and Map Requirements
 - Fetch the job posting content (use WebFetch for URLs). **A 403 is not a dead end** - follow the escalation order in `09-web-research.md` before concluding a page is unavailable, and prefer the employer's own careers posting over an aggregator listing
 - Keep the **full posting text verbatim** for Step 3b to archive - never a summary
-- Analyze the posting for required competencies, keywords, and priorities
-- Research the company (website, LinkedIn, mission, recent news), per `09-web-research.md`
-- Score the posting against the candidate's profile using the framework in `04-job-evaluation.md`
-- Present the evaluation table and verdict
-- Suggest whether the candidate should call the employer before applying (see `04-job-evaluation.md` for guidance)
-- Ask the user if they want to proceed with an application
+- Map the decisive requirements to real evidence (the brief in `/apply` "Stage: draft"), and surface any explicit hard conflict with the deal-breakers in CLAUDE.md before drafting
+- Only on request: score the posting with `04-job-evaluation.md`, or research the company beyond the specific statements a cover letter needs
 
 ### Step 2: Tailor CV
 - Read `cv/my_cv.tex`, using the selected `sde` or `ai` content base as the starting point; existing tailored CVs are phrasing references only
@@ -36,7 +35,7 @@ When the user provides a job posting (URL or text), follow this workflow:
 ### Step 3: Write Cover Letter
 - Follow the writing style rules in `03-writing-style.md` (critical: no em-dashes, no cliches)
 - Follow the template structure in `06-cover-letter-templates.md`
-- Start from `cover_letters/my_cover.tex`: preserve unbracketed personal narrative by default and fill its role-fit/company slots; do not silently regenerate the whole letter
+- Start from the role's cover base (`cover_letters/my_cover_sde.tex` or `my_cover_ai.tex`, matching the CV variant; `my_cover.tex` if absent): obey its TAILORING RULES block, pick bullets only from its bank, and fill its slots; do not silently regenerate the whole letter
 - Create `cover_letters/cover_<company>_<role>.tex`
 - Ensure the letter connects the strongest specific experience to the role rather than answering every requirement; use no more than one honest adjacent-skill bridge and omit generic programme language
 
@@ -72,7 +71,7 @@ When the user provides a job posting (URL or text), follow this workflow:
 ## Quick Commands
 
 The user may also ask for individual steps without the full workflow:
-- "Evaluate this job posting" - Step 1 only
+- "Evaluate this job posting" - a fit evaluation with `04-job-evaluation.md` (on request only)
 - "Write a CV for [company]" - Step 2 only
 - "Write a cover letter for [role] at [company]" - Step 3 only
 - "Help me prepare for an interview at [company]" - Step 4 only

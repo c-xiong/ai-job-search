@@ -4,21 +4,25 @@ framework_version: 1.4.0
 
 # Cover Letter Templates and Tailoring Guide
 
-The personalized content base is `cover_letters/my_cover.tex`. It contains the
-candidate's stable personal narrative plus explicit square-bracketed tailoring
-slots. When generating an application, preserve the unbracketed prose's voice,
-facts and argument by default; fill the role-fit and company-motivation slots
-from the posting and independently verified research. Reorder or trim fixed
-evidence only when the role's relevance or the one-page limit requires it, and
-report any material rewrite. It is one shared base for SDE, AI and ML
-applications; existing job-specific letters are phrasing references only.
+The personalized content bases follow the same `sde`/`ai` switch that selects
+the CV variant (ML and data-science roles use `ai`):
+
+| Role base | Cover base |
+|---|---|
+| `sde` | `cover_letters/my_cover_sde.tex` |
+| `ai` | `cover_letters/my_cover_ai.tex` |
+| fallback (variant file absent) | `cover_letters/my_cover.tex` |
+
+Each base opens with a **TAILORING RULES** comment block; those rules are
+binding and take precedence over the generic guidance below. Existing
+job-specific letters are phrasing references only.
 
 ### Base-content contract
 
-- **Stable by default:** personal background, core evidence, strengths, working stack, and desired direction.
-- **Tailor every time:** salutation, role, company, `[ROLE FIT]`, and `[WHY THIS COMPANY]`.
-- **Selective edits allowed:** reorder the three evidence bullets, remove the least relevant one, or tighten wording to preserve one page.
-- **Do not silently regenerate:** changing the candidate's core narrative, goals, or emphasis requires a stated reason in the final tailoring report.
+- **Structure is fixed:** short `[WHY THEM]` opening -> one who-I-am paragraph -> 3-4 bold-labelled bullets -> optional one-sentence `[EXTRA]` -> closing (with `[RELOCATION]` only for roles outside the Zurich area). Target 230-280 words, one page.
+- **Tailor every time:** recipient block, subject, salutation, `[WHY THEM]`, bullet choice and order, and the optional `[EXTRA]`/`[RELOCATION]` slots.
+- **Bullets come from the base's active list and BULLET BANK only.** Bold labels may echo the posting's wording; facts and numbers never change, and a bullet is never stretched to cover a requirement it does not meet. Respect each base's DO NOT CLAIM list.
+- **Do not silently regenerate:** changing the who-I-am paragraph or adding evidence outside the bank requires a stated reason in the final tailoring report.
 
 ## Template: Custom cover.cls (XeLaTeX)
 

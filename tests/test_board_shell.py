@@ -118,16 +118,16 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn('data-expand="board"', self.html)
         self.assertIn("expanded-board", self.css)
         self.assertIn("tailor-shell", self.css)
-        self.assertIn("Gaps, stated not smoothed", self.js)
+        self.assertIn("Tailoring choices", self.js)
         self.assertIn("runpill", self.html)
-        for marker in ("Retry from beginning", "provider_rate_limit", "failure-card",
-                       "data-run-base", "latestApplications",
+        for marker in ("Regenerate", "continuerun", "quota_exhausted", "failure-card",
+                       "data-gen-base", "latestApplications", "progressPanel",
                        "retry_of"):
             self.assertIn(marker, self.js if marker != "failure-card" else self.css)
         # The job identity lives in the body, in sentence case - never in the
         # app bar's uppercase slot, and never twice.
         self.assertIn(".runtitle h1{", self.css)
-        self.assertIn("const runTitle=run=>", self.js)
+        self.assertIn("const runTitle=(run,action=\"\")=>", self.js)
         for view in ('openView("tailor",[crumbRun(run)]',
                      'openView("preview",[crumbRun(run),{label:"Preview"}]',
                      'openView("revise",[crumbRun(run),{label:"Revise"}]'):
@@ -148,15 +148,14 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn('<button class="brand" data-nav="board"', self.html)
         self.assertIn(".brand{", self.css)
         self.assertIn("font-size:15px;font-weight:700", self.css)
-        # Exactly two tabs. Runs is not one of them (§0.3): it has no
-        # full-width form, so a run is reached from the rail and sits under
-        # Board, which stays lit while you are inside one.
+        # Three tabs (owner sign-off 2026-09-27, DESIGN.md §14): a run you are
+        # inside lights Runs, not Board.
         self.assertIn('<nav class="nav" aria-label="Primary">', self.html)
         for tab in ('<button class="navitem" data-nav="board">Board</button>',
+                    '<button class="navitem" data-nav="runs">Runs</button>',
                     '<button class="navitem" data-nav="companies">Companies</button>'):
             self.assertIn(tab, self.html)
-        self.assertNotIn('data-nav="runs"', self.html)
-        self.assertIn('VIEW==="companies"?"companies":"board"', self.js)
+        self.assertIn('["tailor","preview","revise"].includes(VIEW)?"runs":"board"', self.js)
         # Underlined, not filled - a top-level tab must not read as a chip.
         self.assertIn(".navitem.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--selbar)}", self.css)
         self.assertIn('node.setAttribute("aria-current","page")', self.js)
@@ -189,11 +188,11 @@ class ShellMarkupTest(unittest.TestCase):
 
     def test_job_reader_and_compiled_pdf_preview_are_real_views(self):
         for marker in ("reader-shell", "reader-queue", "reader-decide",
-                       "preview-shell", "verify-rail", "pdf-stage"):
+                       "preview-shell", "screen-rail", "check-rail", "pdf-stage"):
             self.assertIn(marker, self.css)
         for marker in ("renderReader", "renderPreview", "data-reader-row",
                        "data-preview-filter", "data-recompile",
-                       "/api/pdf/", "Rendered from the compiled PDFs"):
+                       "/api/pdf/", "data-reveal", "data-mark", "regen-form"):
             self.assertIn(marker, self.js)
         # The frames are built per document kind now, so the titles are in the
         # branch rather than in two literal tags.
@@ -202,20 +201,17 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn('class="pdf-frame ${kind}"', self.js)
 
     def test_a_run_can_be_asked_for_one_document_instead_of_both(self):
-        """Some postings are worth a letter and not a fresh CV, and the choice
-        is made once, after the fit evaluation and before any drafting."""
-        for marker in ("data-run-scope", "scopeOptions", "DRAFT_LABEL", "docKinds",
-                       "Cover letter only", "Choose after fit evaluation.",
-                       "Choose & draft documents"):
+        """Some postings are worth a letter and not a fresh CV. The choice is
+        made once, before Generate: there is no fit evaluation to wait for."""
+        for marker in ("data-gen-scope", "scopeOptions", "DRAFT_LABEL", "docKinds",
+                       "Cover letter only", "data-gen-country"):
             self.assertIn(marker, self.js)
         for removed in ("data-scope-start", "TAILOR_LABEL", "const START={base:",
-                        "const base_cv=START.base,scope=START.scope"):
+                        "Choose after fit evaluation.", ">Evaluate fit</button>",
+                        'closest(".approve")', "Start fit evaluation"):
             self.assertNotIn(removed, self.js)
-        self.assertIn('>Evaluate fit</button>', self.js)
-        self.assertIn('{job_url:url,kind:"apply",note}', self.js)
-        # The approval card sends the scope it is showing, not a default.
-        self.assertIn('scope:document.querySelector("[data-run-scope]")?.value||"both"',
-                      self.js)
+        self.assertIn('>Generate</button>', self.js)
+        self.assertIn('{job_url:url,kind:"apply",note,scope,base_cv,cv_country}', self.js)
 
     def test_run_output_can_follow_the_latest_line(self):
         self.assertIn('let RUN_FOLLOW=true;', self.js)
@@ -551,7 +547,7 @@ class RouteBehaviourTest(unittest.TestCase):
 RUN_OUTPUT_HARNESS = r"""
 const fs=require("fs");
 const src=fs.readFileSync(process.argv[2],"utf8");
-const start=src.indexOf("function renderTailor("),end=src.indexOf("function renderReader(",start);
+const start=src.indexOf("const STEPS=["),end=src.indexOf("function renderReader(",start);
 if(start<0||end<start)throw new Error("renderTailor was not found in app.js");
 
 const ctx={nodes:{},html:""};
@@ -565,29 +561,29 @@ ctx.nodes["tailor-view"]=tailor;
 const build=new Function("ctx",`
   const el=id=>ctx.nodes[id]||(ctx.nodes[id]={innerHTML:"",scrollTop:0,scrollHeight:0});
   const esc=value=>String(value==null?"":value);
-  const PHASE_STEP={evaluating:1,awaiting_approval:1,queued:2,drafting:2,reviewing:3,compiling:5,inspecting:6,done:6};
-  const RUNNING=["evaluating","queued","drafting","reviewing","compiling","inspecting"];
-  const DRAFT_STEP={both:["Draft CV + cover letter","both"],cv:["Draft CV","cv"],cover:["Draft cover letter","cover"]};
+  const PHASE_STEP={evaluating:1,awaiting_approval:1,queued:1,preparing:1,drafting:2,reviewing:2,revising:2,compiling:3,inspecting:3,publishing:3,done:3};
+  const STAGE_COUNT=3;
+  const RUNNING=["evaluating","queued","preparing","drafting","reviewing","revising","compiling","inspecting","publishing"];
   const DOC_TITLE={cv:"CV",cover:"cover letter"};
   const docKinds=scope=>(scope||"both")==="both"?["cv","cover"]:[scope];
-  const scopeOptions=()=>"<option>scope</option>",baseOptions=()=>"<option>base</option>";
-  const DRAFT_LABEL={both:"Draft both",cv:"Draft CV",cover:"Draft cover"};
-  const STEPS=[["Evaluate fit","eval"],["Draft","draft"],["Review","review"],["Revise","revise"],["Compile","compile"],["Verify","verify"]];
   const runTitle=()=>"<header></header>",crumbRun=()=>({}),openView=()=>{},restoreWorkspace=()=>{};
-  let RUNS=[],EV=[],ACTIVE_RUN=null,RUN_FOLLOW=true;
+  let RUNS=ctx.runs||[],EV=[],ACTIVE_RUN=null,RUN_FOLLOW=true;
   const RUN_LOG_SCROLL=new Map();
   ${src.slice(start,end)}
-  return {renderTailor,setFollow:value=>RUN_FOLLOW=value,active:()=>ACTIVE_RUN};
+  return {renderTailor,setFollow:value=>RUN_FOLLOW=value,active:()=>ACTIVE_RUN,setRuns:v=>RUNS=v};
 `);
 const R=build(ctx);
-const run={id:"run-1",application_id:"run-1",kind:"apply",phase:"awaiting_approval",scope:"both",
-  company:"Acme",role:"Engineer",targets:{cv:"cv/secret.tex",cover:"cover/secret.tex"},fit:{}};
+const run={id:"run-1",application_id:"run-1",kind:"apply",pipeline:2,phase:"drafting",scope:"cover",
+  company:"Acme",role:"Engineer",targets:{cv:"cv/secret.tex",cover:"cover/secret.tex"}};
 let bad=0;
 const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
 
 R.renderTailor(run);
-t("targets stay hidden before approval",!ctx.html.includes("cv/secret.tex")&&!ctx.html.includes("cover/secret.tex"));
-t("the pending document decision is explicit",ctx.html.includes("Choose after fit evaluation."));
+t("the chosen scope shows its target",ctx.html.includes("cover/secret.tex"));
+t("an unselected target stays hidden",!ctx.html.includes("cv/secret.tex"));
+t("three owner-facing stages",ctx.html.includes("stage 2 of 3"));
+t("no fit evaluation card on a staged run",!ctx.html.includes("fit evaluation"));
+t("a running run offers Cancel, not Continue",ctx.html.includes("cancelrun")&&!ctx.html.includes("continuerun"));
 t("follow is checked by default",ctx.html.includes("data-run-follow checked"));
 t("the newest line is visible",ctx.nodes.runlog.scrollTop===ctx.nodes.runlog.scrollHeight);
 
@@ -597,16 +593,34 @@ R.renderTailor(run);
 t("turning follow off preserves the reading position",ctx.nodes.runlog.scrollTop===123);
 t("the unchecked state survives a repaint",ctx.html.includes("data-run-follow >"));
 
-R.renderTailor({...run,phase:"queued",approved_at:"2026-08-24T15:00:00",scope:"cover"});
-t("approved scope reveals its final target",ctx.html.includes("cover/secret.tex"));
-t("an unselected target stays hidden",!ctx.html.includes("cv/secret.tex"));
-t("approved output is labelled writing to",ctx.html.includes(">Writing to<"));
+R.setFollow(true);
+const failed={...run,phase:"failed",failure_code:"quota_exhausted",error:"session limit",failed_phase:"reviewing",
+  progress:{docs:{cover:{state:"draft saved",pdf:null}},checks:{},pending:["review","build","mechanical","publish"],issues:[],conflicts:[]}};
+R.renderTailor(failed);
+t("a stopped run offers Continue and Regenerate",ctx.html.includes("continuerun")&&ctx.html.includes("retryrun"));
+t("the card says what was saved and what remains",ctx.html.includes("draft saved")&&ctx.html.includes("Remaining: review"));
+t("an exhausted allowance is not called transient",ctx.html.includes("does not reset the allowance"));
+R.renderTailor({...failed,failure_code:"hard_conflict"});
+t("a hard conflict offers an explicit override",ctx.html.includes("Continue anyway")&&ctx.html.includes('data-proceed="1"'));
+R.setRuns([{id:"run-2",continue_of:"run-1",attempt:2}]);
+R.renderTailor(failed);
+t("an attempt already continued links forward instead of offering Continue again",
+  !ctx.html.includes("continuerun")&&ctx.html.includes('data-run="run-2"'));
+t("every attempt is one tab in a single switcher",
+  (ctx.html.match(/class="attempt /g)||[]).length===2&&ctx.html.includes('aria-selected="true"'));
+t("an earlier attempt points to the latest one",ctx.html.includes("Go to the latest (#2)"));
+R.renderTailor({...failed,id:"run-2",continue_of:"run-1",attempt:2});
+t("the latest attempt shows no redirect note",!ctx.html.includes("Go to the latest"));
+R.setRuns([]);
+R.renderTailor({...run,pipeline:undefined,phase:"awaiting_approval",fit:{overall:78,verdict:"good"}});
+t("a legacy gate is continued, not re-evaluated",ctx.html.includes("continuerun")&&!ctx.html.includes("retryrun"));
+t("its earlier evaluation stays readable",ctx.html.includes("Earlier fit evaluation"));
 process.exit(bad?1:0);
 """
 
 
 class RunOutputBehaviourTest(unittest.TestCase):
-    def test_follow_and_post_fit_document_rendering(self):
+    def test_follow_and_staged_run_rendering(self):
         node = shutil.which("node")
         if not node:
             self.skipTest("node is not installed; run output behaviour is unchecked")
@@ -785,7 +799,7 @@ const build=new Function("ctx",`
     node.setAttribute=(key,value)=>{node.state[key]=value};
     node.removeAttribute=key=>{delete node.state[key]};
     return node};
-  ctx.tabs=[makeTab("board"),makeTab("companies")];
+  ctx.tabs=[makeTab("board"),makeTab("runs"),makeTab("companies")];
   const document={querySelectorAll:()=>ctx.tabs};
   const RUNS=ctx.RUNS;
   let ACTIVE_RUN=null,VIEW=null;
@@ -815,11 +829,11 @@ t("the tailor view still refreshes itself",ctx.painted[0]==="r-1");
 ctx.painted=[];R.restoreWorkspace();R.poll();
 t("the workspace is left alone",ctx.painted.length===0);
 
-// Exactly one tab is lit, and a run keeps you under Board.
+// Exactly one tab is lit, and a run lights Runs.
 R.openView("companies",null,"/companies");
 t("Companies lights its own tab",String(R.lit())==="companies");
 R.openView("preview",[R.run(RUN),{label:"Preview"}],"/run/r-1/preview");
-t("a run stays under Board",String(R.lit())==="board");
+t("a run lights Runs",String(R.lit())==="runs");
 R.restoreWorkspace();
 t("home lights Board",String(R.lit())==="board");
 
@@ -1036,6 +1050,8 @@ const build=new Function("ctx",`
   const pollActivity=()=>{};
   const openTextModal=async()=>ctx.note;
   const renderTailor=run=>ctx.opened.push(run.id);
+  const document={querySelector:selector=>ctx.picks[selector]?{value:ctx.picks[selector]}:null};
+  const DRAFT_LABEL={both:"Draft CV + cover letter",cv:"Draft CV",cover:"Draft cover letter"};
   ${src.slice(start,end)}
   return {startTailor,postRun};
 `);
@@ -1043,7 +1059,7 @@ const build=new Function("ctx",`
 const RUN={id:"r-20260918-120000-acme-abc123",company:"Acme",role:"ML Engineer"};
 const JOBS=[{url:"https://ex.com/a",company:"Acme",title:"ML Engineer"}];
 const make=(status,body,serverRuns)=>{
-  const ctx={JOBS,RUNS:[],serverRuns:serverRuns||[],toasts:[],opened:[],note:"",posted:[],
+  const ctx={JOBS,RUNS:[],serverRuns:serverRuns||[],toasts:[],opened:[],note:"",posted:[],picks:{},
     fetch:async(url,init)=>{ctx.posted.push([url,JSON.parse(init.body)]);
       return {ok:status<400,status,json:async()=>body}}};
   return [build(ctx),ctx];
@@ -1059,6 +1075,16 @@ const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
   t("starting an evaluation opens its run",ctx.opened.join("")===RUN.id);
   t("and says nothing on top of the button",ctx.toasts.length===0);
   t("the one-off instruction still reaches the request",ctx.posted[0][1].kind==="apply");
+  t("with no picker on screen the defaults are sent",
+    ctx.posted[0][1].scope==="both"&&ctx.posted[0][1].base_cv==="auto"&&ctx.posted[0][1].cv_country==="default");
+
+  // The documents, base and country are chosen before Generate - there is no
+  // evaluation to wait for - and all three reach the request.
+  [R,ctx]=make(202,{run_id:RUN.id,phase:"queued"},[RUN]);
+  ctx.picks={"[data-gen-scope]":"cover","[data-gen-base]":"ai","[data-gen-country]":"de"};
+  await R.startTailor("https://ex.com/a");
+  t("the chosen scope, base and country are posted",
+    ctx.posted[0][1].scope==="cover"&&ctx.posted[0][1].base_cv==="ai"&&ctx.posted[0][1].cv_country==="de");
 
   // A posting that already has a run in flight: the server hands back which one,
   // so show it instead of describing it.
@@ -1090,7 +1116,7 @@ const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
 
 
 class StartEvaluationTest(unittest.TestCase):
-    """Pressing Evaluate fit opens the run, rather than toasting over itself."""
+    """Pressing Generate opens the run, rather than toasting over itself."""
 
     def test_the_press_navigates_to_the_run_it_started(self):
         node = shutil.which("node")

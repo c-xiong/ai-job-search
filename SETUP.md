@@ -50,7 +50,7 @@ Install a LaTeX distribution to compile the generated `.tex` files to PDF:
 - **macOS:** [MacTeX](https://tug.org/mactex/)
 - **Linux:** `sudo apt install texlive-full` or `sudo dnf install texlive-scheme-full`
 
-The CV compiles with `lualatex` (pdflatex often fails on modern MiKTeX installs with `fontawesome5` font-expansion errors). The cover letter compiles with `xelatex` because `cover.cls` requires `fontspec` for its custom Lato/Raleway fonts.
+The CV compiles with `pdflatex` (the stock one-page `article` layout relies on pdfTeX's `glyphtounicode` for a clean ATS text layer). The cover letter compiles with `xelatex` because `cover.cls` requires `fontspec` for its bundled fonts; it is compiled from `cover_letters/` so those fonts resolve. The single source for engines and page counts is `tools/board/templates.py`.
 
 #### Minimal TeX install: TinyTeX/BasicTeX
 
@@ -68,8 +68,8 @@ Then install the template dependencies:
 
 ```bash
 tlmgr install \
-  moderncv fontawesome5 fontawesome6 academicons import luatexbase pgf \
-  titlesec textpos xltxtra xunicode cite realscripts needspace
+  fontawesome5 marvosym enumitem etoolbox accsupp charter pgf \
+  titlesec textpos xltxtra xunicode cite realscripts needspace xcharter
 ```
 
 For BasicTeX/MacTeX, make sure the TeX binary directory is on `PATH` first (for example via `/Library/TeX/texbin`), then run the same `tlmgr install ...` command.
@@ -77,7 +77,7 @@ For BasicTeX/MacTeX, make sure the TeX binary directory is on `PATH` first (for 
 Quick smoke tests after setup:
 
 ```bash
-cd cv && lualatex -interaction=nonstopmode -halt-on-error main_example.tex && cd ..
+mkdir -p build/smoke && pdflatex -interaction=nonstopmode -halt-on-error -output-directory=build/smoke tests/fixtures/latex/cv_fixture.tex
 
 SMOKE_DIR="$(mktemp -d /tmp/ai-job-cover-smoke.XXXXXX)"
 cp -R cover_letters/cover.cls cover_letters/OpenFonts "$SMOKE_DIR/"
@@ -113,7 +113,7 @@ initexmf --set-config-value=[MPM]AutoInstall=1
 If you'd rather not rely on on-the-fly installs at all (for example, for a fully offline compile later), pre-install the same package set the macOS TinyTeX section above lists, using MiKTeX's package manager:
 
 ```powershell
-mpm --admin --install=moderncv --install=fontawesome5 --install=fontawesome6 --install=academicons --install=import --install=luatexbase --install=pgf --install=titlesec --install=textpos --install=xltxtra --install=xunicode --install=cite --install=realscripts --install=needspace
+mpm --admin --install=fontawesome5 --install=marvosym --install=enumitem --install=etoolbox --install=accsupp --install=charter --install=xcharter --install=pgf --install=titlesec --install=textpos --install=xltxtra --install=xunicode --install=cite --install=realscripts --install=needspace
 ```
 
 Drop `--admin` if MiKTeX is installed for the current user only. If a package name doesn't resolve, `mpm --find=<name>` searches the repository for the correct name.
@@ -121,7 +121,7 @@ Drop `--admin` if MiKTeX is installed for the current user only. If a package na
 Quick smoke tests after setup (PowerShell):
 
 ```powershell
-Set-Location cv; lualatex -interaction=nonstopmode -halt-on-error main_example.tex; Set-Location ..
+New-Item -ItemType Directory -Force build\smoke | Out-Null; pdflatex -interaction=nonstopmode -halt-on-error -output-directory=build/smoke tests/fixtures/latex/cv_fixture.tex
 
 $SmokeDir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "ai-job-cover-smoke-$(Get-Random)")
 Copy-Item cover_letters\cover.cls, cover_letters\OpenFonts -Destination $SmokeDir -Recurse
@@ -217,7 +217,7 @@ All three paths produce the same result: fully populated profile files.
 | `04-job-evaluation.md` | Personalized skill match areas and career goals |
 | `05-cv-templates.md` | Profile statement templates for your background |
 | `07-interview-prep.md` | STAR examples from your experience |
-| `cv/main_example.tex` | Your LaTeX CV with actual details |
+| `cv/my_cv.tex` | **Not written by setup.** Place your own CV source here (or symlink it); the pipeline reads it and never edits it |
 | `search-queries.md` | Job search queries for `/scrape` |
 
 ### Re-running setup
@@ -272,17 +272,17 @@ After `/apply` creates the LaTeX files:
 
 ```bash
 # Bash / zsh / Git Bash
-cd cv && lualatex main_<company>_<role>.tex && cd ..
-cd cover_letters && xelatex cover_<company>_<role>.tex && cd ..
+cd cv && pdflatex -output-directory=build main_<company>_<role>.tex && cd ..
+cd cover_letters && xelatex -output-directory=build cover_<company>_<role>.tex && cd ..
 ```
 
 ```powershell
 # PowerShell
-Set-Location cv; lualatex main_<company>_<role>.tex; Set-Location ..
-Set-Location cover_letters; xelatex cover_<company>_<role>.tex; Set-Location ..
+Set-Location cv; pdflatex -output-directory=build main_<company>_<role>.tex; Set-Location ..
+Set-Location cover_letters; xelatex -output-directory=build cover_<company>_<role>.tex; Set-Location ..
 ```
 
-These commands apply to the stock templates (moderncv CV, `cover.cls` cover letter). If you'd rather use your own LaTeX template, run `/add-template` — it captures the template's compile engine, fonts, style rules, and page limit, test-compiles it, and wires it into `/apply`. See the "LaTeX templates" section in the README.
+The board runs these for you; these commands apply to the stock toolchain (pdfLaTeX `article` CV, `cover.cls` letter), and both documents must be exactly one page. If you'd rather use your own LaTeX template, run `/add-template` — it captures the template's compile engine, fonts, style rules, and page limit, test-compiles it, and wires it into `/apply`. See the "LaTeX templates" section in the README.
 
 ## 8. Pulling upstream updates into your fork
 
@@ -319,9 +319,8 @@ This is expected if you haven't set up salary benchmarking. The `/apply` workflo
 Make sure Bun is installed and you ran `bun install` in each CLI directory. The tools require network access to fetch job listings.
 
 ### LaTeX compilation errors
-- CV: uses `lualatex` (pdflatex often fails on modern MiKTeX with `fontawesome5` font-expansion errors; lualatex handles the same sources cleanly)
-- Cover letter: uses `xelatex` (for custom fonts in `OpenFonts/fonts/`)
-- Make sure your LaTeX distribution includes the `moderncv` package
+- CV: uses `pdflatex` (the stock layout's `\pdfgentounicode` is a pdfTeX primitive, so `lualatex` fails on it)
+- Cover letter: uses `xelatex`, run from `cover_letters/` (fonts resolve from `OpenFonts/fonts/`)
 
 ### Fonts not found in cover letter
 The cover letter template expects fonts in `cover_letters/OpenFonts/fonts/`. Make sure this directory exists and contains the Lato and Raleway font files.

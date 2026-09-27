@@ -2,8 +2,10 @@ const T=document.querySelector('meta[name="board-token"]').content;
 const el=id=>document.getElementById(id);
 const esc=value=>String(value==null?"":value).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const ACTIVE=["star","yes","new","maybe"];
-const RUNNING=["evaluating","queued","drafting","reviewing","compiling","inspecting"];
-const PHASE_STEP={evaluating:1,awaiting_approval:1,queued:2,drafting:2,reviewing:3,compiling:5,inspecting:6,done:6};
+const RUNNING=["evaluating","queued","preparing","drafting","reviewing","revising","compiling","inspecting","publishing"];
+// Three owner-facing stages; the checkpoint keeps the detailed internal ones.
+const PHASE_STEP={evaluating:1,awaiting_approval:1,queued:1,preparing:1,drafting:2,reviewing:2,revising:2,compiling:3,inspecting:3,publishing:3,done:3};
+const STAGE_COUNT=3;
 let JOBS=[],STATUSES=[],FILTERS=[],filter="active",q="",sel=0;
 let RUNS=[],QUEUE=[],LEDGER=null,BUDGET=null,RUNPOLL=null,ACTIVE_RUN=null;
 let PREVIEW_RUN=null;
@@ -201,15 +203,19 @@ function shown(){
   return sorter?rows.sort(sorter):rows;
 }
 const selectedJob=()=>shown()[sel]||null;
-const baseOptions=(selected="auto",recommended="")=>[
-  ["auto",`Auto${recommended?" (recommended: "+recommended.toUpperCase()+")":""}`],
-  ["sde","SDE"],["ai","AI / ML Engineer"]
-].map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
 // Not every posting deserves both documents: a speculative application may want
 // the letter alone, and a portal that only takes a CV has nowhere to put one.
 // The fit evaluation is the first honest moment to make that choice, so it lives
 // only on the approval card instead of being asked once before and once after.
 const SCOPES=[["both","CV + cover letter"],["cv","CV only"],["cover","Cover letter only"]];
+const COUNTRIES=[["default","Country: master default"],["ch","Country: CH"],["de","Country: DE"]];
+// Chosen before the run starts: there is no evaluation to wait for any more.
+// The CV is one of the two master variants, chosen here; the default follows
+// the title the same way the supervisor's `auto` would.
+const AI_TITLE=/\b(machine learning|ml engineer|ml scientist|data scientist|ai|artificial intelligence|llm|nlp|generative ai)\b/i;
+const variantOptions=url=>{const title=(JOBS.find(j=>j.url===url)||{}).title||"",pick=AI_TITLE.test(title)?"ai":"sde";
+  return [["sde","CV: SDE"],["ai","CV: AI"]].map(([value,label])=>`<option value="${value}" ${pick===value?"selected":""}>${label}</option>`).join("")};
+const generatePicker=url=>`<div class="generate-picker"><select data-gen-scope aria-label="Documents">${scopeOptions("both")}</select><select data-gen-base aria-label="CV variant">${variantOptions(url)}</select><select data-gen-country aria-label="Work-authorisation line">${COUNTRIES.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div><button class="primary tailor" data-tailor="${esc(url)}">Generate</button>`;
 const DRAFT_LABEL={both:"Draft CV + cover letter",cv:"Draft CV",cover:"Draft cover letter"};
 const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and audits every factual claim."],
   cv:["Draft CV","Tailors the CV and audits every factual claim."],
@@ -362,8 +368,8 @@ function renderJob(){
     <div class="posting"><span class="label">Posting</span><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
     <div class="jobactions"><div class="statusbuttons">${statusButtons}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
-      <button class="primary tailor" data-tailor="${esc(j.url)}">Evaluate fit</button>
-      <div class="hint">opens the run · you choose documents after the fit evaluation</div></div>`;
+      ${generatePicker(j.url)}
+      <div class="hint">posting → write and check → build and verify · no scoring, no approval pause</div></div>`;
   loadPosting(j);
 }
 
@@ -417,25 +423,29 @@ function renderRuns(){
   if(!counts.length&&drafted)counts.push(drafted+" drafted");
   el("runqueue").textContent=counts.join(" · ");
   el("runlist").innerHTML=rows.length?rows.map(r=>{
-    const step=PHASE_STEP[r.phase]||1,pct=Math.round(step/6*100),running=RUNNING.includes(r.phase),bad=["failed","orphaned"].includes(r.phase);
+    const step=PHASE_STEP[r.phase]||1,pct=Math.round(step/STAGE_COUNT*100),running=RUNNING.includes(r.phase),bad=["failed","orphaned"].includes(r.phase);
     // Live rows answer "how far along"; finished ones answer "when, and which
     // attempt" - the two columns the Applications table used to carry.
     const meta=[r.phase.replaceAll("_"," ")];
-    if(running||r.phase==="awaiting_approval")meta.push("step "+step+"/6");
+    if(running||r.phase==="awaiting_approval")meta.push("stage "+step+"/"+STAGE_COUNT);
     else if(r.started_at)meta.push(r.started_at.slice(5,16).replace("T"," "));
     if(elapsed(r))meta.push(elapsed(r));
     if((r.attempt||1)>1)meta.push("attempt "+r.attempt);
     // Nothing navigates except a link you aimed at: the card itself is inert.
     const actions=[`<button class="linkish runopen" data-run="${esc(r.id)}">${running?"Watch run":"Open run"} <span class="runarrow">↗</span></button>`];
     if(r.phase==="done")actions.push(`<button class="linkish" data-preview="${esc(r.id)}">Preview</button>`,`<button class="linkish" data-revise="${esc(r.id)}">Revise</button>`);
+    else if(["failed","cancelled","awaiting_approval"].includes(r.phase))actions.push(`<button class="linkish continuerun" data-run-id="${esc(r.id)}">Continue</button>`);
     return `<div class="runitem ${running?"live":""} ${ACTIVE_RUN===r.id?"selected":""}">
       <div class="runwho"><strong>${esc(r.company)}</strong><span class="runrole">${esc(r.role)}</span></div>
       <div class="runmeta ${bad?"runerror":""}">${meta.map(bit=>`<span>${esc(bit)}</span>`).join("<span>·</span>")}</div>
       ${running?`<div class="runprogress"><span style="width:${pct}%"></span></div>`:""}
       <div class="runactions">${actions.join("")}</div></div>`;
   }).join(""):'<div class="panel-empty">No runs yet.</div>';
-  const active=live.find(r=>RUNNING.includes(r.phase))||live[0];el("striprunning").textContent=live.length?live.length+" running":"";
-  if(active){el("runpill").hidden=false;el("runpill").innerHTML=`<span>Tailoring <strong>${esc(active.company)}</strong> · step ${PHASE_STEP[active.phase]||1} of 6</span><span class="elapsed">${elapsed(active)}</span>`;el("runpill").dataset.run=active.id}
+  // The pill and the strip count only work in progress. A run parked for
+  // approval or orphaned by a restart is not "tailoring" anything; it waits
+  // in the Runs list for Continue or Kill.
+  const running=live.filter(r=>RUNNING.includes(r.phase)),active=running[0];el("striprunning").textContent=running.length?running.length+" running":"";
+  if(active){el("runpill").hidden=false;el("runpill").innerHTML=`<span>Tailoring <strong>${esc(active.company)}</strong> · stage ${PHASE_STEP[active.phase]||1} of ${STAGE_COUNT}</span><span class="elapsed">${elapsed(active)}</span>`;el("runpill").dataset.run=active.id}
   else el("runpill").hidden=true;
   el("right-sep").hidden=!active;
   if(VIEW==="tailor"&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
@@ -468,9 +478,11 @@ async function postRun(path,body){
 // and `Esc` comes back.
 async function startTailor(url){
   const j=JOBS.find(x=>x.url===url);if(!j)return;
-  const note=await openTextModal({eyebrow:"Evaluate application",title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Start fit evaluation"});
+  const pick=name=>document.querySelector(`[data-gen-${name}]`)?.value;
+  const scope=pick("scope")||"both",base_cv=pick("base")||"auto",cv_country=pick("country")||"default";
+  const note=await openTextModal({eyebrow:"Generate "+(DRAFT_LABEL[scope]||"").replace(/^Draft /,""),title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Generate"});
   if(note===null)return;
-  const started=await postRun("/api/runs",{job_url:url,kind:"apply",note});
+  const started=await postRun("/api/runs",{job_url:url,kind:"apply",note,scope,base_cv,cv_country});
   // `run_id` on a refusal means this posting already has a run: `postRun` has
   // said so, and the honest next move is to show it rather than leave you to
   // find it in the rail.
@@ -479,43 +491,93 @@ async function startTailor(url){
   // The run list is refreshed inside postRun and the supervisor records the run
   // before it answers, so this is the blipped-poll case rather than a real one.
   // Say something anyway: a press that neither moves nor speaks reads as broken.
-  if(started.ok)toast("evaluation queued — open it from Runs",{ms:3000});
+  if(started.ok)toast("generation queued — open it from Runs",{ms:3000});
 }
 
 // A run's identity belongs in the document it is about, not squeezed into the
 // app bar's uppercase breadcrumb slot where it read as a system label.
-const runTitle=run=>`<header class="runtitle"><h1>${esc(run.company)}</h1><p>${esc(run.role)}</p></header>`;
+const runTitle=(run,action="")=>`<header class="runtitle"><div><h1>${esc(run.company)}</h1><p>${esc(run.role)}</p></div>${action}</header>`;
+// You apply on the posting's own site; the board opens it and records that you
+// did. "Mark applied" moves Notion Stage Interested -> Applied and the tracker
+// row drafted -> applied; any later status is shown instead of the button.
+function applyActions(run){
+  if(run.phase!=="done")return "";
+  const open=run.job_url?`<a class="secondary" href="${esc(run.job_url)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
+  const status=run.tracker_status||"",when=(run.tracker_date||"").slice(5).replace("-","/");
+  const mark=!status||status==="drafted"?`<button class="secondary" data-applied="${esc(run.id)}">Mark applied</button>`
+    :`<span class="applied-badge">${status==="applied"?"Applied ✓":esc(status.replaceAll("_"," "))}${when?" "+esc(when):""}</span>`;
+  return open+mark;
+}
 const STEPS=[
-  ["Evaluate fit","Posting fetched and scored against your profile. Pauses for your go-ahead."],
-  ["Draft CV + cover letter","Tailors both documents and audits every factual claim."],
-  ["Reviewer critique","A second pass attacks grounding first, then style."],
-  ["Revise","Structured edits are applied; invented facts are skipped."],
-  ["Compile PDFs","Runs the registered document toolchains and page checks."],
-  ["Verify","ATS text extraction and the final verification checklist."]
+  ["Prepare materials","The complete posting is saved once; the CV master is snapshotted read-only."],
+  ["Write","The CV is your chosen master variant; Claude drafts the letter from your cover base."],
+  ["Build","Compiles the PDFs and measures pages, text layer and keywords. You check the PDFs in Preview."]
 ];
+const DOC_STATE_MARK={"verified":"✓","PDF built":"◐","content checked":"◐","draft saved":"○","missing":"—"};
+const FAILURE_TITLE={quota_exhausted:"Claude usage limit reached",rate_limited:"Claude is rate limiting",budget_cap:"Local run budget reached",
+  timeout:"A step ran out of time",hard_conflict:"The posting conflicts with your deal-breakers",missing_input:"An input is missing",
+  compile_error:"LaTeX did not compile",verification_failed:"A check did not pass",content_unresolved:"Review findings are unresolved",
+  interrupted:"Interrupted",guard_unverified:"Write guard not proven",provider_rate_limit:"Claude session limit reached"};
+const FAILURE_NEXT={quota_exhausted:"A new session does not reset the allowance. Continue when your usage resets - the saved work is kept.",
+  rate_limited:"Wait a moment, then Continue. Nothing is retried automatically.",
+  budget_cap:"Raise the cap in job_scraper/board_config.json, then Continue.",
+  hard_conflict:"Continue anyway only if you still want these documents.",
+  missing_input:"Fix the named input, then Continue.",
+  interrupted:"Continue resumes from the last checkpoint."};
+function progressPanel(run){
+  const p=run.progress;if(!p)return "";if(p.error)return `<div class="dim">Checkpoint unreadable: ${esc(p.error)}</div>`;
+  const docs=Object.entries(p.docs||{}).map(([kind,d])=>`<div><span class="verify-mark ${d.state==="verified"?"pass":""}">${DOC_STATE_MARK[d.state]||"·"}</span> ${esc(DOC_TITLE[kind])}: ${esc(d.state)}${d.pdf?` · <button class="linkish" data-preview="${esc(run.id)}">view PDF</button>`:""}</div>`).join("");
+  const checks=Object.entries(p.checks||{}).map(([id,c])=>`<span class="badge" title="${esc(c.detail||"")}">${esc(id.replace("_"," "))}: ${esc(c.state)}</span>`).join(" ");
+  const pending=(p.pending||[]).length?`<div class="dim">Remaining: ${esc(p.pending.join(" → "))}</div>`:"";
+  const issues=(p.issues||[]).map(x=>`<div class="dim">${esc(x)}</div>`).join("");
+  const conflicts=(p.conflicts||[]).map(x=>`<div><strong>Conflict:</strong> ${esc(x)}</div>`).join("");
+  return `<div class="progress-card">${docs}${checks?`<div class="checkrow">${checks}</div>`:""}${pending}${conflicts}${issues}</div>`;
+}
+// The Runs tab reopens the run you last looked at, else the newest one.
+function openRuns(){
+  const run=RUNS.find(r=>r.id===ACTIVE_RUN)||latestApplications()[0];
+  if(run)renderTailor(run);else toast("No runs yet — start one with Generate on a job.",{ms:3000});
+}
 function renderTailor(run){
   if(!run){restoreWorkspace();return}
   const previousLog=el("runlog");if(previousLog&&ACTIVE_RUN)RUN_LOG_SCROLL.set(ACTIVE_RUN,previousLog.scrollTop);
   ACTIVE_RUN=run.id;const current=PHASE_STEP[run.phase]||1,fit=run.fit||{};
-  const lineage=RUNS.filter(r=>(r.application_id||r.id)===(run.application_id||run.id)).sort((a,b)=>(a.attempt||1)-(b.attempt||1));
-  const kinds=docKinds(run.scope);
-  // `approved_at` is authoritative for current records. The phase fallback
-  // keeps completed records from older registries readable after an upgrade.
-  const documentsChosen=run.kind!=="apply"||!!run.approved_at||
-    ["drafting","reviewing","compiling","inspecting","done"].includes(run.phase);
-  const pendingDraft=["Choose & draft documents","After fit review, choose CV, cover letter, or both."];
-  const steps=STEPS.map((s,i)=>{const n=i+1,state=n<current||run.phase==="done"?"done":n===current?"live":"todo",step=i===1?(documentsChosen?DRAFT_STEP[run.scope||"both"]:pendingDraft):s;return `<div class="step ${state}"><div class="steprow"><span class="stepdot">${n}</span><div><div class="steptitle">${step[0]}</div><div class="stepdetail">${step[1]}</div></div><span class="steptime">${state==="live"?esc(run.phase.replaceAll("_"," ")):""}</span></div></div>`}).join("");
-  const matches=(fit.matches||[]).map(x=>`<div>${esc(x)}</div>`).join("")||"<div>No structured match list yet.</div>";
-  const gaps=(fit.gaps||[]).map(x=>`<div>${esc(x)}</div>`).join("")||"<div>No structured gap list yet.</div>";
+  // Every attempt of this application: the same application id, plus anything
+  // that continues or regenerates an attempt already in the list.
+  const family=new Map([[run.id,run]]);RUNS.filter(r=>(r.application_id||r.id)===(run.application_id||run.id)).forEach(r=>family.set(r.id,r));
+  for(let grew=true;grew;){grew=false;RUNS.forEach(r=>{if(!family.has(r.id)&&(family.has(r.continue_of)||family.has(r.retry_of))){family.set(r.id,r);grew=true}})}
+  const lineage=[...family.values()].sort((a,b)=>(a.attempt||1)-(b.attempt||1));
+  const kinds=docKinds(run.scope),legacyGate=run.phase==="awaiting_approval";
+  const steps=STEPS.map((s,i)=>{const n=i+1,state=run.phase==="done"||n<current?"done":n===current&&!["failed","cancelled"].includes(run.phase)?"live":n===current?"stopped":"todo";return `<div class="step ${state}"><div class="steprow"><span class="stepdot">${n}</span><div><div class="steptitle">${s[0]}</div><div class="stepdetail">${s[1]}</div></div><span class="steptime">${state==="live"?esc(run.phase.replaceAll("_"," ")):""}</span></div></div>`}).join("");
   const logs=EV.filter(e=>e.run_id===run.id&&(e.source==="claude"||e.source==="latex"||e.source==="verify")).slice(-100).map(e=>`<div><span>${esc((e.ts||"").slice(11,19))}</span>&nbsp; ${esc(e.cmd?"$ "+e.cmd:e.msg)}</div>`).join("")||"<div>No run-specific activity recorded yet.</div>";
-  const failureTitle=run.failure_code==="provider_rate_limit"?"Claude session limit reached":run.failure_code==="budget_cap"?"Local run budget exhausted":"Run failed";
-  const failure=run.phase==="failed"?`<div class="failure-card"><strong>${failureTitle}</strong><div>${esc(run.error||"No error detail was recorded.")}</div><div class="dim">Failed during ${esc((run.failed_phase||"unknown").replaceAll("_"," "))}${run.model_started===false?" · no model work started":""}${Number(run.cost?.total_usd||0)===0?" · no model cost incurred":""}</div></div>`:"";
-  el("tailor-view").innerHTML=`<div class="tailor-shell"><section class="pipeline"><div class="panelhead"><span class="label">Pipeline</span><span class="spacer"></span><span class="dim">step ${current} of 6</span></div>${steps}<div class="writing"><div class="label">${documentsChosen?"Writing to":"Documents"}</div>${documentsChosen?kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join(""):"<div>Choose after fit evaluation.</div>"}</div></section>
-    <section class="runoutput"><div class="panelhead"><span class="label">Run output${lineage.length>1?` · attempt ${esc(run.attempt||1)} of ${lineage.length}`:""}</span><span class="spacer"></span><label class="source"><input type="checkbox" data-run-follow ${RUN_FOLLOW?"checked":""}> follow</label><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
-      ${runTitle(run)}<div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Fit evaluation — ${esc(fit.verdict||"pending")}${fit.overall!=null?", "+esc(fit.overall):""}</strong><span class="spacer"></span><span class="dim">${run.phase==="awaiting_approval"?"waiting for your approval":""}</span></div>
-      <div class="fitgrid"><div><span class="label">Matches</span>${matches}</div><div><span class="label">Gaps, stated not smoothed</span>${gaps}</div></div></div>
-      ${failure}<div class="runlog" id="runlog">${logs}</div><div class="runfooter"><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>
-      ${run.phase==="awaiting_approval"?`<label class="base-picker compact"><span>Documents</span><select data-run-scope>${scopeOptions(run.scope||"both")}</select></label><label class="base-picker compact"><span>CV base</span><select data-run-base>${baseOptions(run.base_cv||"auto",run.recommended_base_cv||"")}</select></label><button class="primary approve" data-run-id="${esc(run.id)}" data-phase="${esc(run.phase)}">${esc(DRAFT_LABEL[run.scope||"both"])}</button>`:""}${RUNNING.includes(run.phase)?`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`:""}${run.phase==="failed"?`<button class="primary retryrun" data-run-id="${esc(run.id)}">Retry from beginning</button>`:""}${run.phase==="done"?`<button class="primary" data-preview="${esc(run.id)}">Preview PDFs</button>`:""}</div></section></div>`;
+  const code=run.failure_code||"";
+  const stopped=run.phase==="failed"||run.phase==="cancelled";
+  const continuedBy=RUNS.find(r=>r.continue_of===run.id||r.retry_of===run.id);
+  // One switcher for every attempt of this application: a tab per attempt with
+  // its outcome, and how it relates to the one before it in the tooltip.
+  const numberOf=id=>(RUNS.find(r=>r.id===id)||{}).attempt||"?";
+  const attemptMark=r=>r.phase==="done"?"✓":["failed","cancelled"].includes(r.phase)?"✕":RUNNING.includes(r.phase)?"●":"·";
+  const attemptTitle=r=>`Attempt ${r.attempt||1} · ${(r.phase||"queued").replaceAll("_"," ")} · ${r.continue_of?"continued from #"+numberOf(r.continue_of):r.retry_of?"regenerated from scratch after #"+numberOf(r.retry_of):"first attempt"}`;
+  const attempts=lineage.length>1?`<div class="attempts" role="tablist" aria-label="Attempts">${lineage.map(r=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r))}"><span class="attempt-mark">${attemptMark(r)}</span>${esc(r.attempt||1)}</button>`).join("")}</div>`:"";
+  const latest=lineage[lineage.length-1];
+  const origin=lineage.length>1&&latest&&latest.id!==run.id?`<div class="attempt-note">You are viewing an earlier attempt. <button class="linkish" data-run="${esc(latest.id)}">Go to the latest (#${esc(latest.attempt||lineage.length)})</button></div>`:"";
+  const failure=stopped?`<div class="failure-card"><strong>${esc(run.phase==="cancelled"?"Cancelled":FAILURE_TITLE[code]||"Run stopped")}</strong><div>${esc(run.error||"No error detail was recorded.")}</div><div class="dim">Stopped during ${esc((run.failed_phase||"unknown").replaceAll("_"," "))}${run.model_started===false?" · no model work started":""}${Number(run.cost?.total_usd||0)===0?" · no model cost incurred":""}</div>${FAILURE_NEXT[code]&&!continuedBy?`<div class="dim">${esc(FAILURE_NEXT[code])}</div>`:""}</div>`:"";
+  // Legacy runs keep their evaluation visible; staged runs never had one.
+  const fitCard=run.fit?`<div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Earlier fit evaluation — ${esc(fit.verdict||"")}${fit.overall!=null?", "+esc(fit.overall):""}</strong></div></div>`:"";
+  const notes=(run.tailoring_notes||[]).map(x=>`<div>${esc(x)}</div>`).join("");
+  const actions=[];
+  if(RUNNING.includes(run.phase))actions.push(`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`);
+  if((stopped||legacyGate)&&!continuedBy){
+    actions.push(`<button class="primary continuerun" data-run-id="${esc(run.id)}">Continue</button>`);
+    if(code==="hard_conflict")actions.push(`<button class="secondary continuerun" data-run-id="${esc(run.id)}" data-proceed="1">Continue anyway</button>`);
+    if(run.kind==="apply"&&!legacyGate)actions.push(`<button class="secondary retryrun" data-run-id="${esc(run.id)}">Regenerate</button>`);
+  }
+  // Preview sits beside the title, where the eye lands once a run is done.
+  const preview=run.phase==="done"?`<div class="title-actions"><button class="primary" data-preview="${esc(run.id)}">Preview PDFs</button>${applyActions(run)}</div>`:"";
+  el("tailor-view").innerHTML=`<div class="tailor-shell"><section class="pipeline"><div class="panelhead"><span class="label">Pipeline</span><span class="spacer"></span><span class="dim">stage ${current} of ${STAGE_COUNT}</span></div>${steps}<div class="writing"><div class="label">Publishes to</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc(run.cv_country||"master default")}</div></div></section>
+    <section class="runoutput"><div class="panelhead"><span class="label">Run output</span>${attempts}<span class="spacer"></span><label class="source"><input type="checkbox" data-run-follow ${RUN_FOLLOW?"checked":""}> follow</label><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
+      ${runTitle(run,preview)}${origin}${fitCard}${progressPanel(run)}${notes?`<div class="whybox"><span class="label">Tailoring choices</span>${notes}</div>`:""}
+      ${failure}<div class="runlog" id="runlog">${logs}</div><div class="runfooter"><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>${actions.join("")}</div></section></div>`;
   const runlog=el("runlog");if(RUN_FOLLOW)runlog.scrollTop=runlog.scrollHeight;
   else if(RUN_LOG_SCROLL.has(run.id))runlog.scrollTop=RUN_LOG_SCROLL.get(run.id);
   openView("tailor",[crumbRun(run)],"/run/"+encodeURIComponent(run.id));
@@ -527,7 +589,7 @@ function renderReader(){
   const marks=["star","yes","maybe","gate","no","applied"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
   el("tailor-view").innerHTML=`<div class="reader-shell"><section class="reader-queue"><div class="panelhead"><span class="label">Queue</span><span class="spacer"></span><span class="dim">${rows.length} active</span></div><div class="queue-list">${queue}</div></section>
     <section class="reader-main"><div class="reader-scroll"><article class="reader-copy"><div class="reader-badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge" title="${esc(scoreTitle(j))}">${esc(SCORE_LABEL[j.score_source]||"score")} ${esc(Math.round(j.score))}</span>`:""}${j.fit_evidence==="title-only"?'<span class="badge">title only</span>':""}<span class="spacer"></span><a class="open" href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener">open posting ↗</a></div><h1>${esc(j.title)}</h1><div class="reader-meta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div><div class="reader-posting" id="postingbody">${esc(postingText(j))}</div></article></div></section>
-    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Evaluation reads the full posting.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><button class="primary tailor" data-tailor="${esc(j.url)}">Evaluate fit</button><div class="hint">opens the run · you choose documents after the fit evaluation · <kbd>t</kbd></div></div></aside></div>`;
+    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Generation reads the full posting.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea>${generatePicker(j.url)}<div class="hint">opens the run · <kbd>t</kbd></div></div></aside></div>`;
   loadPosting(j);
   openView("reader",[{label:j.company,sub:j.title,count:`${sel+1} of ${rows.length}`}],"/job/"+encodeURIComponent(j.url));
 }
@@ -537,20 +599,55 @@ async function renderPreview(run){
   el("tailor-view").innerHTML='<div class="panel-empty">Loading compiled documents…</div>';
   openView("preview",[crumbRun(run),{label:"Preview"}],"/run/"+encodeURIComponent(run.id)+"/preview");
   let verify;try{const response=await fetch(`/api/runs/${encodeURIComponent(run.id)}/verify?t=${T}`);verify=await response.json();if(!response.ok)throw new Error(verify.error)}catch(error){el("tailor-view").innerHTML=`<div class="panel-empty runerror">${esc(error.message||error)}</div>`;return}
-  const counts={};(verify.checks||[]).forEach(check=>counts[check.state]=(counts[check.state]||0)+1);
-  const checks=(verify.checks||[]).map(check=>`<div class="verify-item ${esc(check.state)}"><span class="verify-mark ${esc(check.state)}">${check.state==="pass"?"✓":"!"}</span><div><div>${esc(check.label)}</div><div class="verify-detail">${esc(check.detail)}</div></div></div>`).join("");
   const query=`?t=${encodeURIComponent(T)}&v=${Date.now()}`;
   // The scope says what was asked for; the artefacts say what exists. A run that
-  // produced one document gets one frame, one download and no filter tabs.
+  // produced one document gets one frame and no filter tabs.
   const produced=docKinds(run.scope).filter(kind=>(run.artefacts||{})[kind+"_pdf"]);
   const kinds=produced.length?produced:docKinds(run.scope),single=kinds.length===1?kinds[0]:null;
   const tabs=single?`<span class="chip on">${single==="cv"?"CV only":"Letter only"}</span>`
     :`<button class="chip on" data-preview-filter="both">Both documents</button><button class="chip" data-preview-filter="cv">CV only</button><button class="chip" data-preview-filter="cover">Letter only</button>`;
-  const frames=kinds.map(kind=>`<iframe title="${kind==="cv"?"Compiled CV":"Compiled cover letter"}" class="pdf-frame ${kind}" src="/api/pdf/${encodeURIComponent(run.id)}/${kind}${query}"></iframe>`).join("");
-  const files=kinds.map(kind=>esc(run.artefacts?.[kind+"_pdf"]||kind+".pdf")).join(" · ");
-  const downloads=kinds.map(kind=>`<a class="secondary" href="/api/pdf/${encodeURIComponent(run.id)}/${kind}${query}" download>Download ${kind==="cv"?"CV":"letter"}</a>`).join("");
-  el("tailor-view").innerHTML=`<div class="preview-shell"><aside class="verify-rail"><div class="panelhead"><span class="label">Verification</span><span class="spacer"></span><span class="dim state-summary">${counts.pass||0} pass · ${(counts.flag||0)+(counts.fail||0)+(counts.unverified||0)} flagged</span></div><div class="verify-list">${checks}</div><div class="decision-section" style="margin-top:auto"><span class="label">Keywords</span><div class="dim">Covered: ${esc((verify.keywords?.covered||[]).join(", ")||"none")}</div><div class="dim">Absent: ${esc((verify.keywords?.absent||[]).join(", ")||"none")}</div></div></aside>
-    <section class="preview-main${single?" "+single+"-only":""}" id="preview-main">${runTitle(run)}<div class="preview-tabs">${tabs}<span class="spacer"></span><span class="dim">${files}</span></div><div class="pdf-stage">${frames}</div><div class="preview-foot"><span class="dim">Rendered from the compiled PDFs, not from source files. Every check is reproducible.</span><span class="spacer"></span>${downloads}<button class="secondary" data-recompile="${esc(run.id)}">Recompile</button></div></section></div>`;
+  const frames=produced.map(kind=>`<iframe title="${kind==="cv"?"Compiled CV":"Compiled cover letter"}" class="pdf-frame ${kind}" src="/api/pdf/${encodeURIComponent(run.id)}/${kind}${query}"></iframe>`).join("")||`<div class="panel-empty">No compiled PDF yet.</div>`;
+  const reveals=Object.keys(verify.files||{}).map(kind=>`<button class="secondary" data-reveal="${kind}" title="${esc(verify.files[kind])}">Reveal ${kind==="cv"?"CV":"letter"} in Finder</button>`).join("");
+  el("tailor-view").innerHTML=`<div class="preview-shell"><aside class="screen-rail">${screeningPanel(verify)}</aside>
+    <section class="preview-main${single?" "+single+"-only":""}" id="preview-main">${runTitle(run,`<div class="title-actions">${applyActions(run)}</div>`)}<div class="preview-tabs">${tabs}</div><div class="pdf-stage">${frames}</div><div class="preview-foot"><span class="spacer"></span>${reveals}<button class="secondary" data-recompile="${esc(run.id)}">Recompile</button></div></section>
+    <aside class="check-rail">${checklistPanel(verify)}${regeneratePanel(run,verify)}</aside></div>`;
+}
+// Screening is the one thing a pinned CV cannot answer by itself: what the
+// posting asks for, and where your evidence is missing, adjacent or met.
+const SCREEN_TAG={gap:"missing",adjacent:"adjacent",documented:"met"};
+function screeningPanel(v){
+  const s=v.screening;
+  if(!s)return `<div class="panelhead"><span class="label">Screening</span></div><div class="panel-empty">No requirement brief yet.</div>`;
+  const reqs=s.requirements||[],count=st=>reqs.filter(r=>r.status===st).length;
+  const item=r=>`<div class="screen-item ${esc(r.status)}"><div class="screen-req"><span class="screen-tag">${esc(SCREEN_TAG[r.status]||r.status)}</span><strong>${esc(r.requirement)}</strong>${r.priority&&r.priority!=="required"?` <span class="dim">${esc(r.priority)}</span>`:""}</div>${r.evidence?`<div class="screen-evidence">${esc(r.evidence)}</div>`:""}</div>`;
+  const open=reqs.filter(r=>r.status!=="documented"),met=reqs.filter(r=>r.status==="documented");
+  const facts=Object.values(s.facts||{}).map(esc).join(" · ");
+  const conflicts=(s.conflicts||[]).map(c=>`<div class="screen-conflict">${esc(c)}</div>`).join("");
+  const kw=v.keywords||{},absent=kw.measured===false?null:(kw.absent||[]);
+  const terms=absent===null?`<div class="dim">Measured after the CV is built.</div>`:absent.length?`<div class="term-list">${absent.map(t=>`<span class="term">${esc(t)}</span>`).join("")}</div>`:`<div class="dim">Every posting term is on your CV.</div>`;
+  return `<div class="panelhead"><span class="label">Screening</span><span class="spacer"></span><span class="dim">${count("gap")} missing · ${count("adjacent")} adjacent · ${met.length} met</span></div>
+    <div class="screen-scroll">${facts?`<div class="screen-facts">${facts}</div>`:""}${conflicts}${open.map(item).join("")||`<div class="dim screen-none">No stated requirement is missing from your evidence.</div>`}
+    <div class="screen-block"><span class="label">Posting terms not on your CV</span>${terms}</div>
+    ${met.length?`<details class="screen-met"><summary>${met.length} requirements met</summary>${met.map(item).join("")}</details>`:""}</div>`;
+}
+// You check the PDFs; the board only measures what a machine can measure
+// (text layer, contacts, pages, keywords) and lists it underneath.
+function checklistPanel(v){
+  const manual=v.manual||[],done=manual.filter(m=>m.done).length;
+  const group=(doc,title)=>{const rows=manual.filter(m=>m.doc===doc);return rows.length?`<div class="check-group"><span class="label">${title}</span>${rows.map(m=>`<label class="check-row${m.stale?" stale":""}"><input type="checkbox" data-mark="${esc(m.id)}" ${m.done?"checked":""}> <span>${esc(m.label)}${m.stale?` <em class="dim">PDF changed</em>`:""}</span></label>`).join("")}</div>`:""};
+  const auto=v.checks||[],flagged=auto.filter(c=>c.state!=="pass");
+  const autoRow=c=>`<div class="verify-item ${esc(c.state)}"><span class="verify-mark ${esc(c.state)}">${c.state==="pass"?"✓":"!"}</span><div><div>${esc(c.label)}</div><div class="verify-detail">${esc(c.detail)}</div></div></div>`;
+  const autoBlock=auto.length?`<details class="auto-checks"${flagged.length?" open":""}><summary>Automatic checks · ${auto.length-flagged.length} pass${flagged.length?` · ${flagged.length} to look at`:""}</summary>${[...flagged,...auto.filter(c=>c.state==="pass")].map(autoRow).join("")}</details>`:"";
+  return `<div class="panelhead"><span class="label">Your checks</span><span class="spacer"></span><span class="dim state-summary">${done} / ${manual.length}</span></div><div class="check-scroll">${group("cv","CV")}${group("cover","Cover letter")}${group("both","Both")}${autoBlock}</div>`;
+}
+// Regenerate one document from a prompt. The CV variant switch needs no model:
+// it re-seeds the CV from the other master variant and rebuilds.
+function regeneratePanel(run,v){
+  if(run.phase!=="done")return `<div class="regen"><div class="hint">Regenerate is available once this run has finished. ${["failed","cancelled"].includes(run.phase)?"Continue it from the run view first.":""}</div></div>`;
+  const kinds=docKinds(run.scope),hasCv=kinds.includes("cv");
+  const variant=hasCv?`<div class="regen-row"><span class="label">CV variant</span><div class="seg">${[["sde","SDE"],["ai","AI"]].map(([value,label])=>`<button type="button" class="chip${v.variant===value?" on":""}" data-variant="${value}" ${v.variant===value?"disabled":""}>${label}</button>`).join("")}</div></div>`:"";
+  const docs=kinds.map((kind,i)=>`<label><input type="radio" name="edit" value="${kind}" ${i===(kinds.length>1?1:0)?"checked":""}> ${kind==="cv"?"CV":"Cover letter"}</label>`).join("");
+  return `<form class="regen" id="regen-form">${variant}<div class="regen-row"><span class="label">Regenerate</span><div class="seg">${docs}</div></div><textarea id="regen-note" placeholder="${hasCv?"e.g. change the CV title to “AI Engineer | LLM Applications”":"What should change?"}"></textarea><button class="primary" type="submit">Regenerate with Claude</button></form>`;
 }
 
 async function renderRevise(run){
@@ -627,7 +724,7 @@ async function renderCompanies(reload=true,scrollTop=null){
 // 40px to its left, a leading "Board" segment was the same word twice in a row.
 const crumbRun=run=>({label:run.company,sub:run.role,run:run.id});
 function renderChrome(crumb){
-  const place=VIEW==="companies"?"companies":"board";
+  const place=VIEW==="companies"?"companies":["tailor","preview","revise"].includes(VIEW)?"runs":"board";
   document.querySelectorAll(".navitem[data-nav]").forEach(node=>{
     const on=node.dataset.nav===place;node.classList.toggle("on",on);
     if(on)node.setAttribute("aria-current","page");else node.removeAttribute("aria-current");
@@ -909,7 +1006,7 @@ document.addEventListener("click",event=>{
   if(event.target.closest("#toastundo"))return void undo();
   if(event.target.closest("#striptoggle"))return void toggleDrawer();
   if(event.target.closest("#copylog"))return void copyLog();
-  const nav=event.target.closest("[data-nav]");if(nav)return void(nav.dataset.nav==="companies"?renderCompanies():restoreWorkspace());
+  const nav=event.target.closest("[data-nav]");if(nav)return void(nav.dataset.nav==="companies"?renderCompanies():nav.dataset.nav==="runs"?openRuns():restoreWorkspace());
   const collapse=event.target.closest("[data-collapse]");if(collapse)return void toggleCollapse(collapse.dataset.collapse);
   const expand=event.target.closest("[data-expand]");if(expand){const kind=expand.dataset.expand;if(kind==="job")renderReader();else if(kind==="board")openView(kind);return}
   const chip=event.target.closest("[data-filter]");if(chip){filter=chip.dataset.filter;sel=0;render();return}
@@ -937,12 +1034,20 @@ document.addEventListener("click",event=>{
   const restoreVersion=event.target.closest("[data-restore-version]");if(restoreVersion){restoreVersion.disabled=true;postRun("/api/runs/"+restoreVersion.dataset.restoreVersion+"/restore").then(({ok})=>{const run=RUNS.find(r=>r.id===REVISE_RUN);if(ok&&run)renderRevise(run)});return}
   const versionPreview=event.target.closest("[data-version-preview]");if(versionPreview){const run=RUNS.find(r=>r.id===versionPreview.dataset.versionPreview);if(run)renderPreview(run);return}
   const previewFilter=event.target.closest("[data-preview-filter]");if(previewFilter){const main=el("preview-main");main.classList.toggle("cv-only",previewFilter.dataset.previewFilter==="cv");main.classList.toggle("cover-only",previewFilter.dataset.previewFilter==="cover");document.querySelectorAll("[data-preview-filter]").forEach(node=>node.classList.toggle("on",node===previewFilter));return}
+  const applied=event.target.closest("[data-applied]");if(applied){const run=RUNS.find(r=>r.id===applied.dataset.applied);if(!run)return;
+    applied.disabled=true;postRun("/api/runs/"+run.id+"/applied",{}).then(({ok,notion})=>{
+      if(ok)toast(notion?`Marked applied · Notion Stage: ${notion}`:"Marked applied in the tracker (Notion sync is off)",{ms:3500});
+      const fresh=RUNS.find(r=>r.id===run.id)||run;if(VIEW==="preview")renderPreview(fresh);else renderTailor(fresh)});return}
+  const reveal=event.target.closest("[data-reveal]");if(reveal&&PREVIEW_RUN){postRun("/api/runs/"+PREVIEW_RUN+"/reveal",{kind:reveal.dataset.reveal});return}
+  const variant=event.target.closest("[data-variant]");if(variant&&PREVIEW_RUN){const run=RUNS.find(r=>r.id===PREVIEW_RUN);if(!run)return;
+    if(!confirm(`Switch the CV to the ${variant.dataset.variant.toUpperCase()} master variant? Earlier edits to this CV are not carried over; the current version stays under Versions.`))return;
+    variant.disabled=true;postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope:run.scope||"both",base_cv:variant.dataset.variant,note:""}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else variant.disabled=false});return}
   const recompile=event.target.closest("[data-recompile]");if(recompile){recompile.disabled=true;postRun("/api/runs/"+recompile.dataset.recompile+"/compile").then(({ok})=>{const run=RUNS.find(r=>r.id===recompile.dataset.recompile);if(ok&&run)renderPreview(run)});return}
   const runNode=event.target.closest("[data-run]");if(runNode){const run=RUNS.find(r=>r.id===runNode.dataset.run);if(run)renderTailor(run);return}
   const pill=event.target.closest("#runpill");if(pill){const run=RUNS.find(r=>r.id===pill.dataset.run);if(run)renderTailor(run);return}
-  const approve=event.target.closest(".approve");if(approve){approve.disabled=true;postRun("/api/runs/"+approve.dataset.runId+"/approve",{phase:approve.dataset.phase,base_cv:document.querySelector("[data-run-base]")?.value||"auto",scope:document.querySelector("[data-run-scope]")?.value||"both"});return}
+  const cont=event.target.closest(".continuerun");if(cont){cont.disabled=true;const source=cont.dataset.runId;postRun("/api/runs/"+source+"/continue",{proceed:cont.dataset.proceed==="1"}).then(({ok,run_id})=>{if(!ok){cont.disabled=false;return}toast("continuing from the saved checkpoint",{ms:2500});const next=RUNS.find(r=>r.id===run_id);if(next)renderTailor(next)});return}
   const cancel=event.target.closest(".cancelrun");if(cancel){postRun("/api/runs/"+cancel.dataset.runId+"/cancel");return}
-  const retry=event.target.closest(".retryrun");if(retry){retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry").then(({ok})=>{if(!ok){retry.disabled=false;return}toast("fresh attempt queued",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
+  const retry=event.target.closest(".retryrun");if(retry){retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry").then(({ok})=>{if(!ok){retry.disabled=false;return}toast("regenerating from the saved posting; earlier versions are kept",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
   const row=event.target.closest("tr[data-row]");if(row&&!event.target.closest("select")){sel=+row.dataset.row;render()}
 });
 async function postCompany(path,body,method="POST"){
@@ -973,6 +1078,12 @@ document.addEventListener("submit",event=>{
     const changes={name,countries:market?market.split(","):[]};if(sourceChanged)changes.careers_url=careers_url;
     void companyWork(oldName,async()=>{await postCompany(companyPath(oldName),{mtime:COMPANIES.mtime,inspect:true,changes},"PATCH");COMPANY_SELECTED=name;COMPANY_BUSY=name;if(sourceChanged&&COMPANIES.companies.find(row=>row.name===name)?.will_be_searched)await checkCompany(name);toast("Company saved")});return;
   }
+  if(event.target.id==="regen-form"){
+    event.preventDefault();const run=RUNS.find(r=>r.id===PREVIEW_RUN),note=el("regen-note").value.trim(),edit=new FormData(event.target).get("edit");
+    if(!run||!edit)return;if(!note){toast("say what should change",{warn:true});return}
+    const button=event.submitter;if(button)button.disabled=true;
+    postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope:run.scope||"both",edit,note}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else if(button)button.disabled=false});return;
+  }
   if(event.target.id!=="revise-form")return;event.preventDefault();const button=event.submitter,kind=button?.dataset.reentryKind,run=RUNS.find(r=>r.id===REVISE_RUN);if(!run||!kind)return;
   const scope=new FormData(event.target).get("scope")||"both",note=el("revision-note").value.trim(),remember=el("revision-remember").value.trim();
   if(kind!=="apply"&&!note){toast("say what should change",{warn:true});return}
@@ -983,9 +1094,14 @@ document.addEventListener("change",event=>{
   if(event.target.id==="f-fit"||event.target.id==="f-found"||event.target.id==="f-sort"){
     facets[event.target.id.slice(2)]=event.target.value;saveFacets();sel=0;render();return;
   }
+  if(event.target.matches("[data-mark]")&&PREVIEW_RUN){const box=event.target;box.disabled=true;
+    fetch(`/api/runs/${encodeURIComponent(PREVIEW_RUN)}/marks?t=${T}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:box.dataset.mark,done:box.checked})})
+      .then(async response=>{checkAuth(response);const data=await response.json().catch(()=>({}));if(!response.ok){box.checked=!box.checked;toast(data.error||"could not save the mark",{warn:true})}
+        else{const manual=data.manual||[],summary=document.querySelector(".check-rail .state-summary");if(summary)summary.textContent=`${manual.filter(m=>m.done).length} / ${manual.length}`}})
+      .finally(()=>{box.disabled=false});return}
   if(event.target.matches("[data-run-follow]")){RUN_FOLLOW=event.target.checked;
     const runlog=el("runlog");if(RUN_FOLLOW&&runlog)runlog.scrollTop=runlog.scrollHeight}
-  if(event.target.matches("[data-run-scope]")){const button=document.querySelector(".approve");if(button)button.textContent=DRAFT_LABEL[event.target.value]||DRAFT_LABEL.both}
+
   if(event.target.matches("select[data-url]"))update(event.target.dataset.url,{status:event.target.value});
   if(event.target.matches("[data-note-input]"))update(event.target.dataset.noteInput,{note:event.target.value}).then(ok=>ok&&toast("note saved"));
 });

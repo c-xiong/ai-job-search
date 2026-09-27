@@ -11,10 +11,11 @@ Three decisions, in this order:
 
 1. **Writes** are matched against **exact realpaths** from the allowlist, not
    against directory prefixes. A run may write its own run directory, plus the
-   two target documents the supervisor computed for *this* application. A
-   previous application's `cover_*.tex`, `cv/main_example.tex`, and every other
-   run's snapshot are all outside it - which is what keeps "restore v1" from
-   being destroyed by the run producing v2.
+   exact files the supervisor named for *this* pass. A previous application's
+   `cover_*.tex`, every other run's snapshot, and the read-only masters
+   (`cv/my_cv.tex`, its upstream target, `cover_letters/my_cover.tex`) are all
+   outside it - and the masters are on the deny list, which wins over any
+   allowed file or directory, whichever alias the write names.
 2. **Bash** is one fixed argv shape with one variable argument:
    `python3 tools/board/fetch_url.py <https url>`. Anything else - a flag, a
    pipe, a second command, a different script - is refused. The CLI's

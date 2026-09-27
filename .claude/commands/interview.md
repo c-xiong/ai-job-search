@@ -55,7 +55,7 @@ Assemble a stage-appropriate prep document with these sections:
 ### 1. Likely questions
 Derive from four sources, in priority order:
 1. **Recorded feedback from earlier stages** (`outcome.md`) - anything flagged, doubted, or left unresolved will come back
-2. **The fit evaluation's gaps** - the requirements where the profile is weakest are the likeliest probes. For each, prepare an honest bridge answer per `07`'s "You don't have [X]" pattern: acknowledge, connect adjacent experience, show the learning path. **Never prepare an answer that invents experience.**
+2. **The requirement gaps** - the brief's `gap` and `adjacent` requirements (`documents/runs/<run>/brief.json`), or a fit evaluation's gaps when one was run - the requirements where the profile is weakest are the likeliest probes. For each, prepare an honest bridge answer per `07`'s "You don't have [X]" pattern: acknowledge, connect adjacent experience, show the learning path. **Never prepare an answer that invents experience.**
 3. **The posting's stated requirements** - competency by competency
 4. **The stage type** - phone screens get motivation and timeline questions; technical rounds get the posting's stack; final rounds get values, salary, and "any reservations" questions
 

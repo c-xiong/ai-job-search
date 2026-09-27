@@ -13,6 +13,45 @@ per-file diff commands.
 
 ## [Unreleased]
 
+### Changed
+
+- **`/apply` is a staged, checkpointed pipeline with no scoring or approval gate.** Posting
+  -> CV / cover letter / both -> *Prepare materials* (the complete posting saved once,
+  model-free when possible) -> *Write and check* (one draft pass, one independent review,
+  at most one fix and a focused re-check) -> *Build and verify* (pdfLaTeX CV and XeLaTeX
+  letter, each exactly one page; placeholder, text-layer, contact and CV-only keyword
+  checks; visual inspection proven by the exact PDF reads; at most two layout repairs;
+  idempotent publication). Numerical fit scoring, salary lookup, the approval pause,
+  interview prep and form drafting are on-request only. Explicit hard conflicts with the
+  owner's deal-breakers are surfaced and stop drafting unless the owner proceeds.
+- **Every model pass is a fresh, short session.** Nothing resumes or forks a long
+  transcript; each pass gets the exact files it needs and an allowlist naming exactly
+  what it may write.
+- **Durable checkpoints and `Continue`.** Each attempt keeps a `jobflow.checkpoint/1`
+  manifest with hash-bound checks. `Continue` (board and `POST /api/runs/<id>/continue`)
+  adopts every still-valid artifact and runs only what is missing or invalid - without a
+  provider session, after a board restart, and for older failed or awaiting-approval
+  records (conservative legacy adoption). Mechanical-only recovery starts no model.
+  `Regenerate` starts fresh from the saved posting and keeps earlier versions.
+- **The CV master is read-only.** `cv/my_cv.tex` (and whatever it links to) and
+  `cover_letters/my_cover.tex` are denied to every pass through any alias; tailored CVs
+  are independent copies with the variant pinned. `/setup` no longer writes a CV.
+- **One page-and-engine policy** in `tools/board/templates.py` (CV: pdfLaTeX, 1 page;
+  letter: XeLaTeX from `cover_letters/`, 1 page), honouring a registered template's
+  `Page limit`. Failures are categorised (`quota_exhausted`, `rate_limited`,
+  `budget_cap`, `timeout`, `missing_input`, `compile_error`, `verification_failed`,
+  `content_unresolved`, `hard_conflict`, `interrupted`), and per-stage usage is recorded.
+
+### Removed
+
+- `cv/main_example.tex` and `cover_letters/cover_example.tex` as candidate templates.
+  CI now compiles anonymous fixtures in `tests/fixtures/latex/` with the real engines.
+
+### Fixed
+
+- `pdf_pages` now counts pages inside compressed PDF object streams (real pdfTeX output).
+- Tracker publication is idempotent and never blanks or zeroes an existing `fit_rating`.
+
 ### Added
 
 - **The job board records when a row arrived, and can be filtered and sorted on it.** Every
