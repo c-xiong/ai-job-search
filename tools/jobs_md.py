@@ -34,18 +34,52 @@ MD = ROOT / "job_scraper" / "jobs.md"
 CSV_ACTIVE = ROOT / "job_scraper" / "jobs_active.csv"
 CSV_EXCLUDED = ROOT / "job_scraper" / "jobs_excluded.csv"
 
-# Status vocabulary. Order matters: it is the sort order inside a section.
-STATUSES = ["star", "yes", "new", "maybe", "gate", "no", "applied", "expired"]
+# Status vocabulary. Order matters: it is the sort order inside a section, and
+# the board shows the statuses in this order on every surface (filter chips,
+# mark buttons, the table's select, the keyboard bar).
+STATUSES = ["yes", "new", "backlog", "applied", "gate", "no", "expired"]
 STATUS_HELP = [
-    ("star", "top target - apply first"),
     ("yes", "worth applying to"),
-    ("new", "not reviewed yet (set automatically for every newly scraped job)"),
-    ("maybe", "lower priority - stays visible, sinks to the bottom of the list"),
-    ("no", "excluded by me - moves to the `no` section and never resurfaces in /scrape"),
-    ("gate", "excluded automatically (language gate, deadline passed, ...) - set by /scrape, still browsable"),
+    ("new", "arrived in the latest fetch, not reviewed yet"),
+    ("backlog", "not reviewed yet, from an earlier fetch (the next fetch demotes `new` here)"),
     ("applied", "applied - moves to the `applied` section"),
+    ("gate", "excluded automatically (language gate, deadline passed, ...) - set by /scrape, still browsable"),
+    ("no", "excluded by me - moves to the `no` section and never resurfaces in /scrape"),
     ("expired", "posting is dead"),
 ]
+# Retired on 2026-09-28: `star` and `yes` said the same thing, and `maybe` was a
+# second "not decided yet". Read through `user_status()`, and rewritten on the
+# next save, so an old state file needs no separate migration step.
+LEGACY_STATUSES = {"star": "yes", "maybe": "backlog"}
+
+
+def user_status(entry):
+    """The entry's status in the current vocabulary."""
+    status = entry.get("user_status") or "new"
+    return LEGACY_STATUSES.get(status, status)
+
+
+def demote_unreviewed(seen, keep_since=None):
+    """Move every unreviewed `new` row to `backlog`, so `new` names one fetch.
+
+    `new` used to mean "not reviewed yet" for good, so it piled up across runs
+    while the board's "N new" counted only the latest fetch - two numbers under
+    one word. A fetch calls this before merging, so what it inserts is the only
+    `new` left. `keep_since` spares rows that arrived at or after that stamp.
+    Returns how many rows moved.
+    """
+    moved = 0
+    for entry in seen.values():
+        if not isinstance(entry, dict) or user_status(entry) != "new":
+            continue
+        at = entry.get("first_seen_at") or entry.get("first_seen") or ""
+        if keep_since and at >= keep_since:
+            continue
+        entry["user_status"] = "backlog"
+        moved += 1
+    return moved
+
+
 FIT_ORDER = {"high": 0, "medium": 1, "low": 2, "": 3, None: 3}
 
 # Display priority, 0-100, high first. Four sources, in order of authority:
@@ -91,7 +125,7 @@ def priority_score(entry):
 # status moves between sections. The gloss is the human half; the tokens come from
 # the list. Same rule as the board's filter chips in tools/jobs_board.py.
 SECTIONS = [
-    ("active", "open candidates", ["star", "yes", "new", "maybe"]),
+    ("active", "open candidates", ["yes", "new", "backlog"]),
     ("applied", "", ["applied"]),
     ("gate", "excluded automatically (language gate, deadline passed)", ["gate", "expired"]),
     ("no", "excluded by me", ["no"]),
@@ -210,7 +244,14 @@ def write_json_atomic(path, data):
 
 
 def save_seen(seen):
-    """Persist the board state atomically. The one writer every tool goes through."""
+    """Persist the board state atomically. The one writer every tool goes through.
+
+    Legacy statuses are rewritten here, so the file converges on the current
+    vocabulary whichever tool saves first.
+    """
+    for entry in seen.values():
+        if isinstance(entry, dict) and entry.get("user_status") in LEGACY_STATUSES:
+            entry["user_status"] = LEGACY_STATUSES[entry["user_status"]]
     write_json_atomic(SEEN, {"seen": seen})
 
 
@@ -296,7 +337,7 @@ def sort_key(entry):
     before that, and the `fit` band for entries that predate both - so a batch
     that has only just been collected still reads top-down.
     """
-    status = entry.get("user_status", "new")
+    status = user_status(entry)
     rank = STATUSES.index(status) if status in STATUSES else len(STATUSES)
     return (rank, -priority_score(entry),
             _neg_date(entry.get("posted") or entry.get("first_seen") or ""))
@@ -311,7 +352,7 @@ def render(seen):
     today = date.today().isoformat()
     counts = {}
     for e in seen.values():
-        counts[e.get("user_status", "new")] = counts.get(e.get("user_status", "new"), 0) + 1
+        counts[user_status(e)] = counts.get(user_status(e), 0) + 1
     summary = ", ".join("%s %s" % (counts[s], s) for s in STATUSES if s in counts)
 
     L = []
@@ -334,12 +375,12 @@ def render(seen):
     for s, meaning in STATUS_HELP:
         L.append("| `%s` | %s |" % (s, meaning))
     L.append("")
-    L.append("Within a section, rows sort by status first (`star` > `yes` > `new` > `maybe`), then by")
-    L.append("fit, then newest posting first. Marking something `maybe` is what \"lower its priority\" means.")
+    L.append("Within a section, rows sort by status first (`yes` > `new`), then by fit, then newest")
+    L.append("posting first.")
     L.append("")
 
     for _key, gloss, statuses in SECTIONS:
-        rows = [e for e in seen.values() if e.get("user_status", "new") in statuses]
+        rows = [e for e in seen.values() if user_status(e) in statuses]
         L.append("## %s (%d)" % (section_heading(gloss, statuses), len(rows)))
         L.append("")
         if not rows:
@@ -358,7 +399,7 @@ def render(seen):
             if preferred and preferred != key_link:
                 link += " · [first-party](%s)" % preferred
             L.append("| `%s` | %s | %s | %s | %s | %s | %s | %s | %s |" % (
-                e.get("user_status", "new"), fit, _cell(e.get("title")), _cell(e.get("company")),
+                user_status(e), fit, _cell(e.get("title")), _cell(e.get("company")),
                 _cell(e.get("location")), _cell(e.get("posted") or e.get("first_seen")),
                 link, _cell(e.get("note")), _cell(e.get("user_note"))))
         L.append("")
@@ -377,12 +418,12 @@ def write_csv(seen):
     is the only editable surface; these are optional snapshots for sorting and
     sharing.
     """
-    active_st = {"star", "yes", "new", "maybe", "applied"}
+    active_st = {"yes", "new", "backlog", "applied"}
     buckets = {CSV_ACTIVE: [], CSV_EXCLUDED: []}
     for e in sorted(seen.values(), key=sort_key):
-        target = CSV_ACTIVE if e.get("user_status", "new") in active_st else CSV_EXCLUDED
+        target = CSV_ACTIVE if user_status(e) in active_st else CSV_EXCLUDED
         buckets[target].append([
-            e.get("user_status", "new"), e.get("fit", ""), e.get("title", ""),
+            user_status(e), e.get("fit", ""), e.get("title", ""),
             e.get("company", ""), e.get("location", ""),
             e.get("posted") or e.get("first_seen", ""), primary_url(e),
             e.get("note", ""), e.get("user_note", ""), e.get("portal", ""),

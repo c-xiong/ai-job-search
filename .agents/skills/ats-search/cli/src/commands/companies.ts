@@ -23,8 +23,10 @@ interface SeenEntry {
   first_seen?: string
 }
 
+// `star` is a retired status (read as `yes`); an older state file that has not
+// been saved since can still carry it.
 /** Statuses that mean "I want more of this" - the signal `--suggest` runs on. */
-const INTERESTING = new Set(["star", "yes", "maybe", "applied"])
+const INTERESTING = new Set(["yes", "applied", "star"])
 
 function normalize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "")

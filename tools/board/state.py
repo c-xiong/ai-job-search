@@ -76,7 +76,7 @@ def _shape(items):
         rows.append({
             "url": url,
             "open_url": primary_url(entry),
-            "status": entry.get("user_status", "new"),
+            "status": jobs_md.user_status(entry),
             "fit": (entry.get("fit") or "").lower(),
             "score": jobs_md.priority_score(entry),
             "ranked": isinstance(entry.get("rank_score"), (int, float)),

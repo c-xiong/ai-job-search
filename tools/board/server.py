@@ -40,7 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_jobs  # noqa: E402
 import jobs_md  # noqa: E402
 
-from . import activity, companies, docs, notion, review, run_registry, runs, state  # noqa: E402
+from . import (activity, companies, docs, notion, review, run_registry, runs, state,  # noqa: E402
+               trash)
 
 TOKEN_FILE = jobs_md.ROOT / "job_scraper" / ".board-token"
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
@@ -197,7 +198,7 @@ def fetch_status():
 # id never reaches the supervisor.
 RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore|retry|continue"
-                      r"|marks|reveal|applied))?$")
+                      r"|marks|reveal|applied|delete))?$")
 PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"/(?P<kind>cv|cover)$")
 COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
@@ -210,6 +211,24 @@ def run_route(path):
     if not match:
         return None, None
     return match.group("id"), match.group("action")
+
+
+def mark_board_applied(job_url):
+    """Mark applied also moves the board row, so Status and the Applications
+    list tell the same story. Returns "updated", "unchanged" or "missing"."""
+    if not job_url:
+        return "missing"
+    with jobs_md.board_lock():
+        seen = state.load()
+        key = job_url if job_url in seen else next(
+            (url for url, entry in seen.items() if state.primary_url(entry) == job_url), None)
+        if key is None:
+            return "missing"
+        if jobs_md.user_status(seen[key]) == "applied":
+            return "unchanged"
+        seen[key]["user_status"] = "applied"
+        state.save(seen, "%s -> applied" % (seen[key].get("company") or "job"))
+    return "updated"
 
 
 # ------------------------------------------------------------------- static
@@ -308,7 +327,7 @@ class Handler(BaseHTTPRequestHandler):
         run_id, action = run_route(parts.path)
         if run_id and action in (None, "fit", "verify"):
             record = runs.get(run_id)
-            if record is None:
+            if record is None or trash.is_deleted(record):
                 return self._send(404, json.dumps({"error": "unknown run"}))
             if action == "fit":
                 fit = record.get("fit")
@@ -332,7 +351,7 @@ class Handler(BaseHTTPRequestHandler):
         pdf_match = PDF_PATH.fullmatch(parts.path)
         if pdf_match:
             record = runs.get(pdf_match.group("id"))
-            if record is None:
+            if record is None or trash.is_deleted(record):
                 return self._send(404, json.dumps({"error": "unknown run"}))
             relative = (record.get("artefacts") or {}).get(pdf_match.group("kind") + "_pdf")
             if not relative:
@@ -355,10 +374,11 @@ class Handler(BaseHTTPRequestHandler):
         parts = urlparse(self.path)
         run_id, action = run_route(parts.path)
         company_match = COMPANY_PATH.fullmatch(parts.path)
-        known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/companies",
-                               "/api/companies/resolve-all", "/api/companies/health-check") or \
+        known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/runs/undelete",
+                               "/api/companies", "/api/companies/resolve-all",
+                               "/api/companies/health-check") or \
             (run_id and action in ("approve", "cancel", "kill", "compile", "restore", "retry",
-                                   "continue", "marks", "reveal", "applied"))
+                                   "continue", "marks", "reveal", "applied", "delete"))
         known = known or bool(company_match and company_match.group("action") in
                               ("resolve", "identity", "test-fetch", "manage"))
         if not known or not self._authed(parse_qs(parts.query)):
@@ -375,6 +395,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if not isinstance(payload, dict):
             payload = {}
+
+        if parts.path == "/api/runs/undelete":
+            try:
+                restored = trash.undo([str(i) for i in payload.get("ids") or []])
+            except trash.TrashError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps({"restored": restored}))
+        if run_id and trash.is_deleted(runs.get(run_id)):
+            # A deleted run answers to nothing but undo.
+            return self._send(404, json.dumps({"error": "this run was deleted"}))
+        if run_id and action == "delete":
+            try:
+                deleted = trash.delete(run_id, payload.get("scope") or "application",
+                                       str(payload.get("confirm") or ""))
+            except trash.TrashError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps({"deleted": deleted}))
 
         if parts.path == "/api/fetch":
             code, body = start_fetch(payload)
@@ -430,7 +467,8 @@ class Handler(BaseHTTPRequestHandler):
                 stage = notion.mark_applied(record)
             except notion.NotionError as exc:
                 return self._send(502, json.dumps({"error": "Notion: %s" % exc}))
-            body = {"notion": stage, "tracker": docs.mark_applied(record)}
+            body = {"notion": stage, "tracker": docs.mark_applied(record),
+                    "board": mark_board_applied(record.get("job_url"))}
             activity.emit("board", "marked applied: %s - %s (Notion %s, tracker %s)"
                           % (record["company"], record["role"], stage or "off",
                              body["tracker"]), run_id=run_id)
@@ -551,6 +589,7 @@ def main(argv=None):
         signal.signal(sig, handler)
 
     runs.supervisor()          # reconcile orphans before the first request
+    trash.purge()              # deleted runs older than trash.TRASH_DAYS
     notion.start_background_pull()   # no-op unless job_scraper/notion_sync.json is set
 
     try:

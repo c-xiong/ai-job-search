@@ -28,43 +28,52 @@ class ShellMarkupTest(unittest.TestCase):
         cls.css = (static / "app.css").read_text(encoding="utf-8")
         cls.js = (static / "app.js").read_text(encoding="utf-8")
 
-    def test_workspace_has_the_four_approved_panels(self):
-        """Applications merged into Runs: one ledger, in the rail, not two."""
-        for marker in ('id="collect-panel"', 'id="runs"', 'id="board-panel"',
-                       'id="job-panel"'):
+    def test_the_board_is_the_table_and_the_job_panel_only(self):
+        """APPLICATIONS_PLAN.md §4.1: the Board's Runs rail is gone; the Draft
+        column, the run pill and the Applications badge carry what it said."""
+        for marker in ('id="board-panel"', 'id="job-panel"', 'id="appbadge"'):
             self.assertIn(marker, self.html)
-        for gone in ('id="applications-panel"', 'id="applicationlist"',
-                     'id="applicationcount"', 'apptable'):
+        for gone in ('id="runs"', 'id="runlist"', 'id="left-rail"', 'id="left-split"',
+                     'id="applications-panel"', 'apptable'):
             self.assertNotIn(gone, self.html)
+        self.assertIn("grid-template-columns:minmax(480px,1fr) 1px var(--right)", self.css)
 
-    def test_all_three_painted_gaps_are_accessible_splitters(self):
-        for marker in ('id="left-split"', 'id="right-split"',
-                       'id="left-row-split"'):
-            self.assertIn(marker, self.html)
-        self.assertNotIn('id="centre-row-split"', self.html)
-        self.assertEqual(self.html.count('role="separator"'), 3)
-        self.assertEqual(self.html.count('tabindex="0"'), 3)
+    def test_the_remaining_gap_is_an_accessible_splitter(self):
+        self.assertIn('id="right-split"', self.html)
+        self.assertEqual(self.html.count('role="separator"'), 1)
+        self.assertEqual(self.html.count('tabindex="0"'), 1)
         self.assertIn("aria-valuenow", self.js)
         self.assertIn("setPointerCapture", self.js)
 
-    def test_the_runs_ledger_navigates_only_by_link_and_has_no_expanded_form(self):
-        """A row is a card, not a hit target: only its links open a run, and a
-        run's link goes straight to its Tailor view - there is no ledger page
-        in between."""
-        self.assertNotIn("data-expand=\"runs\"", self.html)
-        self.assertNotIn("expanded-runs", self.css)
+    def test_applications_are_a_grouped_list_beside_the_open_one(self):
+        """The list exists to move between applications, so a row navigates;
+        the groups are the flow (generating, failed, to review, ready, applied)."""
+        self.assertNotIn('data-expand="runs"', self.html)
         self.assertNotIn("expanded-runs", self.js)
-        self.assertNotIn("cursor:pointer", self.css.split(".runitem{")[1].split("}")[0])
-        runlist = self.js.split("function renderRuns(){")[1].split("async function pollRuns")[0]
-        # The link has to look like one: accent chip plus an arrow glyph.
-        self.assertIn(".runopen{", self.css)
-        for marker in ('data-run="${esc(r.id)}"', "Watch run", "Open run",
-                       'class="runarrow">↗', 'class="linkish runopen"',
-                       'data-preview="${esc(r.id)}"', 'data-revise="${esc(r.id)}"',
-                       '"attempt "+r.attempt', "drafted"):
-            self.assertIn(marker, runlist)
-        self.assertNotIn('<div class="runitem ${running?"live":""} ${ACTIVE_RUN===r.id?"selected":""}" data-run=', runlist)
+        for group in ('["generating","Generating"]', '["failed","Failed"]',
+                      '["review","To review"]', '["ready","Ready to send"]',
+                      '["applied","Applied"]'):
+            self.assertIn(group, self.js)
+        rows = self.js.split("function appsGroupsHtml(){")[1].split("function renderAppsList")[0]
+        self.assertIn('class="app-row ${key}', rows)
+        self.assertIn('data-app="${esc(r.id)}"', rows)
+        # Two owner steps; generation is not one of them.
+        header = self.js.split("function appHeader(run,step){")[1].split("function mountApp")[0]
+        self.assertIn('stepBtn("review",1,"Review"', header)
+        self.assertIn('stepBtn("send",2,"Send"', header)
+        self.assertIn("data-delete-app", header)
+        self.assertIn(".apps-shell.list-collapsed", self.css)
         self.assertNotIn("function renderApplications", self.js)
+
+    def test_one_status_list_drives_every_status_surface(self):
+        """The chips, mark buttons, the select and the keyboard bar used to
+        offer three different vocabularies."""
+        self.assertIn('const ACTIVE=["yes","new","backlog"];', self.js)
+        self.assertIn('STATUS_KEYS={yes:"y",new:"u",backlog:"b",applied:"a",gate:"g",no:"n",expired:"x"}', self.js)
+        self.assertEqual(self.js.count("${markButtons(j)}"), 1)
+        self.assertIn('id="statuskeys"', self.html)
+        for gone in ('"star"', '"maybe"', "<kbd>s</kbd> star", "<kbd>m</kbd> maybe"):
+            self.assertNotIn(gone, self.js + self.html)
 
     def test_theme_is_a_named_three_state_button_outside_the_layout_blob(self):
         self.assertIn('id="theme-toggle"', self.html)
@@ -80,10 +89,11 @@ class ShellMarkupTest(unittest.TestCase):
     def test_layout_is_versioned_persistent_and_keeps_auto_collapse_separate(self):
         self.assertIn('jobflow.layout.v1', self.js)
         self.assertIn("version:1", self.js)
-        self.assertIn("leftCollapsed:false", self.js)
         self.assertIn("rightCollapsed:false", self.js)
-        self.assertIn("autoLeft:false", self.js)
         self.assertIn("autoRight:false", self.js)
+        self.assertIn("appsCollapsed:false", self.js)
+        # A blob stored while the Board still had a left rail is stripped.
+        self.assertIn('"left","leftCollapsed","autoLeft"', self.js)
         self.assertIn("shortcutsHidden:false", self.js)
         self.assertIn("toggleShortcuts", self.js)
         self.assertIn('event.key==="["', self.js)
@@ -100,37 +110,35 @@ class ShellMarkupTest(unittest.TestCase):
                        '"hashchange"', "history.replaceState"):
             self.assertIn(marker, self.js)
         # Each parked artboard writes its own address...
-        for route in ('"/run/"+encodeURIComponent(run.id)',
-                      '"/job/"+encodeURIComponent(j.url)',
-                      '+"/preview"', '+"/revise"', '"/companies"+'):
+        for route in ('"/app/"+encodeURIComponent(run.id)',
+                      '+"/log"', '+"/review"', '+"/send"', '+"/revise"', '"/companies"+'):
             self.assertIn(route, self.js)
-        # ...and every one of them is reachable coming back the other way.
+        # ...and every one of them is reachable coming back the other way,
+        # including the `#/run/...` addresses from before the Applications tab.
         for head in ('head==="board"', 'head==="job"',
-                     'head==="companies"', 'head==="run"',
+                     'head==="companies"', 'head==="app"', 'head==="run"',
                      'second==="preview"', 'second==="revise"'):
             self.assertIn(head, self.js)
         # Boot is one function of the URL, not a ladder over saved state.
         self.assertIn("applyRoute();", self.js.split("Promise.all(")[1])
-        # Paging inside a view rewrites its entry instead of stacking another.
-        self.assertIn('IN_PLACE=["job","companies"]', self.js)
+        # Filtering inside a view rewrites its entry instead of stacking another.
+        self.assertIn('IN_PLACE=["companies"]', self.js)
 
     def test_workspace_and_tailor_artboards_have_runtime_hooks(self):
-        self.assertIn('data-expand="board"', self.html)
-        self.assertIn("expanded-board", self.css)
-        self.assertIn("tailor-shell", self.css)
+        self.assertIn("apps-shell", self.css)
         self.assertIn("Tailoring choices", self.js)
         self.assertIn("runpill", self.html)
         for marker in ("Regenerate", "continuerun", "quota_exhausted", "failure-card",
                        "data-gen-base", "latestApplications", "progressPanel",
                        "retry_of"):
             self.assertIn(marker, self.js if marker != "failure-card" else self.css)
-        # The job identity lives in the body, in sentence case - never in the
-        # app bar's uppercase slot, and never twice.
-        self.assertIn(".runtitle h1{", self.css)
-        self.assertIn("const runTitle=(run,action=\"\")=>", self.js)
-        for view in ('openView("tailor",[crumbRun(run)]',
-                     'openView("preview",[crumbRun(run),{label:"Preview"}]',
-                     'openView("revise",[crumbRun(run),{label:"Revise"}]'):
+        # The job identity lives in the application header, in sentence case -
+        # never in the app bar's uppercase slot, and never twice.
+        self.assertIn(".app-id h1{", self.css)
+        for view in ('openView("tailor",[crumbRun(run),{label:"Log"}]',
+                     'openView("preview",[crumbRun(run),{label:"Review"}]',
+                     'openView("send",[crumbRun(run),{label:"Send"}]',
+                     'openView("revise",[crumbRun(run),{label:"Versions"}]'):
             self.assertIn(view, self.js)
         self.assertNotIn("Back to board", self.js)
         self.assertIn("overflow-wrap:anywhere", self.css)
@@ -148,14 +156,14 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn('<button class="brand" data-nav="board"', self.html)
         self.assertIn(".brand{", self.css)
         self.assertIn("font-size:15px;font-weight:700", self.css)
-        # Three tabs (owner sign-off 2026-09-27, DESIGN.md §14): a run you are
-        # inside lights Runs, not Board.
+        # Three tabs (DESIGN.md §14, renamed in §15): an application you are
+        # inside lights Applications, not Board.
         self.assertIn('<nav class="nav" aria-label="Primary">', self.html)
         for tab in ('<button class="navitem" data-nav="board">Board</button>',
-                    '<button class="navitem" data-nav="runs">Runs</button>',
+                    '<button class="navitem" data-nav="runs">Applications<span class="navbadge" id="appbadge" hidden></span></button>',
                     '<button class="navitem" data-nav="companies">Companies</button>'):
             self.assertIn(tab, self.html)
-        self.assertIn('["tailor","preview","revise"].includes(VIEW)?"runs":"board"', self.js)
+        self.assertIn('APP_VIEWS.includes(VIEW)?"runs":"board"', self.js)
         # Underlined, not filled - a top-level tab must not read as a chip.
         self.assertIn(".navitem.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--selbar)}", self.css)
         self.assertIn('node.setAttribute("aria-current","page")', self.js)
@@ -178,20 +186,17 @@ class ShellMarkupTest(unittest.TestCase):
         # existing data-run handler - there is no company page behind it.
         self.assertIn('const crumbRun=run=>({label:run.company,sub:run.role,run:run.id});', self.js)
         self.assertIn('seg.run?`data-run="${esc(seg.run)}"`', self.js)
-        # Position in the reader queue is a count, not another layer.
-        self.assertIn('count:`${sel+1} of ${rows.length}`', self.js)
+        # A segment may carry a count (position is status, not a layer).
         self.assertIn('`<span class="count">${esc(seg.count)}</span>`', self.js)
         # A long role truncates instead of pushing the run pill off the bar.
         self.assertIn("text-overflow:ellipsis", self.css.split(".crumbsub{")[1].split("}")[0])
         # The right-hand hairline appears only when there is state to fence off.
         self.assertIn('el("right-sep").hidden=!active;', self.js)
 
-    def test_job_reader_and_compiled_pdf_preview_are_real_views(self):
-        for marker in ("reader-shell", "reader-queue", "reader-decide",
-                       "preview-shell", "screen-rail", "check-rail", "pdf-stage"):
+    def test_compiled_pdf_review_is_a_real_view(self):
+        for marker in ("preview-shell", "screen-rail", "check-rail", "pdf-stage"):
             self.assertIn(marker, self.css)
-        for marker in ("renderReader", "renderPreview", "data-reader-row",
-                       "data-preview-filter", "data-recompile",
+        for marker in ("renderPreview", "data-preview-filter", "data-recompile",
                        "/api/pdf/", "data-reveal", "data-mark", "regen-form"):
             self.assertIn(marker, self.js)
         # The frames are built per document kind now, so the titles are in the
@@ -237,8 +242,11 @@ class ShellMarkupTest(unittest.TestCase):
                         'id="company-name"', "Last updated", "data-company-filter"):
             self.assertNotIn(removed, self.js)
 
-    def test_source_column_custom_text_modal_and_no_price_chrome(self):
-        self.assertIn('<th class="sourcecol">Source</th>', self.html)
+    def test_draft_column_custom_text_modal_and_no_price_chrome(self):
+        # Source is a chip filter already; its column now says whether the job
+        # has documents (APPLICATIONS_PLAN.md §4.2).
+        self.assertIn('<th class="draftcol"', self.html)
+        self.assertNotIn('class="sourcecol"', self.html)
         self.assertIn('id="text-modal"', self.html)
         self.assertIn('id="text-modal-input"', self.html)
         self.assertIn('id="shortcut-toggle"', self.html)
@@ -269,8 +277,25 @@ class ShellMarkupTest(unittest.TestCase):
         # A standing preference, kept out of the layout blob and out of the URL.
         self.assertIn('jobflow.board.v1', self.js)
         self.assertNotIn('jobflow.board.v1', self.js.split("const LAYOUT_KEY")[1])
-        for rule in (".filterbar{", ".source-chip{", ".newdot{", ".foundcol{"):
+        for rule in (".filterbar{", ".facet-menu-body{", ".source-opt{", ".newdot{", ".foundcol{"):
             self.assertIn(rule, self.css)
+
+    def test_the_toolbar_keeps_each_control_next_to_what_it_acts_on(self):
+        """APPLICATIONS_PLAN.md §8: fetch settings sit on the Fetch button, the
+        filters are one compact row, and there is no Expand anywhere."""
+        group = self.html.split('<div class="fetch-group">')[1].split('<div class="fetch-feedback"')[0]
+        self.assertIn('id="fetch"', group)
+        self.assertIn('id="fetch-settings"', group)
+        self.assertIn('<details class="facet-menu popover" id="f-source">', self.html)
+        for self_named in ('>Any fit<', '>Found any time<', '>Sort: priority<'):
+            self.assertIn(self_named, self.html)
+        for gone in ('data-expand', 'class="facet"', 'wide-only', '↗ Expand'):
+            self.assertNotIn(gone, self.html)
+        self.assertNotIn("renderReader", self.js)
+        self.assertNotIn("expanded-board", self.css)
+        head = self.html.split('<section class="panel board-panel"')[1].split('<div class="fetch-toolbar">')[0]
+        self.assertNotIn('shortcut-toggle', head)
+        self.assertIn("closePopovers", self.js)
 
     def test_approved_tokens_and_hard_centre_minimum_are_present(self):
         for token in ("--bg:", "--panel:", "--line:", "--text:", "--dim:",
@@ -312,7 +337,8 @@ class PostingAndScoreMarkupTest(unittest.TestCase):
         browser sees only an excerpt, so re-deriving the verdict there could only
         ever be wrong - and it reported "no blocking requirement detected".
         """
-        self.assertIn("gateLines", self.js)
+        # The reader that printed gate lines is gone; what matters is that no
+        # browser-side guess came back in its place.
         code = "\n".join(line for line in self.js.splitlines()
                          if not line.lstrip().startswith("//"))
         self.assertNotIn("german required|deutsch", code)
@@ -457,13 +483,13 @@ const build=new Function("ctx","location","history","addEventListener",`
   const render=()=>{};
   const restoreWorkspace=()=>{ctx.opened.push("workspace");setRoute("/")};
   const openView=(kind,title,route)=>{ctx.opened.push(kind);setRoute(route||"/"+kind)};
-  const renderReader=()=>openView("reader",null,"/job/"+encodeURIComponent(shown()[sel].url));
   const renderCompanies=()=>openView("companies","","/companies"+(COMPANY_SELECTED?"?c="+encodeURIComponent(COMPANY_SELECTED):""));
-  const renderTailor=run=>openView("tailor",null,"/run/"+encodeURIComponent(run.id));
-  const renderPreview=run=>openView("preview",null,"/run/"+encodeURIComponent(run.id)+"/preview");
-  const renderRevise=run=>openView("revise",null,"/run/"+encodeURIComponent(run.id)+"/revise");
+  const renderTailor=run=>openView("tailor",null,"/app/"+encodeURIComponent(run.id)+"/log");
+  const renderPreview=run=>openView("preview",null,"/app/"+encodeURIComponent(run.id)+"/review");
+  const renderRevise=run=>openView("revise",null,"/app/"+encodeURIComponent(run.id)+"/revise");
+  const openApp=(run,step)=>step==="review"?renderPreview(run):step==="revise"?renderRevise(run):renderTailor(run);
   ${src.slice(start,end)}
-  return {applyRoute,renderReader,renderCompanies,renderTailor,renderPreview,
+  return {applyRoute,renderCompanies,renderTailor,renderPreview,
           state:()=>({filter,sel,COMPANY_SELECTED,facetsReset}),
           set:(k,v)=>{if(k==="filter")filter=v;if(k==="sel")sel=v;if(k==="COMPANY_SELECTED")COMPANY_SELECTED=v}};
 `);
@@ -479,23 +505,26 @@ const at=hash=>{stack=[hash];log=[];ctx.opened=[];R=build(ctx,location,history,a
 let bad=0;
 const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
 
-// A posting URL carrying its own query string survives encode -> hash -> decode.
-at(""); R.renderReader();
+// The reader and the expanded board are gone; their addresses still land on
+// the Board - a posting's with its row selected - and settle on #/. A posting
+// URL carrying its own query string survives the decode.
 const jobRoute="#/job/"+encodeURIComponent(ctx.JOBS[0].url);
-t("reader writes an encoded job route", location.hash===jobRoute);
 at(jobRoute); R.applyRoute();
-t("that route comes back to the reader", ctx.opened[0]==="reader"&&R.state().sel===0);
+t("a reader address selects its row on the board",
+  ctx.opened[0]==="workspace"&&R.state().sel===0&&location.hash==="#/"&&stack.length===1);
+at("#/board"); R.applyRoute();
+t("the expanded-board address lands on the board",ctx.opened[0]==="workspace"&&location.hash==="#/");
 
-// Paging within a view rewrites its entry; changing view stacks a new one.
-at(jobRoute); R.set("filter","all"); R.set("sel",1); R.renderReader();
-t("j/k in the reader replaces, never stacks", log.length===1&&log[0].startsWith("replace")&&stack.length===1);
+// Filtering within a view rewrites its entry; changing view stacks a new one.
 at("#/companies"); R.set("COMPANY_SELECTED","Acme & Co"); R.renderCompanies();
 t("opening a company's editor replaces", log.length===1&&log[0].startsWith("replace"));
 const companyRoute=location.hash;
 at("#/board"); R.renderTailor(ctx.RUNS[0]);
-t("board -> tailor pushes", log[0]==="push #/run/run-7");
-at("#/run/run-7"); R.renderPreview(ctx.RUNS[0]);
-t("tailor -> preview pushes, so back returns to the pipeline", log[0]==="push #/run/run-7/preview");
+t("board -> application pushes", log[0]==="push #/app/run-7/log");
+at("#/app/run-7/log"); R.renderPreview(ctx.RUNS[0]);
+t("log -> review pushes, so back returns to the log", log[0]==="push #/app/run-7/review");
+at("#/run/run-7/preview"); R.applyRoute();
+t("an address from before the Applications tab still opens its review", ctx.opened[0]==="preview");
 
 // A name needing escaping round-trips through the query string.
 at(companyRoute); R.applyRoute();
@@ -503,7 +532,7 @@ t("the open company comes back",
   R.state().COMPANY_SELECTED==="Acme & Co"&&ctx.opened[0]==="companies");
 
 // Rendering *from* a route must not write back, or the router feeds itself.
-at("#/run/run-7"); R.applyRoute();
+at("#/app/run-7/log"); R.applyRoute();
 t("applying a route writes nothing back", log.length===0&&ctx.opened[0]==="tailor");
 at("#/board"); R.renderTailor(ctx.RUNS[0]);
 t("our own write does not re-enter the router", ctx.opened.filter(v=>v==="tailor").length===1);
@@ -512,7 +541,7 @@ t("a hash typed by hand does re-render", ctx.opened.includes("companies"));
 
 // A route naming something that is gone lands on the workspace, and does not
 // leave the broken address sitting in the history.
-[["a pruned run","#/run/deleted"],
+[["a deleted application","#/app/deleted"],["a pruned run","#/run/deleted"],
  ["a posting that dropped off the board","#/job/"+encodeURIComponent("https://gone.example/x")],
  ["an unknown view","#/nope/nope"]].forEach(([name,hash])=>{
   at(hash); R.applyRoute();
@@ -524,7 +553,7 @@ t("a hash typed by hand does re-render", ctx.opened.includes("companies"));
 // fit and found facets too, which can hide a row just as thoroughly.
 at("#/job/"+encodeURIComponent("https://ex.com/b")); R.applyRoute();
 t("deep link widens a filter that would hide the row",
-  R.state().filter==="all"&&ctx.opened[0]==="reader");
+  R.state().filter==="all"&&R.state().sel===1&&ctx.opened[0]==="workspace");
 t("deep link clears the facets as well", R.state().facetsReset===1);
 
 process.exit(bad?1:0);
@@ -551,7 +580,7 @@ class RouteBehaviourTest(unittest.TestCase):
 RUN_OUTPUT_HARNESS = r"""
 const fs=require("fs");
 const src=fs.readFileSync(process.argv[2],"utf8");
-const start=src.indexOf("const STEPS=["),end=src.indexOf("function renderReader(",start);
+const start=src.indexOf("const DOC_STATE_MARK="),end=src.indexOf("async function renderPreview(",start);
 if(start<0||end<start)throw new Error("renderTailor was not found in app.js");
 
 const ctx={nodes:{},html:""};
@@ -570,8 +599,11 @@ const build=new Function("ctx",`
   const RUNNING=["evaluating","queued","preparing","drafting","reviewing","revising","compiling","inspecting","publishing"];
   const DOC_TITLE={cv:"CV",cover:"cover letter"};
   const docKinds=scope=>(scope||"both")==="both"?["cv","cover"]:[scope];
-  const runTitle=()=>"<header></header>",crumbRun=()=>({}),openView=()=>{},restoreWorkspace=()=>{};
-  let RUNS=ctx.runs||[],EV=[],ACTIVE_RUN=null,RUN_FOLLOW=true;
+  const crumbRun=()=>({}),openView=()=>{},restoreWorkspace=()=>{},saveLayout=()=>{};
+  const document={activeElement:null,querySelector:()=>null};
+  let RUNS=ctx.runs||[],EV=[],ACTIVE_RUN=null,RUN_FOLLOW=true,QUEUE=[],layout={},PREVIEW_RUN=null,PREV_LOG_PHASE=null;
+  const APP_GROUPS=[],latestApplications=()=>RUNS;
+  const appState=r=>RUNNING.includes(r.phase)?"generating":r.phase==="done"?"review":"failed";
   const RUN_LOG_SCROLL=new Map();
   ${src.slice(start,end)}
   return {renderTailor,setFollow:value=>RUN_FOLLOW=value,active:()=>ACTIVE_RUN,setRuns:v=>RUNS=v};
@@ -802,8 +834,11 @@ const src=fs.readFileSync(process.argv[2],"utf8");
 const start=src.indexOf("const crumbRun="),end=src.indexOf("// Routing.");
 if(start<0||end<start)throw new Error("the view block was not found in app.js");
 const guards=src.match(/if\([^;{}]*\)renderTailor\(RUNS\.find\(r=>r\.id===ACTIVE_RUN\)\);/g)||[];
-if(guards.length!==2)throw new Error("expected two live-refresh guards, found "+guards.length);
-if(guards[0]!==guards[1])throw new Error("the live-refresh guards disagree:\n"+guards.join("\n"));
+if(guards.length!==1)throw new Error("expected one activity live-refresh guard, found "+guards.length);
+// The run poll repaints under the same condition, and moves a run that just
+// finished on to Review instead.
+const runs=src.slice(src.indexOf("function renderRuns(){"),src.indexOf("async function pollRuns"));
+if(!runs.includes('if(VIEW==="tailor"&&ACTIVE_RUN){'))throw new Error("renderRuns repaints outside the tailor view");
 
 const build=new Function("ctx",`
   const nodes={};
@@ -821,6 +856,7 @@ const build=new Function("ctx",`
   ctx.tabs=[makeTab("board"),makeTab("runs"),makeTab("companies")];
   const document={querySelectorAll:()=>ctx.tabs};
   const RUNS=ctx.RUNS;
+  const APP_VIEWS=["tailor","preview","send","revise"];
   let ACTIVE_RUN=null,VIEW=null;
   const setRoute=route=>ctx.routes.push(route);
   const renderTailor=run=>{ctx.painted.push(run?run.id:"workspace")};
@@ -839,7 +875,7 @@ const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
 const RUN=ctx.RUNS[0];
 
 R.watch("r-1");  // the user watched a run earlier in the session
-for(const kind of ["companies","reader","preview","revise"]){
+for(const kind of ["companies","preview","send","revise"]){
   ctx.painted=[];R.openView(kind,null,"/"+kind);R.poll();
   t("the "+kind+" view survives a poll",ctx.painted.length===0);
 }
@@ -852,7 +888,7 @@ t("the workspace is left alone",ctx.painted.length===0);
 R.openView("companies",null,"/companies");
 t("Companies lights its own tab",String(R.lit())==="companies");
 R.openView("preview",[R.run(RUN),{label:"Preview"}],"/run/r-1/preview");
-t("a run lights Runs",String(R.lit())==="runs");
+t("an application lights Applications",String(R.lit())==="runs");
 R.restoreWorkspace();
 t("home lights Board",String(R.lit())==="board");
 
@@ -1068,7 +1104,8 @@ const build=new Function("ctx",`
   const pollRuns=async()=>{RUNS=ctx.serverRuns};
   const pollActivity=()=>{};
   const openTextModal=async()=>ctx.note;
-  const renderTailor=run=>ctx.opened.push(run.id);
+  const openApp=run=>ctx.opened.push(run.id);
+  const applicationFor=()=>ctx.existing||null;
   const document={querySelector:selector=>ctx.picks[selector]?{value:ctx.picks[selector]}:null};
   const DRAFT_LABEL={both:"Draft CV + cover letter",cv:"Draft CV",cover:"Draft cover letter"};
   ${src.slice(start,end)}
@@ -1123,6 +1160,12 @@ const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
   await R.startTailor("https://ex.com/a");
   t("a started run that cannot be found still acknowledges the press",
     ctx.opened.length===0&&ctx.toasts.some(m=>String(m).includes("queued")));
+
+  // A job that already has an application opens it; a second Generate is a
+  // deliberate Regenerate inside the application, never a stray press here.
+  [R,ctx]=make(202,{run_id:"other"},[RUN]);ctx.existing=RUN;
+  await R.startTailor("https://ex.com/a");
+  t("an existing application opens instead of starting another",ctx.posted.length===0&&ctx.opened.join("")===RUN.id);
 
   // Cancelling the instruction modal starts nothing at all.
   [R,ctx]=make(202,{run_id:RUN.id},[RUN]);ctx.note=null;

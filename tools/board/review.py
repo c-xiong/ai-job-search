@@ -63,8 +63,23 @@ def _binding(record, doc):
         path = _pdf(record, kind)
         if path is None:
             return None
-        shas.append(checkpoint.sha256(path))
+        shas.append(_sha(path))
     return ":".join(shas)
+
+
+# `/api/runs` summarises every finished run's checklist on each poll, so the
+# PDF hash is memoised on (path, mtime, size): a rebuild changes the key.
+_SHA_CACHE = {}
+
+
+def _sha(path):
+    stat = path.stat()
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if key not in _SHA_CACHE:
+        if len(_SHA_CACHE) > 512:
+            _SHA_CACHE.clear()
+        _SHA_CACHE[key] = checkpoint.sha256(path)
+    return _SHA_CACHE[key]
 
 
 def _marks_path(record):

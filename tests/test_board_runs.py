@@ -38,6 +38,19 @@ class MinimalFlowTest(SupervisorCase):
         self.assertEqual(args[1]["sector"], "AI")
         self.assertNotIn("overall", args[1])
 
+    def test_a_finished_run_can_be_regenerated_from_its_saved_posting(self):
+        run_id, phase = self.run_to_end()
+        self.assertEqual(phase, "done")
+        code, body = self.supervisor.retry(run_id)
+        self.assertEqual(code, 202, body)
+        record = run_registry.get(body["run_id"])
+        self.assertEqual(record["retry_of"], run_id)
+        self.assertEqual(record["attempt"], 2)
+        self.assertEqual(self.settle(body["run_id"]), "done",
+                         run_registry.get(body["run_id"]).get("error"))
+        self.assertEqual(self.manifest(body["run_id"])["inputs"]["posting"]["origin"],
+                         "adopted:%s" % run_id)
+
     def test_the_posting_is_saved_without_a_model_when_it_can_be(self):
         run_id, phase = self.run_to_end()
         self.assertEqual(phase, "done")

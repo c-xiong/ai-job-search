@@ -337,13 +337,18 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
 
         if budget.deferred:
             log("  . %d LinkedIn postings stored without a description - the run's detail "
-                "budget (%d) was spent; they stay `new` and can be screened next run"
+                "budget (%d) was spent; they are stored unscreened and can be screened next run"
                 % (budget.deferred, budget.limit))
 
         # ---- merge and write (fast, locked) --------------------------------
         with jobs_md.board_lock():
             seen = load_seen()
             before = len(seen)
+            # `new` means "arrived in this fetch": last run's unreviewed rows
+            # step down to `backlog` before this run's rows land.
+            demoted = jobs_md.demote_unreviewed(seen)
+            if demoted:
+                log("  %d unreviewed rows from earlier fetches moved to backlog" % demoted)
             # Posting bodies collect here and are written only in the branch
             # below that also saves the state. merge() runs in full on a dry
             # run - only save_seen() is skipped - so a sidecar written inside it

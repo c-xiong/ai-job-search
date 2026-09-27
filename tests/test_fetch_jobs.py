@@ -580,10 +580,10 @@ class LostUpdateTest(unittest.TestCase):
         existing = self.existing
 
         def slow_collect(_log, **_kw):
-            # Stands in for the network half. While it runs, the user presses `s`
+            # Stands in for the network half. While it runs, the user presses `y`
             # on a row: the board writes straight to seen_jobs.json.
             seen = json.loads(jm.SEEN.read_text(encoding="utf-8"))["seen"]
-            seen[existing]["user_status"] = "star"
+            seen[existing]["user_status"] = "yes"
             seen[existing]["user_note"] = "worth applying"
             jm.save_seen(seen)
             return ([{"id": "greenhouse:parloa:1", "title": "Backend Engineer",
@@ -601,7 +601,7 @@ class LostUpdateTest(unittest.TestCase):
             fetch_jobs.ats_fetch.collect = real_collect
 
         seen = json.loads(jm.SEEN.read_text(encoding="utf-8"))["seen"]
-        self.assertEqual(seen[existing]["user_status"], "star",
+        self.assertEqual(seen[existing]["user_status"], "yes",
                          "the fetch reverted a status set while it was running")
         self.assertEqual(seen[existing]["user_note"], "worth applying")
         self.assertIn("https://job-boards.greenhouse.io/parloa/jobs/1", seen,

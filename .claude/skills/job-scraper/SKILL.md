@@ -239,8 +239,10 @@ that, they announce what they changed, and `--dry-run` shows the effect first.
 2. Only present jobs NOT already in the seen list or tracker.
 
 3. **Respect the user's own exclusions.** An entry whose `user_status` is `no` was excluded by the
-   user personally - never present it again and never re-score it. `maybe` means keep it, ranked
-   lower. `star`, `yes` and `applied` are the user's, not yours: carry them through untouched.
+   user personally - never present it again and never re-score it. `yes` and `applied` are the
+   user's, not yours: carry them through untouched. (`star` and `maybe` are retired - the board
+   reads them as `yes` and `backlog` and rewrites them on the next save.) `new` means "arrived in the
+   latest fetch"; a fetch demotes older unreviewed `new` rows to `backlog` before merging.
 
 4. **Persist only the canonical state.** Write `job_scraper/seen_jobs.json`; the local board
    reads it directly and is the only editing interface. Do not generate Markdown or CSV during

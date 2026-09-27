@@ -1,14 +1,24 @@
 const T=document.querySelector('meta[name="board-token"]').content;
 const el=id=>document.getElementById(id);
 const esc=value=>String(value==null?"":value).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const ACTIVE=["star","yes","new","maybe"];
+const ACTIVE=["yes","new","backlog"];
+// One status list, one key each. The chips, the mark buttons, the table's
+// select and the keyboard bar are all built from STATUSES (the server's order)
+// and this map, so the three places can never offer different choices again.
+const STATUS_KEYS={yes:"y",new:"u",backlog:"b",applied:"a",gate:"g",no:"n",expired:"x"};
+const markButtons=j=>STATUSES.map(s=>`<button class="${j.status===s?"on":""}" data-status="${esc(s)}" title="${esc(s)} · ${esc(STATUS_KEYS[s]||"")}">${esc(s)}</button>`).join("");
+// A row whose status the server's list does not name (a server started before
+// the vocabulary changed) keeps its own value: a <select> without a matching
+// option silently shows its first one, and every such row read as "yes".
+const statusChoices=j=>j.status&&!STATUSES.includes(j.status)?[...STATUSES,j.status]:STATUSES;
+function renderStatusKeys(){el("statuskeys").innerHTML=STATUSES.filter(s=>STATUS_KEYS[s]).map(s=>`<kbd>${STATUS_KEYS[s]}</kbd> ${esc(s)}`).join(" ")}
 const RUNNING=["evaluating","queued","preparing","drafting","reviewing","revising","compiling","inspecting","publishing"];
 // Three owner-facing stages; the checkpoint keeps the detailed internal ones.
 const PHASE_STEP={evaluating:1,awaiting_approval:1,queued:1,preparing:1,drafting:2,reviewing:2,revising:2,compiling:3,inspecting:3,publishing:3,done:3};
 const STAGE_COUNT=3;
 let JOBS=[],STATUSES=[],FILTERS=[],filter="active",q="",sel=0;
 let RUNS=[],QUEUE=[],LEDGER=null,BUDGET=null,RUNPOLL=null,ACTIVE_RUN=null;
-let PREVIEW_RUN=null;
+let PREVIEW_RUN=null,PREV_LOG_PHASE=null;
 let REVISE_RUN=null;
 // Which view is on screen. The `-mode` classes cannot answer that: openView
 // marks *every* parked view "tailor-mode" because they share one layout, so a
@@ -65,8 +75,14 @@ function checkAuth(response){
   return !stale;
 }
 
+// `undo` is either true (the status undo stack) or a function of its own, such
+// as bringing a deleted application back; `open` makes the message a link to
+// that application.
+let UNDO_ACTION=null;
 function toast(msg,opts={}){
-  const box=el("toast"),btn=el("toastundo");el("toastmsg").textContent=msg;
+  const box=el("toast"),btn=el("toastundo"),text=el("toastmsg");text.textContent=msg;
+  text.dataset.open=opts.open||"";text.classList.toggle("toastlink",!!opts.open);
+  UNDO_ACTION=typeof opts.undo==="function"?opts.undo:null;
   clearTimeout(toastTimer);clearInterval(undoTimer);box.classList.toggle("warn",!!opts.warn);box.classList.add("on");
   if(opts.undo){let left=opts.seconds||6;btn.hidden=false;el("toastsec").textContent="("+left+")";
     undoTimer=setInterval(()=>{left--;el("toastsec").textContent="("+left+")";if(left<=0)clearInterval(undoTimer)},1000);
@@ -233,43 +249,44 @@ function renderChips(){
   el("chips").innerHTML=FILTERS.map(([key,label])=>`<button class="chip ${key===filter?"on":""}" data-filter="${esc(key)}">${esc(label)}<span class="n">${counts[key]||0}</span></button>`).join("");
 }
 
-// One chip per source the board actually holds - not per source the fetcher
+// One row per source the board actually holds - not per source the fetcher
 // can run, because a portal you stopped fetching from still owns rows you can
-// see. Each count is what that chip would add back, so it is taken with every
-// facet applied *except* this one: a chip reading 0 because the fit filter
-// excludes its rows is telling you the truth about clicking it.
+// see. Each count is what that source would add back, so it is taken with
+// every facet applied *except* this one: a 0 because the fit filter excludes
+// its rows is telling you the truth about ticking it.
 function renderSourceChips(){
   const pool=JOBS.filter(j=>inStatus(j)&&inQuery(j)&&inFit(j)&&inFound(j));
   const counts=new Map();
   for(const j of JOBS)if(!counts.has(sourceKey(j)))counts.set(sourceKey(j),0);
   for(const j of pool)counts.set(sourceKey(j),(counts.get(sourceKey(j))||0)+1);
-  const chips=[...counts.keys()].sort((a,b)=>byName(sourceLabel(a),sourceLabel(b)));
-  el("sourcechips").innerHTML=chips.map(key=>{
+  const keys=[...counts.keys()].sort((a,b)=>byName(sourceLabel(a),sourceLabel(b)));
+  el("sourcechips").innerHTML=keys.map(key=>{
     const on=!facets.hidden.includes(key);
-    return `<button class="chip source-chip ${on?"on":""}" data-source="${esc(key)}" aria-pressed="${on}"
-      title="${esc(sourceLabel(key))} — click to ${on?"hide":"show"}, alt-click to show only this source">${esc(sourceLabel(key))}<span class="n">${counts.get(key)}</span></button>`;
-  }).join("");
+    return `<div class="source-opt"><label><input type="checkbox" data-source="${esc(key)}" ${on?"checked":""}> ${esc(sourceLabel(key))}<span class="n">${counts.get(key)}</span></label><button class="linkish" data-source-only="${esc(key)}" title="Show only ${esc(sourceLabel(key))}">only</button></div>`;
+  }).join("")+(facets.hidden.length?`<button class="linkish source-all" data-source-all>Show all sources</button>`:"");
+  const visible=keys.filter(key=>!facets.hidden.includes(key));
+  el("f-source-label").textContent=visible.length===keys.length?"All sources":visible.length===1?sourceLabel(visible[0]):`${visible.length} of ${keys.length} sources`;
+  el("f-source").classList.toggle("set",visible.length!==keys.length);
   el("f-fit").value=facets.fit;el("f-found").value=facets.found;el("f-sort").value=facets.sort;
+  ["f-fit","f-found","f-sort"].forEach(id=>el(id).classList.toggle("set",el(id).selectedIndex>0));
   // The option names what it can actually deliver. Without a run stamp the best
   // the board can do is the newest arrival date it holds, which on a board
   // fetched twice in one day is a day, not a run.
   const exact=batchIsExact(),option=el("f-found").options[1];
-  option.textContent=exact?"latest fetch":"newest batch";
+  option.textContent=exact?"Latest fetch":"Newest batch";
   option.title=exact?"The rows the last fetch inserted."
     :"No fetch has recorded its own timestamp yet, so this is everything that arrived on the most recent day the board saw new rows. The next fetch will be exact.";
   el("f-reset").hidden=facetsAreDefault();
 }
 function render(){
   renderChips();renderSourceChips();
-  const rows=shown();if(sel>=rows.length)sel=Math.max(0,rows.length-1);
+  const rows=shown(),apps=appsByJob();if(sel>=rows.length)sel=Math.max(0,rows.length-1);
   el("tb").innerHTML=rows.map((j,i)=>`<tr class="${i===sel?"sel":""}${isNewArrival(j)?" fresh":""}" data-row="${i}">
     <td><span class="fitword ${esc(j.fit)}">${esc(j.fit||"—")}</span></td>
-    <td class="role" title="${esc(j.title)}">${esc(j.title)}</td><td class="co">${esc(j.company)}</td><td class="co sourcecell" title="${esc(sourceTitle(j))}">${esc(sourceLabel(j.primary_source||j.portal))}</td>
+    <td class="role" title="${esc(j.title)} · ${esc(sourceTitle(j)||sourceLabel(j.primary_source||j.portal))}">${esc(displayTitle(j.title))}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td><td class="co">${esc(j.company)}</td><td class="draftcell">${draftCell(applicationFor(j,apps))}</td>
     <td class="co">${esc(j.location)}</td><td class="co" title="${esc(j.posted)}">${esc(postedLabel(j))}</td>
     <td class="co foundcell" title="${esc(foundTitle(j))}">${isNewArrival(j)?'<span class="newdot" aria-label="new in the latest fetch"></span>':""}${esc(foundAt(j).slice(5,10))}</td>
-    <td><select data-url="${esc(j.url)}">${STATUSES.map(s=>`<option value="${esc(s)}" ${s===j.status?"selected":""}>${esc(s)}</option>`).join("")}</select></td>
-    <td class="wide-only why" title="${esc(j.why)}">${esc(j.why)}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td>
-    <td class="wide-only note" data-note="${esc(j.url)}">${esc(j.note)}</td></tr>`).join("");
+    <td><select data-url="${esc(j.url)}">${statusChoices(j).map(s=>`<option value="${esc(s)}" ${s===j.status?"selected":""}>${esc(s)}</option>`).join("")}</select></td></tr>`).join("");
   const fresh=JOBS.filter(isNewArrival).length;
   el("empty").hidden=rows.length>0;
   el("empty").textContent=rows.length||facetsAreDefault()?"Nothing here."
@@ -310,28 +327,6 @@ const scoreTitle=j=>({
   band:"Carried over from a coarse band with no number behind it.",
 }[j.score_source]||"");
 
-// Gates, read from what was actually decided rather than guessed at again here.
-//
-// This used to run `/german required|deutsch/i` over the description in the
-// browser. That was wrong twice over: far looser than collectors.GERMAN_RE,
-// which distinguishes German stated as a job *condition* from German mentioned
-// in passing, and it ran against a description that is now only an excerpt - so
-// it would have missed a requirement further down the posting and reported "no
-// blocking requirement detected" with confidence.
-function gateLines(j){
-  const gated=j.status==="gate";
-  const note=(j.why||"").includes("German")?j.why:"";
-  const language=gated&&note
-    ? {mark:"✕",text:"Language — German stated as a job condition"}
-    : gated
-      ? {mark:"✕",text:"Language — auto-screened out; see the note"}
-      : {mark:"✓",text:"Language — no blocking requirement was screened"};
-  const location={mark:"✓",text:"Location — "+(j.location||"not stated")};
-  return [language,location].map(g=>
-    `<div class="gate-line"><span class="gate-mark">${g.mark}</span><span>${esc(g.text)}</span></div>`
-  ).join("");
-}
-
 // Full posting bodies live in sidecars and are not in the list payload - every
 // row of it goes to the browser on every reload. The excerpt paints instantly;
 // the body arrives from /api/job and is cached so re-selecting a row is free.
@@ -356,20 +351,47 @@ async function loadPosting(j){
   }
 }
 
+// Some boards shout: "GEN AI ENGINEER for RETRIEVAL AUGMENTED GENERATION".
+// A title that is mostly capitals is shown in title case, keeping the acronyms
+// a role name actually carries; the tooltip and the stored row keep the original.
+const TITLE_ACRONYMS=new Set(["AI","ML","NLP","LLM","LLMS","RAG","GENAI","SDE","SRE","QA","IT","UI","UX","API","AWS","GCP","CV","BI","ETL","HPC","GPU","IOT","HR","R&D","CTO","VP","MLOPS","DEVOPS","SAP","ERP","CI/CD","ETH","EPFL","PHD","MSC","BSC"]);
+const TITLE_SMALL=new Set(["a","an","and","as","at","by","for","in","of","on","or","the","to","with","und","für"]);
+function displayTitle(raw){
+  const text=String(raw||""),letters=text.replace(/[^A-Za-zÀ-ÿ]/g,"");
+  if(letters.length<8||(letters.match(/[A-ZÀ-Þ]/g)||[]).length/letters.length<.6)return text;
+  return text.split(/(\s+)/).map((word,i)=>{
+    if(/^\s+$/.test(word))return word;
+    const core=word.replace(/^[(\["']+|[)\]"',:;.!?]+$/g,""),upper=core.toUpperCase();
+    if(TITLE_ACRONYMS.has(upper)||/\d/.test(core))return word.replace(core,upper==="MLOPS"?"MLOps":upper==="DEVOPS"?"DevOps":upper==="LLMS"?"LLMs":upper==="PHD"?"PhD":upper==="MSC"?"MSc":upper==="BSC"?"BSc":upper==="GENAI"?"GenAI":upper);
+    if(/^[mfwdx](\/[mfwdx])+$/i.test(core))return word.toLowerCase();
+    if(i>0&&TITLE_SMALL.has(core.toLowerCase()))return word.toLowerCase();
+    return word.toLowerCase().replace(/(^|[-/(\["'])(\p{L})/gu,(m,a,b)=>a+b.toUpperCase());
+  }).join("");
+}
+// "2026-09-25" reads as "25 Sep"; LinkedIn's "2 weeks ago" is kept as written.
+function postedText(j){
+  const raw=String(j.posted||"");
+  if(!raw)return "";
+  if(!isoDate(raw))return raw;
+  const d=new Date(raw.slice(0,10)+"T12:00:00");
+  return d.toLocaleDateString("en-GB",{day:"numeric",month:"short",...(d.getFullYear()!==new Date().getFullYear()?{year:"numeric"}:{})});
+}
+// The stored reason is one "; "-joined line; each clause is its own fact.
+const whyItems=why=>String(why||"").split(/;\s+/).map(s=>s.trim()).filter(Boolean).map(s=>s[0].toUpperCase()+s.slice(1));
+
 function renderJob(){
   const j=selectedJob(),rows=shown();
   if(!j){el("jobdetail").innerHTML='<div class="panel-empty">Select a job.</div>';el("jobpos").textContent="";return}
   el("jobpos").textContent=`${sel+1} of ${rows.length}`;el("jobopen").href=j.open_url||j.url;
-  const statusButtons=["star","yes","maybe","gate","no"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
-  el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitle">${esc(j.title)}</div>
-    <div class="jobmeta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div>
-    <div class="badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge" title="${esc(scoreTitle(j))}">${esc(SCORE_LABEL[j.score_source]||"score")} ${esc(Math.round(j.score))}</span>`:""}${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">title only</span>':""}</div></div>
-    <div class="whybox"><span class="label">Why it is here</span>${esc(j.why||"No reason was stored.")}</div>
-    <div class="posting"><span class="label">Posting</span><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
-    <div class="jobactions"><div class="statusbuttons">${statusButtons}</div>
+  const fitLabel=j.fit||"unranked",score=j.score?Math.round(j.score):null,why=whyItems(j.why),posted=postedText(j);
+  el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitle" title="${esc(j.title)}">${esc(displayTitle(j.title))}</div>
+    <div class="jobmeta"><strong>${esc(j.company)}</strong>${j.location?`<span class="sep">·</span><span>${esc(j.location)}</span>`:""}${posted?`<span class="sep">·</span><span>Posted ${esc(posted)}</span>`:""}</div>
+    <div class="badges"><span class="fitpill ${esc(j.fit||"none")}" title="${esc(scoreTitle(j))}"><span class="fitdot"></span>${esc(fitLabel)}${score!=null?`<span class="fitscore">${esc(score)}</span>`:""}</span><span class="badge">${esc(sourceLabel(j.primary_source||j.portal)||"Source unknown")}</span>${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">Title only</span>':""}</div></div>
+    <div class="whybox"><div class="sectionhead">Why it's here</div>${why.length?`<ul class="whylist">${why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:'<div class="dim">No reason was stored.</div>'}</div>
+    <div class="posting"><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
+    <div class="jobactions"><div class="statusbuttons">${markButtons(j)}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
-      ${generatePicker(j.url)}
-      <div class="hint">posting → write and check → build and verify · no scoring, no approval pause</div></div>`;
+      ${applicationCard(j)}</div>`;
   loadPosting(j);
 }
 
@@ -413,42 +435,62 @@ function elapsed(run){
   const hours=Math.round(minutes/60);return hours<36?hours+" h":Math.round(hours/24)+" d";
 }
 function activeRuns(){return RUNS.filter(r=>RUNNING.includes(r.phase)||r.phase==="awaiting_approval"||r.phase==="orphaned")}
+// One row per application: the newest attempt stands for it. RUNS arrives
+// newest first, so the first run seen for an application id is its latest.
 function latestApplications(){
   const latest=new Map();RUNS.forEach(r=>{const key=r.application_id||r.id;if(!latest.has(key))latest.set(key,r)});return [...latest.values()]
 }
+// Where an application stands. Generation needs no one; everything after it is
+// the owner's: check the PDFs (review), send it (ready), record it (applied).
+function appState(r){
+  if(!r)return null;
+  if(RUNNING.includes(r.phase)||QUEUE.includes(r.id))return "generating";
+  if(r.phase!=="done")return "failed";
+  if(r.tracker_status&&r.tracker_status!=="drafted")return "applied";
+  const review=r.review;return review&&review.total&&review.done>=review.total?"ready":"review";
+}
+const APP_GROUPS=[["generating","Generating"],["failed","Failed"],["review","To review"],["ready","Ready to send"],["applied","Applied"]];
+function appsByJob(){const map=new Map();latestApplications().forEach(r=>{if(r.job_url&&!map.has(r.job_url))map.set(r.job_url,r)});return map}
+const applicationFor=(j,map=appsByJob())=>j?map.get(j.url)||(j.open_url&&map.get(j.open_url))||null:null;
+// The Draft cell: empty until a job has documents; applied clears it again,
+// because the Status column already says so.
+function draftCell(r){
+  const state=appState(r);if(!r||state==="applied")return "";
+  const label={generating:`◐ ${PHASE_STEP[r.phase]||1}/${STAGE_COUNT}`,failed:"✕ failed",review:"● review",ready:"✓ ready"}[state];
+  return `<button class="draftlink ${state}" data-app="${esc(r.id)}" title="Open the application">${label}</button>`;
+}
+// The Job panel shows the application a posting already has instead of a
+// second Generate: regenerating is a deliberate act inside the application.
+function applicationCard(j){
+  const r=applicationFor(j);
+  if(!r)return `${generatePicker(j.url)}<div class="hint">posting → write and check → build and verify · no scoring, no approval pause</div>`;
+  const state=appState(r),when=(r.tracker_date||"").slice(5).replace("-","/");
+  const text={generating:`Generating · stage ${PHASE_STEP[r.phase]||1} of ${STAGE_COUNT}`,failed:"Generation stopped — continue or regenerate it",review:"Documents are ready to review",ready:"Checked — ready to send",applied:"Applied"+(when?" "+when:"")}[state];
+  return `<div class="appcard ${state}"><div class="appcard-text"><span class="label">Application</span><span>${esc(text)}</span></div><button class="primary" data-app="${esc(r.id)}">Open application →</button></div>`;
+}
+let PREV_PHASE=null;
 function renderRuns(){
-  const applications=latestApplications(),live=applications.filter(r=>activeRuns().includes(r));
-  const rows=live.concat(applications.filter(r=>!live.includes(r))),drafted=applications.filter(r=>r.phase==="done").length;
-  const counts=[];if(QUEUE.length)counts.push(QUEUE.length+" queued");if(live.length)counts.push(live.length+" active");
-  if(!counts.length&&drafted)counts.push(drafted+" drafted");
-  el("runqueue").textContent=counts.join(" · ");
-  el("runlist").innerHTML=rows.length?rows.map(r=>{
-    const step=PHASE_STEP[r.phase]||1,pct=Math.round(step/STAGE_COUNT*100),running=RUNNING.includes(r.phase),bad=["failed","orphaned"].includes(r.phase);
-    // Live rows answer "how far along"; finished ones answer "when, and which
-    // attempt" - the two columns the Applications table used to carry.
-    const meta=[r.phase.replaceAll("_"," ")];
-    if(running||r.phase==="awaiting_approval")meta.push("stage "+step+"/"+STAGE_COUNT);
-    else if(r.started_at)meta.push(r.started_at.slice(5,16).replace("T"," "));
-    if(elapsed(r))meta.push(elapsed(r));
-    if((r.attempt||1)>1)meta.push("attempt "+r.attempt);
-    // Nothing navigates except a link you aimed at: the card itself is inert.
-    const actions=[`<button class="linkish runopen" data-run="${esc(r.id)}">${running?"Watch run":"Open run"} <span class="runarrow">↗</span></button>`];
-    if(r.phase==="done")actions.push(`<button class="linkish" data-preview="${esc(r.id)}">Preview</button>`,`<button class="linkish" data-revise="${esc(r.id)}">Revise</button>`);
-    else if(["failed","cancelled","awaiting_approval"].includes(r.phase))actions.push(`<button class="linkish continuerun" data-run-id="${esc(r.id)}">Continue</button>`);
-    return `<div class="runitem ${running?"live":""} ${ACTIVE_RUN===r.id?"selected":""}">
-      <div class="runwho"><strong>${esc(r.company)}</strong><span class="runrole">${esc(r.role)}</span></div>
-      <div class="runmeta ${bad?"runerror":""}">${meta.map(bit=>`<span>${esc(bit)}</span>`).join("<span>·</span>")}</div>
-      ${running?`<div class="runprogress"><span style="width:${pct}%"></span></div>`:""}
-      <div class="runactions">${actions.join("")}</div></div>`;
-  }).join(""):'<div class="panel-empty">No runs yet.</div>';
+  const apps=latestApplications(),waiting=apps.filter(r=>["review","ready"].includes(appState(r))).length;
+  el("appbadge").hidden=!waiting;el("appbadge").textContent=waiting||"";
+  el("appbadge").title=waiting?waiting+" to review or send":"";
+  // A run that just finished is the one moment the owner is wanted.
+  const phases=new Map(RUNS.map(r=>[r.id,r.phase]));
+  if(PREV_PHASE)for(const r of RUNS){const before=PREV_PHASE.get(r.id);
+    if(before&&before!=="done"&&RUNNING.includes(before)&&r.phase==="done")toast(`${r.company} is ready to review — open it`,{ms:9000,open:r.id})}
+  PREV_PHASE=phases;
   // The pill and the strip count only work in progress. A run parked for
   // approval or orphaned by a restart is not "tailoring" anything; it waits
-  // in the Runs list for Continue or Kill.
-  const running=live.filter(r=>RUNNING.includes(r.phase)),active=running[0];el("striprunning").textContent=running.length?running.length+" running":"";
-  if(active){el("runpill").hidden=false;el("runpill").innerHTML=`<span>Tailoring <strong>${esc(active.company)}</strong> · stage ${PHASE_STEP[active.phase]||1} of ${STAGE_COUNT}</span><span class="elapsed">${elapsed(active)}</span>`;el("runpill").dataset.run=active.id}
+  // in the Applications list for Continue or Kill.
+  const running=activeRuns().filter(r=>RUNNING.includes(r.phase)),active=running[0];el("striprunning").textContent=running.length?running.length+" running":"";
+  if(active){el("runpill").hidden=false;el("runpill").innerHTML=`<span>Generating <strong>${esc(active.company)}</strong> · stage ${PHASE_STEP[active.phase]||1} of ${STAGE_COUNT}</span><span class="elapsed">${elapsed(active)}</span>`;el("runpill").dataset.run=active.id}
   else el("runpill").hidden=true;
   el("right-sep").hidden=!active;
-  if(VIEW==="tailor"&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
+  renderAppsList();
+  if(VIEW==="tailor"&&ACTIVE_RUN){
+    const run=RUNS.find(r=>r.id===ACTIVE_RUN);
+    // Watching a run finish moves you on to the thing you now have to do.
+    if(run&&run.phase==="done"&&RUNNING.includes(PREV_LOG_PHASE))openApp(run,"review");else renderTailor(run);
+  }
 }
 async function pollRuns(){
   let data;try{const response=await fetch("/api/runs?t="+T);if(!checkAuth(response)||!response.ok)return;data=await response.json()}catch(_){return}
@@ -478,6 +520,7 @@ async function postRun(path,body){
 // and `Esc` comes back.
 async function startTailor(url){
   const j=JOBS.find(x=>x.url===url);if(!j)return;
+  const existing=applicationFor(j);if(existing){openApp(existing);return}
   const pick=name=>document.querySelector(`[data-gen-${name}]`)?.value;
   const scope=pick("scope")||"both",base_cv=pick("base")||"auto",cv_country=pick("country")||"default";
   const note=await openTextModal({eyebrow:"Generate "+(DRAFT_LABEL[scope]||"").replace(/^Draft /,""),title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Generate"});
@@ -487,32 +530,13 @@ async function startTailor(url){
   // said so, and the honest next move is to show it rather than leave you to
   // find it in the rail.
   const run=started.run_id&&RUNS.find(r=>r.id===started.run_id);
-  if(run){renderTailor(run);return}
+  if(run){openApp(run);return}
   // The run list is refreshed inside postRun and the supervisor records the run
   // before it answers, so this is the blipped-poll case rather than a real one.
   // Say something anyway: a press that neither moves nor speaks reads as broken.
-  if(started.ok)toast("generation queued — open it from Runs",{ms:3000});
+  if(started.ok)toast("generation queued — open it from Applications",{ms:3000});
 }
 
-// A run's identity belongs in the document it is about, not squeezed into the
-// app bar's uppercase breadcrumb slot where it read as a system label.
-const runTitle=(run,action="")=>`<header class="runtitle"><div><h1>${esc(run.company)}</h1><p>${esc(run.role)}</p></div>${action}</header>`;
-// You apply on the posting's own site; the board opens it and records that you
-// did. "Mark applied" moves Notion Stage Interested -> Applied and the tracker
-// row drafted -> applied; any later status is shown instead of the button.
-function applyActions(run){
-  if(run.phase!=="done")return "";
-  const open=run.job_url?`<a class="secondary" href="${esc(run.job_url)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
-  const status=run.tracker_status||"",when=(run.tracker_date||"").slice(5).replace("-","/");
-  const mark=!status||status==="drafted"?`<button class="secondary" data-applied="${esc(run.id)}">Mark applied</button>`
-    :`<span class="applied-badge">${status==="applied"?"Applied ✓":esc(status.replaceAll("_"," "))}${when?" "+esc(when):""}</span>`;
-  return open+mark;
-}
-const STEPS=[
-  ["Prepare materials","The complete posting is saved once; the CV master is snapshotted read-only."],
-  ["Write","The CV is your chosen master variant; Claude drafts the letter from your cover base."],
-  ["Build","Compiles the PDFs and measures pages, text layer and keywords. You check the PDFs in Preview."]
-];
 const DOC_STATE_MARK={"verified":"✓","PDF built":"◐","content checked":"◐","draft saved":"○","missing":"—"};
 const FAILURE_TITLE={quota_exhausted:"Claude usage limit reached",rate_limited:"Claude is rate limiting",budget_cap:"Local run budget reached",
   timeout:"A step ran out of time",hard_conflict:"The posting conflicts with your deal-breakers",missing_input:"An input is missing",
@@ -533,33 +557,122 @@ function progressPanel(run){
   const conflicts=(p.conflicts||[]).map(x=>`<div><strong>Conflict:</strong> ${esc(x)}</div>`).join("");
   return `<div class="progress-card">${docs}${checks?`<div class="checkrow">${checks}</div>`:""}${pending}${conflicts}${issues}</div>`;
 }
-// The Runs tab reopens the run you last looked at, else the newest one.
+// ------------------------------------------------------------ applications
+//
+// One tab for everything after Generate (APPLICATIONS_PLAN.md §5): the grouped
+// list on the left, the open application on the right, and its two steps -
+// Review (the compiled PDFs) and Send. Generation is not a step: it needs no
+// one, so while it runs the application shows its progress and log, and when it
+// finishes the view moves to Review on its own.
+const APP_VIEWS=["tailor","preview","send","revise"];
+let APPS_Q="",APPS_SHOW_APPLIED=false,APPS_REVIEW_LIST=false;
+// Every attempt of an application: the same application id, plus anything that
+// continues or regenerates an attempt already in the set.
+function lineageOf(run){
+  const family=new Map([[run.id,run]]);RUNS.filter(r=>(r.application_id||r.id)===(run.application_id||run.id)).forEach(r=>family.set(r.id,r));
+  for(let grew=true;grew;){grew=false;RUNS.forEach(r=>{if(!family.has(r.id)&&(family.has(r.continue_of)||family.has(r.retry_of))){family.set(r.id,r);grew=true}})}
+  return [...family.values()].sort((a,b)=>(a.attempt||1)-(b.attempt||1));
+}
+function appRowMeta(r,state){
+  if(state==="generating")return r.phase==="queued"?"queued":"stage "+(PHASE_STEP[r.phase]||1)+"/"+STAGE_COUNT;
+  if(state==="failed")return (r.phase||"").replaceAll("_"," ")+(r.started_at?" · "+r.started_at.slice(5,10):"");
+  if(state==="review")return r.review?.total?r.review.done+"/"+r.review.total+" checked":"not checked";
+  if(state==="applied")return (r.tracker_status||"applied").replaceAll("_"," ")+(r.tracker_date?" · "+r.tracker_date.slice(5):"");
+  return (r.ended_at||r.started_at||"").slice(5,10);
+}
+// The list in display order, which is also the order j/k walks.
+function appsOrdered(){
+  const q=APPS_Q.toLowerCase(),apps=latestApplications().filter(r=>!q||(r.company+" "+r.role).toLowerCase().includes(q));
+  return APP_GROUPS.map(([key,label])=>[key,label,apps.filter(r=>appState(r)===key)]);
+}
+function appsGroupsHtml(){
+  const current=RUNS.find(r=>r.id===ACTIVE_RUN),currentApp=current&&(current.application_id||current.id);
+  const groups=appsOrdered().filter(([, ,rows])=>rows.length);
+  if(!groups.length)return `<div class="panel-empty">${APPS_Q?"No application matches.":"No applications yet — press Generate on a job."}</div>`;
+  return groups.map(([key,label,rows])=>{
+    const folded=key==="applied"&&!APPS_SHOW_APPLIED&&!rows.some(r=>(r.application_id||r.id)===currentApp);
+    const head=key==="applied"?`<button class="app-group-head linkish" data-apps-applied>${label} <span class="n">${rows.length}</span> ${folded?"▸":"▾"}</button>`:`<div class="app-group-head">${label} <span class="n">${rows.length}</span></div>`;
+    return `<div class="app-group ${key}">${head}${folded?"":rows.map(r=>`<button class="app-row ${key}${(r.application_id||r.id)===currentApp?" on":""}" data-app="${esc(r.id)}"><span class="app-row-top"><strong>${esc(r.company)}</strong><span class="app-row-meta">${esc(appRowMeta(r,key))}</span></span><span class="app-row-role">${esc(r.role)}</span></button>`).join("")}</div>`;
+  }).join("");
+}
+function renderAppsList(){const node=el("apps-groups");if(node)node.innerHTML=appsGroupsHtml()}
+const appsListCollapsed=step=>step==="review"?!APPS_REVIEW_LIST:!!layout.appsCollapsed;
+function toggleAppsList(){
+  const shell=document.querySelector(".apps-shell");if(!shell)return;
+  if(VIEW==="preview")APPS_REVIEW_LIST=!APPS_REVIEW_LIST;else{layout.appsCollapsed=!layout.appsCollapsed;saveLayout()}
+  shell.classList.toggle("list-collapsed",appsListCollapsed(VIEW==="preview"?"review":VIEW));
+}
+function attemptTabs(run){
+  const lineage=lineageOf(run);if(lineage.length<2)return "";
+  const numberOf=id=>(RUNS.find(r=>r.id===id)||{}).attempt||"?";
+  const attemptMark=r=>r.phase==="done"?"✓":["failed","cancelled"].includes(r.phase)?"✕":RUNNING.includes(r.phase)?"●":"·";
+  const attemptTitle=r=>`Attempt ${r.attempt||1} · ${(r.phase||"queued").replaceAll("_"," ")} · ${r.continue_of?"continued from #"+numberOf(r.continue_of):r.retry_of?"regenerated from scratch after #"+numberOf(r.retry_of):"first attempt"}`;
+  return `<div class="attempts" role="tablist" aria-label="Attempts">${lineage.map(r=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r))}"><span class="attempt-mark">${attemptMark(r)}</span>${esc(r.attempt||1)}</button>`).join("")}</div>`;
+}
+// The board row an application was generated from: its own URL, or the
+// first-party posting the row links to.
+const jobOfRun=run=>run&&run.job_url?JOBS.find(j=>j.url===run.job_url||j.open_url===run.job_url)||null:null;
+function appHeader(run,step){
+  const state=appState(run),done=run.phase==="done",review=run.review||{};
+  const reviewState=!done?"todo":review.total&&review.done>=review.total?"done":step==="review"?"live":"todo";
+  const sendState=state==="applied"?"done":step==="send"?"live":"todo";
+  const stepBtn=(key,n,label,st)=>`<button class="app-step ${st}${step===key?" on":""}" data-app-step="${key}" ${done?"":"disabled"}><span class="stepdot">${st==="done"?"✓":n}</span>${label}</button>`;
+  const status=state==="generating"?`<span class="app-status generating">◐ Generating · stage ${PHASE_STEP[run.phase]||1} of ${STAGE_COUNT}</span>`
+    :state==="failed"?`<span class="app-status failed">✕ ${esc((run.phase||"").replaceAll("_"," "))}</span>`:"";
+  const alone=["failed","cancelled"].includes(run.phase)&&lineageOf(run).length>1;
+  const menu=`<details class="app-menu"><summary class="secondary" title="More">⋯</summary><div class="app-menu-body">
+    <button data-app-step="log">Run log</button>${done?`<button data-app-step="revise">Versions</button>`:""}
+    ${alone?`<button class="danger" data-delete-attempt="${esc(run.id)}">Delete attempt #${esc(run.attempt||1)}…</button>`:""}
+    <button class="danger" data-delete-app="${esc(run.id)}">Delete application…</button></div></details>`;
+  const job=jobOfRun(run);
+  const id=job?`<button class="app-id app-id-link" data-board-job="${esc(job.url)}" title="Show this job on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)} <span class="app-id-arrow">↗ Board</span></p></button>`
+    :`<div class="app-id" title="This posting is no longer on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)}</p></div>`;
+  return `<header class="app-head">${id}
+    <nav class="app-steps" aria-label="Steps">${stepBtn("review",1,"Review",reviewState)}<span class="app-step-sep">→</span>${stepBtn("send",2,"Send",sendState)}</nav>
+    ${status}<span class="spacer"></span>${attemptTabs(run)}${menu}</header>`;
+}
+// The frame every application view renders into. Only the detail is repainted
+// by a view; the list refreshes on its own (renderAppsList) so a poll never
+// reloads the PDF frames beside it.
+function mountApp(run,step,body){
+  // The log view repaints on every poll: keep what the owner was doing in the
+  // list - typing a filter, scrolled down, the ⋯ menu open.
+  const query=document.activeElement?.id==="apps-q"?document.activeElement.selectionStart:null;
+  const scrolled=el("apps-groups")?.scrollTop||0,menuOpen=!!document.querySelector(".app-menu[open]");
+  el("tailor-view").innerHTML=`<div class="apps-shell${appsListCollapsed(step)?" list-collapsed":""}"><aside class="apps-list"><div class="splitter vertical edge" data-split="appsW" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize applications list" title="Drag to resize · double-click to reset"></div><button class="spine" data-apps-collapse title="Show applications ( [ )"><span>Applications</span><b>›</b></button><div class="panelhead"><span class="label">Applications</span><span class="count">${latestApplications().length}</span><span class="spacer"></span><button class="linkish" data-apps-collapse title="Hide the list ( [ )">‹</button></div><label class="search apps-search"><span>⌕</span><input type="search" id="apps-q" placeholder="filter…" value="${esc(APPS_Q)}"></label><div class="apps-groups" id="apps-groups">${appsGroupsHtml()}</div></aside><div class="apps-detail">${appHeader(run,step)}<div class="apps-body">${body}</div></div></div>`;
+  el("apps-groups").scrollTop=scrolled;if(menuOpen)document.querySelector(".app-menu")?.setAttribute("open","");
+  if(query!==null){const input=el("apps-q");input.focus();try{input.setSelectionRange(query,query)}catch(_){}}
+}
+// Opening an application lands on what it needs from you now.
+function openApp(run,step){
+  if(!run)return;
+  if(!step)step=run.phase!=="done"?"log":["ready","applied"].includes(appState(run))?"send":"review";
+  if(run.phase!=="done"&&step!=="log")step="log";
+  if(step==="review")renderPreview(run);else if(step==="send")renderSend(run);else if(step==="revise")renderRevise(run);else renderTailor(run);
+}
+// The Applications tab reopens the application you last looked at, else the
+// first one that wants you.
 function openRuns(){
-  const run=RUNS.find(r=>r.id===ACTIVE_RUN)||latestApplications()[0];
-  if(run)renderTailor(run);else toast("No runs yet — start one with Generate on a job.",{ms:3000});
+  const order=appsOrdered().flatMap(([key, ,rows])=>key==="applied"?[]:rows);
+  const run=RUNS.find(r=>r.id===ACTIVE_RUN)||order.find(r=>["review","ready"].includes(appState(r)))||order[0]||latestApplications()[0];
+  if(run)openApp(run);else toast("No applications yet — press Generate on a job.",{ms:3000});
+}
+function stepApp(delta){
+  const order=appsOrdered().flatMap(([key, ,rows])=>key==="applied"&&!APPS_SHOW_APPLIED?[]:rows);if(!order.length)return;
+  const current=RUNS.find(r=>r.id===ACTIVE_RUN),app=current&&(current.application_id||current.id);
+  const index=order.findIndex(r=>(r.application_id||r.id)===app);
+  openApp(order[Math.max(0,Math.min(order.length-1,index<0?0:index+delta))]);
 }
 function renderTailor(run){
   if(!run){restoreWorkspace();return}
   const previousLog=el("runlog");if(previousLog&&ACTIVE_RUN)RUN_LOG_SCROLL.set(ACTIVE_RUN,previousLog.scrollTop);
-  ACTIVE_RUN=run.id;const current=PHASE_STEP[run.phase]||1,fit=run.fit||{};
-  // Every attempt of this application: the same application id, plus anything
-  // that continues or regenerates an attempt already in the list.
-  const family=new Map([[run.id,run]]);RUNS.filter(r=>(r.application_id||r.id)===(run.application_id||run.id)).forEach(r=>family.set(r.id,r));
-  for(let grew=true;grew;){grew=false;RUNS.forEach(r=>{if(!family.has(r.id)&&(family.has(r.continue_of)||family.has(r.retry_of))){family.set(r.id,r);grew=true}})}
-  const lineage=[...family.values()].sort((a,b)=>(a.attempt||1)-(b.attempt||1));
+  ACTIVE_RUN=run.id;PREV_LOG_PHASE=run.phase;const fit=run.fit||{};
   const kinds=docKinds(run.scope),legacyGate=run.phase==="awaiting_approval";
-  const steps=STEPS.map((s,i)=>{const n=i+1,state=run.phase==="done"||n<current?"done":n===current&&!["failed","cancelled"].includes(run.phase)?"live":n===current?"stopped":"todo";return `<div class="step ${state}"><div class="steprow"><span class="stepdot">${n}</span><div><div class="steptitle">${s[0]}</div><div class="stepdetail">${s[1]}</div></div><span class="steptime">${state==="live"?esc(run.phase.replaceAll("_"," ")):""}</span></div></div>`}).join("");
   const logs=EV.filter(e=>e.run_id===run.id&&(e.source==="claude"||e.source==="latex"||e.source==="verify")).slice(-100).map(e=>`<div><span>${esc((e.ts||"").slice(11,19))}</span>&nbsp; ${esc(e.cmd?"$ "+e.cmd:e.msg)}</div>`).join("")||"<div>No run-specific activity recorded yet.</div>";
   const code=run.failure_code||"";
   const stopped=run.phase==="failed"||run.phase==="cancelled";
   const continuedBy=RUNS.find(r=>r.continue_of===run.id||r.retry_of===run.id);
-  // One switcher for every attempt of this application: a tab per attempt with
-  // its outcome, and how it relates to the one before it in the tooltip.
-  const numberOf=id=>(RUNS.find(r=>r.id===id)||{}).attempt||"?";
-  const attemptMark=r=>r.phase==="done"?"✓":["failed","cancelled"].includes(r.phase)?"✕":RUNNING.includes(r.phase)?"●":"·";
-  const attemptTitle=r=>`Attempt ${r.attempt||1} · ${(r.phase||"queued").replaceAll("_"," ")} · ${r.continue_of?"continued from #"+numberOf(r.continue_of):r.retry_of?"regenerated from scratch after #"+numberOf(r.retry_of):"first attempt"}`;
-  const attempts=lineage.length>1?`<div class="attempts" role="tablist" aria-label="Attempts">${lineage.map(r=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r))}"><span class="attempt-mark">${attemptMark(r)}</span>${esc(r.attempt||1)}</button>`).join("")}</div>`:"";
-  const latest=lineage[lineage.length-1];
+  const lineage=lineageOf(run),latest=lineage[lineage.length-1];
   const origin=lineage.length>1&&latest&&latest.id!==run.id?`<div class="attempt-note">You are viewing an earlier attempt. <button class="linkish" data-run="${esc(latest.id)}">Go to the latest (#${esc(latest.attempt||lineage.length)})</button></div>`:"";
   const failure=stopped?`<div class="failure-card"><strong>${esc(run.phase==="cancelled"?"Cancelled":FAILURE_TITLE[code]||"Run stopped")}</strong><div>${esc(run.error||"No error detail was recorded.")}</div><div class="dim">Stopped during ${esc((run.failed_phase||"unknown").replaceAll("_"," "))}${run.model_started===false?" · no model work started":""}${Number(run.cost?.total_usd||0)===0?" · no model cost incurred":""}</div>${FAILURE_NEXT[code]&&!continuedBy?`<div class="dim">${esc(FAILURE_NEXT[code])}</div>`:""}</div>`:"";
   // Legacy runs keep their evaluation visible; staged runs never had one.
@@ -572,33 +685,72 @@ function renderTailor(run){
     if(code==="hard_conflict")actions.push(`<button class="secondary continuerun" data-run-id="${esc(run.id)}" data-proceed="1">Continue anyway</button>`);
     if(run.kind==="apply"&&!legacyGate)actions.push(`<button class="secondary retryrun" data-run-id="${esc(run.id)}">Regenerate</button>`);
   }
-  // Preview sits beside the title, where the eye lands once a run is done.
-  const preview=run.phase==="done"?`<div class="title-actions"><button class="primary" data-preview="${esc(run.id)}">Preview PDFs</button>${applyActions(run)}</div>`:"";
-  el("tailor-view").innerHTML=`<div class="tailor-shell"><section class="pipeline"><div class="panelhead"><span class="label">Pipeline</span><span class="spacer"></span><span class="dim">stage ${current} of ${STAGE_COUNT}</span></div>${steps}<div class="writing"><div class="label">Publishes to</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc(run.cv_country||"master default")}</div></div></section>
-    <section class="runoutput"><div class="panelhead"><span class="label">Run output</span>${attempts}<span class="spacer"></span><label class="source"><input type="checkbox" data-run-follow ${RUN_FOLLOW?"checked":""}> follow</label><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
-      ${runTitle(run,preview)}${origin}${fitCard}${progressPanel(run)}${notes?`<div class="whybox"><span class="label">Tailoring choices</span>${notes}</div>`:""}
-      ${failure}<div class="runlog" id="runlog">${logs}</div><div class="runfooter"><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>${actions.join("")}</div></section></div>`;
+  // A finished run regenerates too, so edits to the CV master or cover base
+  // reach a new attempt; hidden once a newer attempt already follows this one.
+  if(run.phase==="done"){
+    actions.push(`<button class="primary" data-app-step="review">Review the PDFs</button>`);
+    if(run.kind==="apply"&&!continuedBy)actions.push(`<button class="secondary retryrun" data-run-id="${esc(run.id)}" data-done="1" title="New attempt from the saved posting, using the current CV master and cover base">Regenerate</button>`);
+  }
+  mountApp(run,"log",`<section class="runoutput"><div class="panelhead"><span class="label">Run output</span><span class="dim">stage ${PHASE_STEP[run.phase]||1} of ${STAGE_COUNT}</span><span class="spacer"></span><label class="source"><input type="checkbox" data-run-follow ${RUN_FOLLOW?"checked":""}> follow</label><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
+      ${origin}${fitCard}${progressPanel(run)}${notes?`<div class="whybox"><span class="label">Tailoring choices</span>${notes}</div>`:""}
+      ${failure}<div class="runlog" id="runlog">${logs}</div><div class="runfooter"><span class="dim writing-inline">Publishes to ${kinds.map(kind=>esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")).join(" · ")}</span><span class="spacer"></span>${actions.join("")}</div></section>`);
   const runlog=el("runlog");if(RUN_FOLLOW)runlog.scrollTop=runlog.scrollHeight;
   else if(RUN_LOG_SCROLL.has(run.id))runlog.scrollTop=RUN_LOG_SCROLL.get(run.id);
-  openView("tailor",[crumbRun(run)],"/run/"+encodeURIComponent(run.id));
+  openView("tailor",[crumbRun(run),{label:"Log"}],"/app/"+encodeURIComponent(run.id)+"/log");
 }
-
-function renderReader(){
-  const rows=shown(),j=selectedJob();if(!j)return;
-  const queue=rows.slice(0,80).map((row,index)=>`<div class="queue-row ${index===sel?"selected":""}" data-reader-row="${index}"><div class="queue-top"><span class="fitdot ${esc(row.fit)}"></span><span class="queue-company">${esc(row.company)}</span><span class="queue-mark">${esc(row.status==="new"?"":row.status)}</span></div><div class="queue-title">${esc(row.title)}</div></div>`).join("");
-  const marks=["star","yes","maybe","gate","no","applied"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
-  el("tailor-view").innerHTML=`<div class="reader-shell"><section class="reader-queue"><div class="panelhead"><span class="label">Queue</span><span class="spacer"></span><span class="dim">${rows.length} active</span></div><div class="queue-list">${queue}</div></section>
-    <section class="reader-main"><div class="reader-scroll"><article class="reader-copy"><div class="reader-badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge" title="${esc(scoreTitle(j))}">${esc(SCORE_LABEL[j.score_source]||"score")} ${esc(Math.round(j.score))}</span>`:""}${j.fit_evidence==="title-only"?'<span class="badge">title only</span>':""}<span class="spacer"></span><a class="open" href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener">open posting ↗</a></div><h1>${esc(j.title)}</h1><div class="reader-meta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div><div class="reader-posting" id="postingbody">${esc(postingText(j))}</div></article></div></section>
-    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Generation reads the full posting.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea>${generatePicker(j.url)}<div class="hint">opens the run · <kbd>t</kbd></div></div></aside></div>`;
-  loadPosting(j);
-  openView("reader",[{label:j.company,sub:j.title,count:`${sel+1} of ${rows.length}`}],"/job/"+encodeURIComponent(j.url));
+// Send: the last step, and the only one that happens outside JobFlow.
+function renderSend(run){
+  if(!run)return;ACTIVE_RUN=run.id;PREVIEW_RUN=run.id;
+  const review=run.review||{},checked=review.total&&review.done>=review.total,kinds=docKinds(run.scope);
+  const state=appState(run),when=(run.tracker_date||"").slice(5).replace("-","/");
+  const open=run.job_url?`<a class="secondary" href="${esc(run.job_url)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
+  const reveals=kinds.map(kind=>`<button class="secondary" data-reveal="${kind}">Reveal ${kind==="cv"?"CV":"letter"} in Finder</button>`).join("");
+  const record=state==="applied"?`<span class="applied-badge">${run.tracker_status==="applied"?"Applied ✓":esc((run.tracker_status||"").replaceAll("_"," "))}${when?" "+esc(when):""}</span>`
+    :`<button class="primary" data-applied="${esc(run.id)}">Mark applied</button>`;
+  mountApp(run,"send",`<div class="send-shell"><section class="send-main">
+    <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Check the PDFs</strong><div class="dim">${review.total?`${review.done} of ${review.total} checks ticked`:"No checks recorded yet"}${checked?"":` · <button class="linkish" data-app-step="review">finish them in Review</button>`}</div></div></div>
+    <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${reveals}</div></div></div>
+    <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Moves the Notion Stage to Applied, the tracker row, and this job’s board status.</div><div class="title-actions">${record}</div></div></div>
+    <div class="writing"><div class="label">Published files</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc(run.cv_country||"master default")}</div></div>
+  </section></div>`);
+  openView("send",[crumbRun(run),{label:"Send"}],"/app/"+encodeURIComponent(run.id)+"/send");
+}
+// Deleting is soft (trash + tombstone) and says exactly what goes and what
+// stays; a sent application also needs its company name typed.
+async function deleteApp(runId,scope){
+  const run=RUNS.find(r=>r.id===runId);if(!run)return;
+  const lineage=lineageOf(run),latest=lineage[lineage.length-1],name=`${run.company} · ${run.role}`;
+  const keeps="Kept: the published CV and cover letter, job_posting.md, the tracker row and the Notion page.";
+  let typed="";
+  if(scope==="attempt"){
+    if(!confirm(`Delete attempt #${run.attempt||1} of ${name}?\n\nRemoved: documents/runs/${run.id}/ (kept in the trash for 14 days).\nKept: the other ${lineage.length-1} attempt(s) and everything published.`))return;
+  }else if(appState(latest)==="applied"){
+    typed=await openTextModal({eyebrow:"Delete a sent application",title:name,label:`Type “${run.company}” to confirm`,hint:`This application was sent. Removed: ${lineage.length} attempt folder(s) under documents/runs/, kept in the trash for 14 days. ${keeps}`,submit:"Delete application"});
+    if(typed===null)return;
+  }else if(!confirm(`Delete the application ${name}?\n\nRemoved: ${lineage.length} attempt folder(s) under documents/runs/ (kept in the trash for 14 days).\n${keeps}`))return;
+  const result=await postRun("/api/runs/"+encodeURIComponent(runId)+"/delete",{scope,confirm:typed});
+  if(!result.ok)return;
+  const deleted=result.deleted||[];
+  const rest=lineage.filter(r=>!deleted.includes(r.id)&&RUNS.some(x=>x.id===r.id));
+  const next=rest.length?rest[rest.length-1]:appsOrdered().flatMap(([, ,rows])=>rows)[0];
+  if(next)openApp(RUNS.find(r=>r.id===next.id)||next);else restoreWorkspace();
+  render();
+  toast(`Deleted ${scope==="attempt"?"attempt #"+(run.attempt||1)+" of ":""}${run.company}`,{undo:()=>undeleteRuns(deleted,run.id),seconds:8,warn:true});
+}
+async function undeleteRuns(ids,openId){
+  const result=await postRun("/api/runs/undelete",{ids});
+  if(!result.ok)return;
+  toast("restored from the trash",{ms:2500});render();
+  const run=RUNS.find(r=>r.id===openId);if(run)openApp(run);
 }
 
 async function renderPreview(run){
-  if(!run)return;PREVIEW_RUN=run.id;
-  el("tailor-view").innerHTML='<div class="panel-empty">Loading compiled documents…</div>';
-  openView("preview",[crumbRun(run),{label:"Preview"}],"/run/"+encodeURIComponent(run.id)+"/preview");
-  let verify;try{const response=await fetch(`/api/runs/${encodeURIComponent(run.id)}/verify?t=${T}`);verify=await response.json();if(!response.ok)throw new Error(verify.error)}catch(error){el("tailor-view").innerHTML=`<div class="panel-empty runerror">${esc(error.message||error)}</div>`;return}
+  if(!run)return;PREVIEW_RUN=run.id;ACTIVE_RUN=run.id;
+  mountApp(run,"review",'<div class="panel-empty">Loading compiled documents…</div>');
+  openView("preview",[crumbRun(run),{label:"Review"}],"/app/"+encodeURIComponent(run.id)+"/review");
+  let verify;try{const response=await fetch(`/api/runs/${encodeURIComponent(run.id)}/verify?t=${T}`);verify=await response.json();if(!response.ok)throw new Error(verify.error)}catch(error){mountApp(run,"review",`<div class="panel-empty runerror">${esc(error.message||error)}</div>`);return}
+  // A slow answer for an application you have already left must not repaint it.
+  if(VIEW!=="preview"||PREVIEW_RUN!==run.id)return;
   const query=`?t=${encodeURIComponent(T)}&v=${Date.now()}`;
   // The scope says what was asked for; the artefacts say what exists. A run that
   // produced one document gets one frame and no filter tabs.
@@ -606,11 +758,11 @@ async function renderPreview(run){
   const kinds=produced.length?produced:docKinds(run.scope),single=kinds.length===1?kinds[0]:null;
   const tabs=single?`<span class="chip on">${single==="cv"?"CV only":"Letter only"}</span>`
     :`<button class="chip on" data-preview-filter="both">Both documents</button><button class="chip" data-preview-filter="cv">CV only</button><button class="chip" data-preview-filter="cover">Letter only</button>`;
-  const frames=produced.map(kind=>`<iframe title="${kind==="cv"?"Compiled CV":"Compiled cover letter"}" class="pdf-frame ${kind}" src="/api/pdf/${encodeURIComponent(run.id)}/${kind}${query}"></iframe>`).join("")||`<div class="panel-empty">No compiled PDF yet.</div>`;
+  const frames=produced.map(kind=>`<iframe title="${kind==="cv"?"Compiled CV":"Compiled cover letter"}" class="pdf-frame ${kind}" src="/api/pdf/${encodeURIComponent(run.id)}/${kind}${query}#toolbar=0&navpanes=0&view=FitH"></iframe>`).join("")||`<div class="panel-empty">No compiled PDF yet.</div>`;
   const reveals=Object.keys(verify.files||{}).map(kind=>`<button class="secondary" data-reveal="${kind}" title="${esc(verify.files[kind])}">Reveal ${kind==="cv"?"CV":"letter"} in Finder</button>`).join("");
-  el("tailor-view").innerHTML=`<div class="preview-shell"><aside class="screen-rail">${screeningPanel(verify)}</aside>
-    <section class="preview-main${single?" "+single+"-only":""}" id="preview-main">${runTitle(run,`<div class="title-actions">${applyActions(run)}</div>`)}<div class="preview-tabs">${tabs}</div><div class="pdf-stage">${frames}</div><div class="preview-foot"><span class="spacer"></span>${reveals}<button class="secondary" data-recompile="${esc(run.id)}">Recompile</button></div></section>
-    <aside class="check-rail">${checklistPanel(verify)}${regeneratePanel(run,verify)}</aside></div>`;
+  mountApp(run,"review",`<div class="preview-shell"><aside class="screen-rail">${screeningPanel(verify)}<div class="splitter vertical edge" data-split="screenW" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize screening" title="Drag to resize · double-click to reset"></div></aside>
+    <section class="preview-main${single?" "+single+"-only":""}" id="preview-main"><div class="preview-tabs">${tabs}<span class="spacer"></span><button class="primary" data-app-step="send">Continue to Send →</button></div><div class="pdf-stage">${frames}</div><div class="preview-foot"><span class="spacer"></span>${reveals}<button class="secondary" data-recompile="${esc(run.id)}">Recompile</button></div></section>
+    <aside class="check-rail"><div class="splitter vertical edge lead" data-split="checkW" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize checks" title="Drag to resize · double-click to reset"></div>${checklistPanel(verify)}${regeneratePanel(run,verify)}</aside></div>`);
 }
 // Screening is the one thing a pinned CV cannot answer by itself: what the
 // posting asks for, and where your evidence is missing, adjacent or met.
@@ -651,7 +803,7 @@ function regeneratePanel(run,v){
 }
 
 async function renderRevise(run){
-  if(!run)return;REVISE_RUN=run.id;const versions=RUNS.filter(r=>r.slug===run.slug&&r.phase==="done");
+  if(!run)return;REVISE_RUN=run.id;ACTIVE_RUN=run.id;const versions=RUNS.filter(r=>r.slug===run.slug&&r.phase==="done");
   const kinds=docKinds(run.scope);
   const scopeChoices=(kinds.length>1?[["both","CV + cover"],["cv","CV only"],["cover","Cover only"]]
     :[[kinds[0],kinds[0]==="cv"?"CV only":"Cover only"]])
@@ -659,8 +811,9 @@ async function renderRevise(run){
   let prefs={preferences:[]};try{prefs=await(await fetch("/api/prefs?t="+T)).json()}catch(_){}
   const versionRows=versions.map((v,i)=>`<div class="version-row ${v.id===run.id?"current":""}" data-version-preview="${esc(v.id)}"><span>v${versions.length-i}</span><strong>${esc((v.ended_at||v.started_at||"").slice(0,16).replace("T"," "))}</strong><span>${esc(v.kind||"apply")}</span>${v.id===run.id?"<em>current</em>":`<span class="spacer"></span><button class="linkish" data-restore-version="${esc(v.id)}">Restore</button>`}</div>`).join("");
   const prefRows=(prefs.preferences||[]).map(p=>`<li>${esc(p)}</li>`).join("")||"<li>No managed standing preferences.</li>";
-  el("tailor-view").innerHTML=`<div class="revise-shell"><aside class="versions"><div class="panelhead"><span class="label">Versions</span><span class="spacer"></span><span class="dim">${versions.length}</span></div><div class="version-list">${versionRows}</div><div class="decision-section"><span class="label">Standing preferences · read only</span><ul class="pref-list">${prefRows}</ul><div class="hint">Remove a preference by editing the managed block in the candidate profile.</div></div></aside><section class="revision-current"><div class="panelhead"><span class="label">Current documents</span><span class="spacer"></span><button class="secondary" data-preview="${esc(run.id)}">Open compiled PDFs</button></div><div class="revision-summary"><h1>${esc(run.company)}</h1><h2>${esc(run.role)}</h2><div class="writing">${kinds.map(kind=>`<div>${esc(run.targets?.[kind])}</div>`).join("")}</div><div class="whybox">Every successful revision becomes another immutable source + PDF snapshot. Restore replaces these live files and recompiles them; it never creates a second live document set.</div></div></section><aside class="composer"><div class="panelhead"><span class="label">Revise</span></div><form id="revise-form"><div class="decision-section"><span class="label">Scope</span>${scopeChoices}</div><div class="decision-section"><label class="label" for="revision-note">What should change?</label><textarea id="revision-note" required placeholder="Make the evidence for… more explicit"></textarea><label class="label" for="revision-remember">Standing preference (optional)</label><textarea id="revision-remember" placeholder="Remember this for future applications"></textarea><div class="hint">Only text in this field is written into the managed preference block.</div></div><div class="composer-actions"><button class="primary" type="submit" data-reentry-kind="revise">Revise</button><button class="secondary" type="submit" data-reentry-kind="redraft">Redraft</button><button class="secondary" type="submit" data-reentry-kind="apply">Full re-run</button></div></form></aside></div>`;
-  openView("revise",[crumbRun(run),{label:"Revise"}],"/run/"+encodeURIComponent(run.id)+"/revise");
+  if(REVISE_RUN!==run.id)return;   // a slow prefs answer for a view you left
+  mountApp(run,"revise",`<div class="revise-shell"><aside class="versions"><div class="panelhead"><span class="label">Versions</span><span class="spacer"></span><span class="dim">${versions.length}</span></div><div class="version-list">${versionRows}</div><div class="decision-section"><span class="label">Standing preferences · read only</span><ul class="pref-list">${prefRows}</ul><div class="hint">Remove a preference by editing the managed block in the candidate profile.</div></div></aside><section class="revision-current"><div class="panelhead"><span class="label">Current documents</span><span class="spacer"></span><button class="secondary" data-preview="${esc(run.id)}">Open compiled PDFs</button></div><div class="revision-summary"><h1>${esc(run.company)}</h1><h2>${esc(run.role)}</h2><div class="writing">${kinds.map(kind=>`<div>${esc(run.targets?.[kind])}</div>`).join("")}</div><div class="whybox">Every successful revision becomes another immutable source + PDF snapshot. Restore replaces these live files and recompiles them; it never creates a second live document set.</div></div></section><aside class="composer"><div class="panelhead"><span class="label">Revise</span></div><form id="revise-form"><div class="decision-section"><span class="label">Scope</span>${scopeChoices}</div><div class="decision-section"><label class="label" for="revision-note">What should change?</label><textarea id="revision-note" required placeholder="Make the evidence for… more explicit"></textarea><label class="label" for="revision-remember">Standing preference (optional)</label><textarea id="revision-remember" placeholder="Remember this for future applications"></textarea><div class="hint">Only text in this field is written into the managed preference block.</div></div><div class="composer-actions"><button class="primary" type="submit" data-reentry-kind="revise">Revise</button><button class="secondary" type="submit" data-reentry-kind="redraft">Redraft</button><button class="secondary" type="submit" data-reentry-kind="apply">Full re-run</button></div></form></aside></div>`);
+  openView("revise",[crumbRun(run),{label:"Versions"}],"/app/"+encodeURIComponent(run.id)+"/revise");
 }
 
 // ---------------------------------------------------------------- companies
@@ -763,16 +916,14 @@ function showCompanyOnBoard(name){
 }
 
 // The app bar carries two classes of thing and keeps them apart: identity and
-// navigation on the left, machine state and settings on the right. Only Board
-// and Companies are tabs, because only those two are places you stay in. A run
-// is reached from the Board's Runs rail and lives under Board - §0.3 keeps Runs
-// out of the nav deliberately, because its full-width form was a page you only
-// ever passed through on the way to one run.
+// navigation on the left, machine state and settings on the right. Three tabs:
+// Board (find and mark), Applications (review and send) and Companies
+// (APPLICATIONS_PLAN.md §2).
 // The trail starts *below* the lit tab and never repeats it: with the tabs
 // 40px to its left, a leading "Board" segment was the same word twice in a row.
 const crumbRun=run=>({label:run.company,sub:run.role,run:run.id});
 function renderChrome(crumb){
-  const place=VIEW==="companies"?"companies":["tailor","preview","revise"].includes(VIEW)?"runs":"board";
+  const place=VIEW==="companies"?"companies":APP_VIEWS.includes(VIEW)?"runs":"board";
   document.querySelectorAll(".navitem[data-nav]").forEach(node=>{
     const on=node.dataset.nav===place;node.classList.toggle("on",on);
     if(on)node.setAttribute("aria-current","page");else node.removeAttribute("aria-current");
@@ -780,7 +931,7 @@ function renderChrome(crumb){
   renderCrumb(crumb);
 }
 // Location, not title. The crumb answers "which layer am I on"; what the
-// document is called stays in .runtitle at 21px in the body. A segment is a
+// document is called stays in the application header (.app-head). A segment is a
 // link only while something sits below it - the last one is where you are, and
 // is plain text. Both link kinds reuse handlers the bar already has, data-nav
 // for Board and data-run for the run's own Tailor view, so the bar never grows
@@ -797,16 +948,14 @@ function renderCrumb(segments){
   }).join("");
 }
 function openView(kind,crumb=null,route=null){
-  VIEW=kind;const app=el("app");app.classList.remove("expanded-board","expanded-job","tailor-mode","reader-mode","preview-mode","revise-mode","companies-mode");
-  const parked=["tailor","reader","preview","revise","companies"].includes(kind);
-  app.classList.add("expanded",parked?"tailor-mode":"expanded-"+kind);
-  if(parked)app.classList.add(kind+"-mode");
-  el("tailor-view").hidden=!parked;
+  VIEW=kind;const app=el("app");app.classList.remove("tailor-mode","preview-mode","revise-mode","send-mode","companies-mode");
+  app.classList.add("expanded","tailor-mode",kind+"-mode");
+  el("tailor-view").hidden=false;
   renderChrome(crumb);
   setRoute(route||"/"+kind);
 }
 function restoreWorkspace(){
-  VIEW=null;const app=el("app");app.classList.remove("expanded","expanded-board","expanded-job","tailor-mode","reader-mode","preview-mode","revise-mode","companies-mode");el("tailor-view").hidden=true;renderChrome(null);
+  VIEW=null;const app=el("app");app.classList.remove("expanded","tailor-mode","preview-mode","revise-mode","send-mode","companies-mode");el("tailor-view").hidden=true;renderChrome(null);
   setRoute("/");
 }
 
@@ -821,14 +970,26 @@ function restoreWorkspace(){
 // pass through the token check.
 //
 //   #/                  workspace        #/companies?f=&c=   companies
-//   #/board             expanded board   #/run/<id>          tailor
-//   #/job/<url>         reader           #/run/<id>/preview  compiled PDFs
-//                                        #/run/<id>/revise   revise
+//                                        #/app/<id>          what it needs now
+//                                        #/app/<id>/log      progress + log
+//                                        #/app/<id>/review   compiled PDFs
+//                                        #/app/<id>/send     send + record
+//                                        #/app/<id>/revise   versions
+// Older addresses still resolve: `#/run/<id>[/preview|/revise]` (before the
+// Applications tab), `#/board` and `#/job/<url>` (the removed expanded views).
 //
-// Paging or filtering inside one view rewrites its entry; moving to another view
-// pushes one. Otherwise j/k in the reader would bury the board under 80 entries.
-const IN_PLACE=["job","companies"];
+// Filtering inside one view rewrites its entry; moving to another view pushes
+// one. Otherwise every companies chip would stack a history entry.
+const IN_PLACE=["companies"];
 let APPLYING_ROUTE=false,SELF_WRITE=false;
+// Back to the Board with that posting selected and open in the Job panel. It
+// outranks whichever chip or facet you left the board on, which could hide it.
+function showJobOnBoard(url){
+  const job=JOBS.find(j=>j.url===url||j.open_url===url);if(!job)return false;
+  if(!shown().includes(job)){filter="all";q="";el("q").value="";resetFacets()}
+  const index=shown().indexOf(job);if(index<0)return false;
+  sel=index;restoreWorkspace();render();return true;
+}
 const routeHead=value=>String(value||"").replace(/^#/,"").replace(/^\//,"").split(/[/?]/)[0];
 function setRoute(route,replace=false){
   if(APPLYING_ROUTE&&!replace)return;
@@ -848,19 +1009,19 @@ function parseRoute(){
 function dispatchRoute(){
   const {parts,params}=parseRoute(),[head,first,second]=parts;
   if(!head){restoreWorkspace();return true}
-  if(head==="board"){openView(head);return true}
+  // The expanded board and the full-screen reader are gone (APPLICATIONS_PLAN
+  // §8): their old addresses land on the Board, a posting's with that row
+  // selected, and settle on `#/` so the dead address leaves the history.
+  if(head==="board"){restoreWorkspace();setRoute("/",true);return true}
   if(head==="job"){
-    if(!JOBS.some(job=>job.url===first))return false;
-    // A deep link outranks whichever chip you happened to leave the board on.
-    if(!shown().some(row=>row.url===first)){filter="all";q="";el("q").value="";resetFacets();render()}
-    const index=shown().findIndex(row=>row.url===first);
-    if(index<0)return false;
-    sel=index;renderReader();return true;
+    if(!showJobOnBoard(first))return false;
+    setRoute("/",true);return true;
   }
   if(head==="companies"){COMPANY_SELECTED=params.get("c")||null;renderCompanies();return true}
-  if(head==="run"){
+  if(head==="app"||head==="run"){
     const run=RUNS.find(item=>item.id===first);if(!run)return false;
-    if(second==="preview")renderPreview(run);else if(second==="revise")renderRevise(run);else renderTailor(run);
+    const step=head==="run"?(second==="preview"?"review":second==="revise"?"revise":"log"):second;
+    openApp(run,["log","review","send","revise"].includes(step)?step:undefined);
     return true;
   }
   return false;
@@ -876,15 +1037,18 @@ addEventListener("hashchange",()=>{if(SELF_WRITE){SELF_WRITE=false;return}applyR
 // because that answers the back button and is per-tab. User collapses and
 // automatic narrow-window collapses stay distinct.
 const LAYOUT_KEY="jobflow.layout.v1";
-const DEFAULT_LAYOUT={version:1,left:264,right:452,leftCollapsed:false,rightCollapsed:false,autoLeft:false,autoRight:false,shortcutsHidden:false};
-function loadLayout(){try{const value=JSON.parse(localStorage.getItem(LAYOUT_KEY));if(value?.version===1){const merged={...DEFAULT_LAYOUT,...value};delete merged.expanded;delete merged.applications;delete merged.collect;return merged}localStorage.removeItem(LAYOUT_KEY)}catch(_){try{localStorage.removeItem(LAYOUT_KEY)}catch(__){}}return {...DEFAULT_LAYOUT}}
+// The Board has no left rail any more (APPLICATIONS_PLAN.md §4.1); its keys are
+// stripped from a stored blob the same way `expanded` and `applications` are.
+const DEFAULT_LAYOUT={version:1,right:452,appsW:264,screenW:300,checkW:280,rightCollapsed:false,autoRight:false,appsCollapsed:false,shortcutsHidden:false};
+function loadLayout(){try{const value=JSON.parse(localStorage.getItem(LAYOUT_KEY));if(value?.version===1){const merged={...DEFAULT_LAYOUT,...value};for(const stale of ["expanded","applications","collect","left","leftCollapsed","autoLeft"])delete merged[stale];return merged}localStorage.removeItem(LAYOUT_KEY)}catch(_){try{localStorage.removeItem(LAYOUT_KEY)}catch(__){}}return {...DEFAULT_LAYOUT}}
 let layout=loadLayout();
 function saveLayout(){try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(layout))}catch(_){}}
 function applyLayout(){
-  const app=el("app");app.style.setProperty("--left",layout.left+"px");app.style.setProperty("--right",layout.right+"px");
-  app.classList.toggle("left-collapsed",layout.leftCollapsed||layout.autoLeft);app.classList.toggle("right-collapsed",layout.rightCollapsed||layout.autoRight);
-  el("left-rail").classList.toggle("collapsed",layout.leftCollapsed||layout.autoLeft);el("right-rail").classList.toggle("collapsed",layout.rightCollapsed||layout.autoRight);
-  document.querySelector('[data-collapse="left"]').setAttribute("aria-expanded",String(!(layout.leftCollapsed||layout.autoLeft)));document.querySelector('[data-collapse="right"]').setAttribute("aria-expanded",String(!(layout.rightCollapsed||layout.autoRight)));
+  const app=el("app");app.style.setProperty("--right",layout.right+"px");
+  for(const [key,spec] of Object.entries(RAIL_SPLITS))app.style.setProperty(spec.css,layout[key]+"px");
+  app.classList.toggle("right-collapsed",layout.rightCollapsed||layout.autoRight);
+  el("right-rail").classList.toggle("collapsed",layout.rightCollapsed||layout.autoRight);
+  document.querySelector('[data-collapse="right"]').setAttribute("aria-expanded",String(!(layout.rightCollapsed||layout.autoRight)));
   el("keybar").hidden=!!layout.shortcutsHidden;el("shortcut-toggle").setAttribute("aria-expanded",String(!layout.shortcutsHidden));el("shortcut-toggle").textContent=layout.shortcutsHidden?"Show shortcuts":"Hide shortcuts";
   updateSeparatorAria();
 }
@@ -895,22 +1059,24 @@ function toggleCollapse(side){
 function resetLayout(){layout={...DEFAULT_LAYOUT};applyLayout();autoCollapse();saveLayout();toast("layout reset")}
 function autoCollapse(){
   const width=el("workspace").clientWidth||innerWidth;
-  layout.autoRight=!layout.rightCollapsed&&width<layout.left+layout.right+482;
-  layout.autoLeft=!layout.leftCollapsed&&width<(layout.rightCollapsed||layout.autoRight?28:layout.right)+layout.left+482;
+  layout.autoRight=!layout.rightCollapsed&&width<layout.right+482;
   applyLayout();saveLayout();
 }
 function updateSeparatorAria(){
-  const specs={"left-split":[layout.left,200,420],"right-split":[layout.right,320,640]};
+  const specs={"right-split":[layout.right,320,640]};
   Object.entries(specs).forEach(([id,[now,min,max]])=>{const node=el(id);node.setAttribute("aria-valuenow",Math.round(now));node.setAttribute("aria-valuemin",min);node.setAttribute("aria-valuemax",Math.round(max))});
 }
+const RAIL_SPLITS={
+  appsW:{css:"--apps-w",sign:1,min:200,max:420,def:264},
+  screenW:{css:"--screen-w",sign:1,min:240,max:480,def:300},
+  checkW:{css:"--check-w",sign:-1,min:240,max:440,def:280},
+};
 const splitSpecs={
-  "left-split":{key:"left",axis:"x",sign:1,min:200,max:420,def:264},
   "right-split":{key:"right",axis:"x",sign:-1,min:320,max:640,def:452}
 };
 function clampSplit(spec,value){
   let max=typeof spec.max==="function"?spec.max():spec.max;
-  if(spec.key==="left"){const right=layout.rightCollapsed||layout.autoRight?28:layout.right;max=Math.min(max,el("workspace").clientWidth-right-482)}
-  if(spec.key==="right"){const left=layout.leftCollapsed||layout.autoLeft?28:layout.left;max=Math.min(max,el("workspace").clientWidth-left-482)}
+  if(spec.key==="right")max=Math.min(max,el("workspace").clientWidth-482);
   return Math.max(spec.min,Math.min(max,value));
 }
 Object.entries(splitSpecs).forEach(([id,spec])=>{
@@ -926,6 +1092,25 @@ Object.entries(splitSpecs).forEach(([id,spec])=>{
     else return;applyLayout();saveLayout();
   });
 });
+// The application views' rails. Their markup is rebuilt on every poll, so the
+// handles are delegated from the document and the drag listens on the window:
+// a remount mid-drag swaps the node but not the width, which lives on #app.
+function railSplit(event){return event.target.closest?.("[data-split]")}
+function setRail(key,value){const spec=RAIL_SPLITS[key];layout[key]=Math.round(Math.max(spec.min,Math.min(spec.max,value)));applyLayout()}
+document.addEventListener("pointerdown",event=>{
+  const node=railSplit(event);if(!node||event.button!==0)return;event.preventDefault();
+  const key=node.dataset.split,spec=RAIL_SPLITS[key],start=event.clientX,before=layout[key];
+  node.classList.add("dragging");document.body.classList.add("resizing");
+  const move=e=>setRail(key,before+(e.clientX-start)*spec.sign);
+  const up=()=>{document.body.classList.remove("resizing");document.querySelector(`[data-split="${key}"]`)?.classList.remove("dragging");removeEventListener("pointermove",move);removeEventListener("pointerup",up);removeEventListener("pointercancel",up);saveLayout()};
+  addEventListener("pointermove",move);addEventListener("pointerup",up);addEventListener("pointercancel",up);
+});
+document.addEventListener("dblclick",event=>{const node=railSplit(event);if(!node)return;setRail(node.dataset.split,RAIL_SPLITS[node.dataset.split].def);saveLayout()});
+document.addEventListener("keydown",event=>{
+  const node=railSplit(event);if(!node||!["ArrowLeft","ArrowRight","Home"].includes(event.key))return;
+  event.preventDefault();event.stopPropagation();const key=node.dataset.split,spec=RAIL_SPLITS[key];
+  setRail(key,event.key==="Home"?spec.def:layout[key]+(event.key==="ArrowRight"?1:-1)*spec.sign*(event.shiftKey?64:16));saveLayout();
+},true);
 applyLayout();autoCollapse();addEventListener("resize",autoCollapse);
 
 // Fetching: one action, truthful status, optional settings.
@@ -941,7 +1126,7 @@ function applyFetchSettings(value){
 try{applyFetchSettings(JSON.parse(localStorage.getItem(FETCH_SETTINGS_KEY))||FETCH_DEFAULTS)}catch(_){applyFetchSettings(FETCH_DEFAULTS)}
 el("fetch-options").addEventListener("change",()=>{applyFetchSettings(fetchSettings());try{localStorage.setItem(FETCH_SETTINGS_KEY,JSON.stringify(fetchSettings()))}catch(_){}});
 el("fetch-reset").addEventListener("click",()=>{applyFetchSettings(FETCH_DEFAULTS);try{localStorage.removeItem(FETCH_SETTINGS_KEY)}catch(_){}});
-async function reloadJobs(){const response=await fetch("/api/jobs?t="+T);checkAuth(response);if(!response.ok)throw new Error("Could not reload the job list.");const data=await response.json();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();render()}
+async function reloadJobs(){const response=await fetch("/api/jobs?t="+T);checkAuth(response);if(!response.ok)throw new Error("Could not reload the job list.");const data=await response.json();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();renderStatusKeys();render()}
 function fetchSummary(status){
   if(status.running)return {message:"Checking for new jobs…",running:true};
   const sources=status.sources||[],added=sources.reduce((n,s)=>n+(s.added||0),0);
@@ -1057,33 +1242,44 @@ function selectCompanyRow(row){
   renderCompanies(false,scrollTop);
 }
 
+// Popovers (the source menu, fetch settings, an application's ⋯ menu) close
+// when you click anywhere else, or press Esc.
+const closePopovers=(except=null)=>document.querySelectorAll("details.popover[open],details.app-menu[open]").forEach(node=>{if(node!==except)node.removeAttribute("open")});
 document.addEventListener("click",event=>{
+  closePopovers(event.target.closest("details.popover,details.app-menu"));
   if(event.target.closest("#text-modal-submit"))return void closeTextModal(true);
   if(event.target.closest("#text-modal-cancel,#text-modal-close"))return void closeTextModal(false);
   if(event.target===el("text-modal"))return void closeTextModal(false);
   if(event.target.closest("#shortcut-toggle"))return void toggleShortcuts();
   if(event.target.closest("#theme-toggle"))return void cycleTheme();
-  if(event.target.closest("#toastundo"))return void undo();
+  if(event.target.closest("#toastundo")){const action=UNDO_ACTION;UNDO_ACTION=null;el("toast").classList.remove("on");return void(action?action():undo())}
+  const toastOpen=event.target.closest("#toastmsg");if(toastOpen?.dataset.open){const run=RUNS.find(r=>r.id===toastOpen.dataset.open);el("toast").classList.remove("on");if(run)openApp(run);return}
   if(event.target.closest("#striptoggle"))return void toggleDrawer();
   if(event.target.closest("#copylog"))return void copyLog();
   const nav=event.target.closest("[data-nav]");if(nav)return void(nav.dataset.nav==="companies"?renderCompanies():nav.dataset.nav==="runs"?openRuns():restoreWorkspace());
   const collapse=event.target.closest("[data-collapse]");if(collapse)return void toggleCollapse(collapse.dataset.collapse);
-  const expand=event.target.closest("[data-expand]");if(expand){const kind=expand.dataset.expand;if(kind==="job")renderReader();else if(kind==="board")openView(kind);return}
+  if(event.target.closest("[data-apps-collapse]"))return void toggleAppsList();
+  if(event.target.closest("[data-apps-applied]")){APPS_SHOW_APPLIED=!APPS_SHOW_APPLIED;renderAppsList();return}
+  const delApp=event.target.closest("[data-delete-app]");if(delApp){delApp.closest("details")?.removeAttribute("open");return void deleteApp(delApp.dataset.deleteApp,"application")}
+  const delAttempt=event.target.closest("[data-delete-attempt]");if(delAttempt){delAttempt.closest("details")?.removeAttribute("open");return void deleteApp(delAttempt.dataset.deleteAttempt,"attempt")}
+  const appStep=event.target.closest("[data-app-step]");if(appStep){appStep.closest("details")?.removeAttribute("open");const run=RUNS.find(r=>r.id===ACTIVE_RUN);if(run)openApp(run,appStep.dataset.appStep);return}
+  const boardJob=event.target.closest("[data-board-job]");if(boardJob){if(!showJobOnBoard(boardJob.dataset.boardJob))toast("This posting is no longer on the Board",{warn:true});return}
+  const appLink=event.target.closest("[data-app]");if(appLink){const run=RUNS.find(r=>r.id===appLink.dataset.app);if(run)openApp(run);return}
   const chip=event.target.closest("[data-filter]");if(chip){filter=chip.dataset.filter;sel=0;render();return}
-  const source=event.target.closest("[data-source]");
+  // The source menu: a tick toggles one source, "only" solos it - with five
+  // sources, "show me only the ATS rows" is one click that way and four the other.
+  const only=event.target.closest("[data-source-only]");
+  if(only){const key=only.dataset.sourceOnly;facets.hidden=[...new Set(JOBS.map(sourceKey))].filter(k=>k!==key);saveFacets();sel=0;render();return}
+  if(event.target.closest("[data-source-all]")){facets.hidden=[];saveFacets();sel=0;render();return}
+  const source=event.target.closest("input[data-source]");
   if(source){
-    const key=source.dataset.source,others=[...new Set(JOBS.map(sourceKey))].filter(k=>k!==key);
-    // Alt-click solos: with five sources, "show me only the ATS rows" is one
-    // click that way and four the other.
-    facets.hidden=event.altKey?(facets.hidden.length===others.length?[]:others)
-      :facets.hidden.includes(key)?facets.hidden.filter(k=>k!==key):[...facets.hidden,key];
+    const key=source.dataset.source;
+    facets.hidden=facets.hidden.includes(key)?facets.hidden.filter(k=>k!==key):[...facets.hidden,key];
     saveFacets();sel=0;render();return;
   }
   const act=event.target.closest("[data-act-filter]");if(act){actFilter=act.dataset.actFilter;renderActivity();return}
   const status=event.target.closest("[data-status]");if(status)return void setStatus(status.dataset.status);
-  const note=event.target.closest("[data-note]");if(note)return void editNote(JOBS.find(j=>j.url===note.dataset.note));
   const tailor=event.target.closest("[data-tailor]");if(tailor)return void startTailor(tailor.dataset.tailor);
-  const readerRow=event.target.closest("[data-reader-row]");if(readerRow){sel=+readerRow.dataset.readerRow;renderReader();return}
   const companyRow=event.target.closest("[data-company-row]");if(companyRow){selectCompanyRow(companyRow);if(companyRow.dataset.companyFocus)el("company-careers-value")?.select();return}
   const companyBoard=event.target.closest("[data-company-board]");if(companyBoard)return void showCompanyOnBoard(companyBoard.dataset.companyBoard);
   const companyGroup=event.target.closest("[data-company-group]");if(companyGroup){const key=companyGroup.dataset.companyGroup;COMPANY_OPEN_GROUPS.has(key)?COMPANY_OPEN_GROUPS.delete(key):COMPANY_OPEN_GROUPS.add(key);renderCompanies(false,el("tailor-view").querySelector(".companies-scroll")?.scrollTop||0);return}
@@ -1095,25 +1291,26 @@ document.addEventListener("click",event=>{
   const companyRowAction=event.target.closest("[data-company-action-row]");if(companyRowAction){const [name,action]=companyRowAction.dataset.companyActionRow.split("|");void companyWork(name,()=>postCompany(companyPath(name)+"/manage",{mtime:COMPANIES.mtime,action}));return}
   const companyAction=event.target.closest("[data-company-action]");if(companyAction){const name=COMPANY_SELECTED,action=companyAction.dataset.companyAction;if(action==="remove"&&!confirm("Remove "+name+" from your company list? Saved jobs will stay on the Board."))return;void companyWork(name,async()=>{await postCompany(companyPath(name)+"/manage",{mtime:COMPANIES.mtime,action});if(action==="remove")COMPANY_SELECTED=null});return}
   const companyConfirm=event.target.closest("[data-company-confirm]");if(companyConfirm){const [name,vendor,token]=companyConfirm.dataset.companyConfirm.split("|");void companyWork(name,async()=>{await postCompany(companyPath(name)+"/identity",{mtime:COMPANIES.mtime,decision:"confirm",candidate:{vendor,token}});reportCheck(name,await checkCompany(name))});return}
-  const preview=event.target.closest("[data-preview]");if(preview){const run=RUNS.find(r=>r.id===preview.dataset.preview);if(run)renderPreview(run);return}
-  const revise=event.target.closest("[data-revise]");if(revise){const run=RUNS.find(r=>r.id===revise.dataset.revise);if(run)renderRevise(run);return}
+  const preview=event.target.closest("[data-preview]");if(preview){const run=RUNS.find(r=>r.id===preview.dataset.preview);if(run)openApp(run,"review");return}
   const restoreVersion=event.target.closest("[data-restore-version]");if(restoreVersion){restoreVersion.disabled=true;postRun("/api/runs/"+restoreVersion.dataset.restoreVersion+"/restore").then(({ok})=>{const run=RUNS.find(r=>r.id===REVISE_RUN);if(ok&&run)renderRevise(run)});return}
-  const versionPreview=event.target.closest("[data-version-preview]");if(versionPreview){const run=RUNS.find(r=>r.id===versionPreview.dataset.versionPreview);if(run)renderPreview(run);return}
+  const versionPreview=event.target.closest("[data-version-preview]");if(versionPreview){const run=RUNS.find(r=>r.id===versionPreview.dataset.versionPreview);if(run)openApp(run,"review");return}
   const previewFilter=event.target.closest("[data-preview-filter]");if(previewFilter){const main=el("preview-main");main.classList.toggle("cv-only",previewFilter.dataset.previewFilter==="cv");main.classList.toggle("cover-only",previewFilter.dataset.previewFilter==="cover");document.querySelectorAll("[data-preview-filter]").forEach(node=>node.classList.toggle("on",node===previewFilter));return}
   const applied=event.target.closest("[data-applied]");if(applied){const run=RUNS.find(r=>r.id===applied.dataset.applied);if(!run)return;
     applied.disabled=true;postRun("/api/runs/"+run.id+"/applied",{}).then(({ok,notion})=>{
-      if(ok)toast(notion?`Marked applied · Notion Stage: ${notion}`:"Marked applied in the tracker (Notion sync is off)",{ms:3500});
-      const fresh=RUNS.find(r=>r.id===run.id)||run;if(VIEW==="preview")renderPreview(fresh);else renderTailor(fresh)});return}
+      if(ok){toast(notion?`Marked applied · Notion Stage: ${notion}`:"Marked applied in the tracker (Notion sync is off)",{ms:3500});void reloadJobs().catch(()=>{})}
+      else applied.disabled=false;
+      const fresh=RUNS.find(r=>r.id===run.id)||run;openApp(fresh,"send")});return}
   const reveal=event.target.closest("[data-reveal]");if(reveal&&PREVIEW_RUN){postRun("/api/runs/"+PREVIEW_RUN+"/reveal",{kind:reveal.dataset.reveal});return}
   const variant=event.target.closest("[data-variant]");if(variant&&PREVIEW_RUN){const run=RUNS.find(r=>r.id===PREVIEW_RUN);if(!run)return;
     if(!confirm(`Switch the CV to the ${variant.dataset.variant.toUpperCase()} master variant? Earlier edits to this CV are not carried over; the current version stays under Versions.`))return;
     variant.disabled=true;postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope:run.scope||"both",base_cv:variant.dataset.variant,note:""}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else variant.disabled=false});return}
   const recompile=event.target.closest("[data-recompile]");if(recompile){recompile.disabled=true;postRun("/api/runs/"+recompile.dataset.recompile+"/compile").then(({ok})=>{const run=RUNS.find(r=>r.id===recompile.dataset.recompile);if(ok&&run)renderPreview(run)});return}
-  const runNode=event.target.closest("[data-run]");if(runNode){const run=RUNS.find(r=>r.id===runNode.dataset.run);if(run)renderTailor(run);return}
-  const pill=event.target.closest("#runpill");if(pill){const run=RUNS.find(r=>r.id===pill.dataset.run);if(run)renderTailor(run);return}
+  // An attempt tab keeps you on the step you were on, where that attempt has it.
+  const runNode=event.target.closest("[data-run]");if(runNode){const run=RUNS.find(r=>r.id===runNode.dataset.run);if(run)openApp(run,{preview:"review",send:"send",revise:"revise",tailor:"log"}[VIEW]);return}
+  const pill=event.target.closest("#runpill");if(pill){const run=RUNS.find(r=>r.id===pill.dataset.run);if(run)openApp(run,"log");return}
   const cont=event.target.closest(".continuerun");if(cont){cont.disabled=true;const source=cont.dataset.runId;postRun("/api/runs/"+source+"/continue",{proceed:cont.dataset.proceed==="1"}).then(({ok,run_id})=>{if(!ok){cont.disabled=false;return}toast("continuing from the saved checkpoint",{ms:2500});const next=RUNS.find(r=>r.id===run_id);if(next)renderTailor(next)});return}
   const cancel=event.target.closest(".cancelrun");if(cancel){postRun("/api/runs/"+cancel.dataset.runId+"/cancel");return}
-  const retry=event.target.closest(".retryrun");if(retry){retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry").then(({ok})=>{if(!ok){retry.disabled=false;return}toast("regenerating from the saved posting; earlier versions are kept",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
+  const retry=event.target.closest(".retryrun");if(retry){if(retry.dataset.done&&!confirm("Regenerate this application from the saved posting with your current CV master and cover base? This attempt stays under its number."))return;retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry").then(({ok})=>{if(!ok){retry.disabled=false;return}toast("regenerating from the saved posting; earlier versions are kept",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
   const row=event.target.closest("tr[data-row]");if(row&&!event.target.closest("select")){sel=+row.dataset.row;render()}
 });
 async function postCompany(path,body,method="POST"){
@@ -1128,6 +1325,7 @@ async function postCompany(path,body,method="POST"){
   return data;
 }
 document.addEventListener("input",event=>{
+  if(event.target.id==="apps-q"){APPS_Q=event.target.value;renderAppsList();return}
   if(event.target.id!=="company-search")return;
   const position=event.target.selectionStart;COMPANY_QUERY=event.target.value;
   renderCompanies(false);const search=el("company-search");search.focus();try{search.setSelectionRange(position,position)}catch(_){}
@@ -1155,7 +1353,7 @@ document.addEventListener("submit",event=>{
   const scope=new FormData(event.target).get("scope")||"both",note=el("revision-note").value.trim(),remember=el("revision-remember").value.trim();
   if(kind!=="apply"&&!note){toast("say what should change",{warn:true});return}
   button.disabled=true;const body={job_url:run.job_url,kind,note,scope,remember};if(kind!=="apply")body.parent=run.id;
-  postRun("/api/runs",body).then(({ok})=>{if(ok){restoreWorkspace();toast(kind+" queued",{ms:2500})}else button.disabled=false});
+  postRun("/api/runs",body).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(ok){toast(kind+" queued",{ms:2500});if(next)openApp(next,"log");else restoreWorkspace()}else button.disabled=false});
 });
 document.addEventListener("change",event=>{
   if(event.target.id==="f-fit"||event.target.id==="f-found"||event.target.id==="f-sort"){
@@ -1175,20 +1373,24 @@ document.addEventListener("change",event=>{
 document.addEventListener("keydown",event=>{
   if(MODAL_RESOLVE){if(event.key==="Escape"){event.preventDefault();closeTextModal(false)}else if((event.metaKey||event.ctrlKey)&&event.key==="Enter"){event.preventDefault();closeTextModal(true)}return}
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
-  if(event.key==="/"&&!typing){event.preventDefault();el(VIEW==="companies"?"company-search":"q").focus();return}
+  if(event.key==="/"&&!typing){event.preventDefault();el(VIEW==="companies"?"company-search":APP_VIEWS.includes(VIEW)&&el("apps-q")?"apps-q":"q").focus();return}
   if(typing){if(event.key==="Escape")event.target.blur();return}
+  if(event.key==="Escape"&&document.querySelector("details.popover[open],details.app-menu[open]")){closePopovers();return}
   if(event.key==="Escape"&&!el("drawer").hidden){toggleDrawer();return}
   if(event.key==="Escape"&&el("app").classList.contains("expanded")){restoreWorkspace();return}
-  if(event.key==="["){event.preventDefault();toggleCollapse("left");return}
+  if(event.key==="["){event.preventDefault();toggleAppsList();return}
   if(event.key==="]"){event.preventDefault();toggleCollapse("right");return}
   if(event.key==="\\"){event.preventDefault();resetLayout();return}
   if(VIEW==="companies")return;
+  // Inside Applications, j/k walk the list; the board's marking keys do not
+  // reach through to a job you cannot see.
+  if(APP_VIEWS.includes(VIEW)){if(event.key==="j"||event.key==="k"){event.preventDefault();stepApp(event.key==="j"?1:-1)}return}
   const rows=shown(),move={j:1,ArrowDown:1,k:-1,ArrowUp:-1};
-  if(event.key in move){event.preventDefault();sel=Math.min(rows.length-1,Math.max(0,sel+move[event.key]));if(el("app").classList.contains("reader-mode"))renderReader();else render();return}
+  if(event.key in move){event.preventDefault();sel=Math.min(rows.length-1,Math.max(0,sel+move[event.key]));render();return}
   if(event.key==="Enter"){const j=selectedJob();if(j)open(j.open_url||j.url,"_blank","noopener");return}
   if(event.key==="e"){event.preventDefault();editNote();return}if(event.key==="t"){event.preventDefault();const j=selectedJob();if(j)startTailor(j.url);return}
   if(event.key==="z"){event.preventDefault();undo();return}
-  const map={s:"star",y:"yes",m:"maybe",n:"no",a:"applied",u:"new",g:"gate"};if(event.key in map){event.preventDefault();setStatus(map[event.key])}
+  const status=STATUSES.find(s=>STATUS_KEYS[s]===event.key);if(status){event.preventDefault();setStatus(status)}
 });
 el("q").addEventListener("input",event=>{q=event.target.value;sel=0;render()});
 el("f-reset").addEventListener("click",()=>{resetFacets();sel=0;render()});

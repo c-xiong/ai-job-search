@@ -13,8 +13,8 @@
     <span class="barsep"></span>
     <nav class="nav" aria-label="Primary">
       <button class="navitem" data-nav="board">Board</button>
-      <button class="navitem" data-nav="runs">Runs</button>
       <button class="navitem" data-nav="companies">Companies</button>
+      <button class="navitem" data-nav="runs">Applications<span class="navbadge" id="appbadge" hidden></span></button>
     </nav>
     <div class="crumb" id="crumb" hidden></div>
     <div class="spacer"></div>
@@ -24,77 +24,72 @@
   </header>
 
   <main class="workspace" id="workspace">
-    <aside class="rail left-rail" id="left-rail">
-      <button class="spine" data-collapse="left" aria-expanded="true"><span>Runs</span><b>›</b></button>
-      <section class="panel runs-panel" id="runs">
-        <div class="panelhead"><span class="label">Runs</span><span id="runqueue" class="count"></span><span class="spacer"></span></div>
-        <div id="runlist" class="runlist"><div class="panel-empty">No runs yet.</div></div>
-      </section>
-    </aside>
-    <div class="splitter vertical" id="left-split" role="separator" tabindex="0" aria-label="Resize Runs" aria-orientation="vertical"></div>
     <div class="centre" id="centre">
       <section class="panel board-panel" id="board-panel">
         <div class="panelhead">
           <span class="label">Board</span><span class="count" id="count"></span><span class="spacer"></span>
-          <label class="search"><span>⌕</span><input type="search" id="q" placeholder="filter by role, company…"></label>
-          <button class="secondary" id="shortcut-toggle" aria-expanded="true" title="Show or hide keyboard shortcuts">Hide shortcuts</button>
-          <button class="secondary expand" data-expand="board">↗ Expand</button>
+          <label class="search"><span>⌕</span><input type="search" id="q" placeholder="search role, company…"></label>
         </div>
         <div class="fetch-toolbar">
-          <button class="primary" id="fetch">Fetch new jobs</button>
+          <div class="fetch-group">
+            <button class="primary" id="fetch">Fetch new jobs</button>
+            <details class="fetch-settings popover" id="fetch-settings">
+              <summary title="Fetch settings" aria-label="Fetch settings">⚙</summary>
+              <div class="fetch-settings-body">
+                <fieldset id="fetch-options"><legend>Fetch from</legend>
+                  <label class="source"><input type="checkbox" id="s-ats" checked> Your companies</label>
+                  <label class="source"><input type="checkbox" id="s-freehire" checked> freehire</label>
+                  <label class="source"><input type="checkbox" id="s-linkedin" checked> LinkedIn</label>
+                  <p class="hint">Recent searches are reused for an hour. Each fetch checks the next batch of companies.</p>
+                  <details class="fetch-advanced"><summary>Limits</summary><div class="collectopts">
+                    <label>Companies per fetch <input type="number" id="mc" value="8" min="1" max="20"></label>
+                    <label>New company jobs per fetch <input type="number" id="mn" value="40" min="1" max="200"></label>
+                    <label>LinkedIn details per fetch <input type="number" id="md" value="15" min="0" max="20"></label>
+                    <p class="hint">A company’s job list is always finished, so its new-job limit may be exceeded. These limits keep each fetch manageable.</p>
+                    <button class="secondary" type="button" id="fetch-reset">Reset defaults</button>
+                  </div></details>
+                </fieldset>
+              </div>
+            </details>
+          </div>
           <div class="fetch-feedback" role="status" aria-live="polite"><span id="collectlog">Ready to fetch</span><span id="collectlast" class="dim"></span></div>
           <button class="linkish" id="show-new" hidden>Show them</button>
-          <details class="fetch-settings" id="fetch-settings">
-            <summary>Settings</summary>
-            <div class="fetch-settings-body">
-              <fieldset id="fetch-options"><legend>Job sources</legend>
-                <label class="source"><input type="checkbox" id="s-ats" checked> Your companies</label>
-                <label class="source"><input type="checkbox" id="s-freehire" checked> freehire</label>
-                <label class="source"><input type="checkbox" id="s-linkedin" checked> LinkedIn</label>
-                <p class="hint">Recent searches are reused for an hour. Each fetch checks the next batch of companies.</p>
-                <details class="fetch-advanced"><summary>Advanced</summary><div class="collectopts">
-                  <label>Companies per fetch <input type="number" id="mc" value="8" min="1" max="20"></label>
-                  <label>New company jobs per fetch <input type="number" id="mn" value="40" min="1" max="200"></label>
-                  <label>LinkedIn details per fetch <input type="number" id="md" value="15" min="0" max="20"></label>
-                  <p class="hint">A company’s job list is always finished, so its new-job limit may be exceeded. These limits keep each fetch manageable.</p>
-                  <button class="secondary" type="button" id="fetch-reset">Reset defaults</button>
-                </div></details>
-              </fieldset>
-            </div>
-          </details>
         </div>
         <div class="chips" id="chips"></div>
         <div class="filterbar" id="filterbar">
-          <div class="sourcechips" id="sourcechips"></div>
-          <span class="spacer"></span>
-          <label class="facet"><span>Fit</span><select id="f-fit" aria-label="Filter by fit band">
-            <option value="any">any</option><option value="high">high</option><option value="medium">medium</option>
-            <option value="low">low</option><option value="unranked">unranked</option>
-          </select></label>
-          <label class="facet"><span>Found</span><select id="f-found" aria-label="Filter by when the job was found">
-            <option value="any">any time</option><option value="latest">latest fetch</option><option value="1">today</option>
-            <option value="7">last 7 days</option><option value="30">last 30 days</option>
-          </select></label>
-          <label class="facet"><span>Sort</span><select id="f-sort" aria-label="Sort the list">
-            <option value="priority">priority</option><option value="found">newest found</option>
-            <option value="found-asc">oldest found</option><option value="posted">newest posted</option>
-            <option value="score">best score</option><option value="company">company A–Z</option>
-            <option value="role">role A–Z</option>
-          </select></label>
+          <details class="facet-menu popover" id="f-source">
+            <summary id="f-source-label" aria-label="Filter by source">All sources</summary>
+            <div class="facet-menu-body" id="sourcechips"></div>
+          </details>
+          <select id="f-fit" aria-label="Filter by fit band">
+            <option value="any">Any fit</option><option value="high">High fit</option><option value="medium">Medium fit</option>
+            <option value="low">Low fit</option><option value="unranked">Unranked</option>
+          </select>
+          <select id="f-found" aria-label="Filter by when the job was found">
+            <option value="any">Found any time</option><option value="latest">Latest fetch</option><option value="1">Found today</option>
+            <option value="7">Last 7 days</option><option value="30">Last 30 days</option>
+          </select>
+          <select id="f-sort" aria-label="Sort the list">
+            <option value="priority">Sort: priority</option><option value="found">Sort: newest found</option>
+            <option value="found-asc">Sort: oldest found</option><option value="posted">Sort: newest posted</option>
+            <option value="score">Sort: best score</option><option value="company">Sort: company A–Z</option>
+            <option value="role">Sort: role A–Z</option>
+          </select>
           <button class="linkish" id="f-reset" hidden>Reset</button>
+          <span class="spacer"></span>
+          <button class="linkish quiet" id="shortcut-toggle" aria-expanded="true" title="Show or hide keyboard shortcuts">Hide shortcuts</button>
         </div>
         <div class="tablewrap">
           <table class="jobtable"><thead><tr>
-            <th class="fitcol">Fit</th><th>Role</th><th class="companycol">Company</th><th class="sourcecol">Source</th>
+            <th class="fitcol">Fit</th><th>Role</th><th class="companycol">Company</th><th class="draftcol" title="Documents generated for this job">Draft</th>
             <th class="locationcol">Location</th><th class="postedcol">Posted</th><th class="foundcol">Found</th><th class="statuscol">Status</th>
-            <th class="wide-only whycol">Why</th><th class="wide-only notescol">My notes</th>
           </tr></thead><tbody id="tb"></tbody></table>
           <div class="panel-empty" id="empty" hidden>Nothing here.</div>
         </div>
         <div class="keybar" id="keybar">
           <span><kbd>j</kbd><kbd>k</kbd> move</span>
-          <span><kbd>s</kbd> star <kbd>y</kbd> yes <kbd>m</kbd> maybe <kbd>n</kbd> no <kbd>g</kbd> gate <kbd>a</kbd> applied <kbd>u</kbd> new</span>
-          <span><kbd>e</kbd> note</span><span><kbd>t</kbd> tailor</span><span><kbd>z</kbd> undo</span><span><kbd>enter</kbd> open link</span><span><kbd>/</kbd> search</span>
+          <span id="statuskeys"></span>
+          <span><kbd>e</kbd> note</span><span><kbd>t</kbd> generate</span><span><kbd>z</kbd> undo</span><span><kbd>enter</kbd> open link</span><span><kbd>/</kbd> search</span>
         </div>
       </section>
     </div>
@@ -102,7 +97,7 @@
     <aside class="rail right-rail" id="right-rail">
       <button class="spine" data-collapse="right" aria-expanded="true"><b>‹</b><span>Job</span></button>
       <section class="panel job-panel" id="job-panel">
-        <div class="panelhead"><span class="label">Job</span><span class="count" id="jobpos"></span><span class="spacer"></span><a class="open" id="jobopen" target="_blank" rel="noopener">open posting ↗</a><button class="secondary expand" data-expand="job">↗ Expand</button></div>
+        <div class="panelhead"><span class="label">Job</span><span class="count" id="jobpos"></span><span class="spacer"></span><a class="open" id="jobopen" target="_blank" rel="noopener">open posting ↗</a></div>
         <div id="jobdetail" class="jobdetail"><div class="panel-empty">Select a job.</div></div>
       </section>
     </aside>
@@ -127,7 +122,7 @@
       <div class="modal-actions"><button class="secondary" id="text-modal-cancel">Cancel</button><button class="primary" id="text-modal-submit">Save</button></div>
     </section>
   </div>
+  <div id="toast"><span id="toastmsg"></span><button id="toastundo" hidden>Undo <span id="toastsec"></span></button></div>
 </div>
-<div id="toast"><span id="toastmsg"></span><button id="toastundo" hidden>Undo <span id="toastsec"></span></button></div>
 <script src="/static/app.js"></script>
 </body></html>

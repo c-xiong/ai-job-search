@@ -69,6 +69,7 @@ import postings  # noqa: E402
 
 from . import (activity, checkpoint, docs, notion, run_guard, run_proc,  # noqa: E402
                run_registry, templates)
+from . import review as review_marks  # noqa: E402
 from .run_guard import PreflightError, preflight  # noqa: F401,E402
 from .run_proc import RunFailure, terminate  # noqa: F401,E402
 # Functions and immutable constants only. The path constants stay behind
@@ -264,7 +265,7 @@ class Supervisor:
         parent = None
         if kind != "apply":
             parent = get(payload.get("parent"))
-            if parent is None or parent.get("phase") != "done":
+            if parent is None or parent.get("phase") != "done" or parent.get("deleted_at"):
                 return 409, {"error": "revise/redraft needs a completed parent run"}
             if parent.get("job_url") != job_url:
                 return 409, {"error": "parent belongs to a different posting"}
@@ -498,6 +499,8 @@ class Supervisor:
     def retry(self, run_id):
         """`Regenerate`: a fresh, linked attempt. Keeps only the saved posting.
 
+        A finished run can be regenerated too: the new attempt re-reads the
+        current CV master and cover base, so edits to either reach a new version.
         Earlier attempts stay immutable - their transcript, cost, drafts and
         failure evidence remain an honest record. Nothing already published is
         touched until the new attempt publishes its own checked version.
@@ -505,8 +508,8 @@ class Supervisor:
         failed = get(run_id)
         if failed is None:
             return 404, {"error": "unknown run"}
-        if failed.get("phase") not in ("failed", "cancelled"):
-            return 409, {"error": "only a failed or cancelled run can be regenerated"}
+        if failed.get("phase") not in ("failed", "cancelled", "done"):
+            return 409, {"error": "only a finished, failed or cancelled run can be regenerated"}
         if failed.get("kind") != "apply":
             return 409, {"error": "regenerate supports full application runs only"}
         application_id = failed.get("application_id") or failed["id"]
@@ -691,8 +694,10 @@ class Supervisor:
         data = load()
         with self._cv:
             queued = list(self._queue)
-        shown = sorted(data["runs"], key=lambda r: r.get("started_at") or "",
-                       reverse=True)[:50]
+        # A deleted run keeps its record as a tombstone (its cost still counts);
+        # it is simply no longer shown.
+        shown = sorted((r for r in data["runs"] if not r.get("deleted_at")),
+                       key=lambda r: r.get("started_at") or "", reverse=True)[:50]
         runs = []
         tracker = docs.tracker_statuses()
         for record in shown:
@@ -702,6 +707,12 @@ class Supervisor:
             record["tracker_status"], record["tracker_date"] = status, since
             if record.get("pipeline") == 2:
                 record["progress"] = self._progress(record, settings)
+            if record.get("phase") == "done":
+                # The owner's checklist, which is what separates "to review"
+                # from "ready to send" in the Applications list.
+                items = review_marks.checklist(record)
+                record["review"] = {"done": sum(1 for m in items if m["done"]),
+                                    "total": len(items)}
             runs.append(record)
         return {
             "runs": runs,
