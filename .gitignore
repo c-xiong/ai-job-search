@@ -116,6 +116,10 @@ job_scraper/activity.jsonl
 # guard's decision log and the spawn specs, which carry the same names.
 job_scraper/runs.json
 job_scraper/run_state/
+# The board's API token, persisted so a restart does not invalidate the tabs
+# you have open. A live credential for anything the board can do on this
+# machine - it is 0600 and it never belongs in a commit.
+job_scraper/.board-token
 # Local budget and timeout overrides for the run supervisor. No identity in it,
 # but it is machine-local configuration and the defaults live in tools/board/runs.py.
 job_scraper/board_config.json
@@ -150,6 +154,11 @@ Thumbs.db
 
 # Memory files (Claude Code user-specific)
 .claude/projects/
+# Per-machine permission grants. Claude Code appends every approved command
+# here, so it accumulates local absolute paths, venv locations and whatever
+# else was run on this machine. Until 2026-09-18 it was only covered by the
+# owner's ~/.config/git/ignore, which a fresh clone or CI does not have.
+.claude/settings.local.json
 
 # Skills lock (auto-generated)
 skills-lock.json

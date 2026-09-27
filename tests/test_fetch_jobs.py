@@ -5,6 +5,8 @@ per-run description budget actually bounds it, and an unauthenticated POST
 cannot make this machine crawl five vendors.
 """
 
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -397,6 +399,129 @@ class BoardFetchRouteTest(unittest.TestCase):
             self.assertEqual(exc.code, 403)
 
 
+class BoardTokenTest(unittest.TestCase):
+    """The token has to outlive the process that minted it.
+
+    It used to be `secrets.token_urlsafe(16)` at import time, so every restart
+    invalidated every open tab - and the page did not say so, because a 403's
+    body is valid JSON and the client read it as "no runs". The fix is a longer
+    lived secret, not a weaker one, so these pin both halves: the same token
+    comes back after a restart, and it is never readable by anyone else.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.saved = board_server.TOKEN_FILE
+        self.addCleanup(lambda: setattr(board_server, "TOKEN_FILE", self.saved))
+        board_server.TOKEN_FILE = Path(self.tmp.name) / ".board-token"
+
+    def test_a_restart_reuses_the_token_so_open_tabs_keep_working(self):
+        first = board_server.load_token()
+        self.assertEqual(first, board_server.load_token())
+        self.assertTrue(board_server.TOKEN_FILE.exists())
+
+    def test_the_token_file_is_not_readable_by_anyone_else(self):
+        board_server.load_token()
+        self.assertEqual(board_server.TOKEN_FILE.stat().st_mode & 0o077, 0)
+
+    def test_new_token_rotates_and_persists_the_new_one(self):
+        first = board_server.load_token()
+        rotated = board_server.load_token(new=True)
+        self.assertNotEqual(first, rotated)
+        self.assertEqual(rotated, board_server.load_token())
+
+    def test_a_damaged_token_file_is_replaced_rather_than_trusted(self):
+        for junk in ("", "   \n", "short", "has spaces in it", "x" * 400):
+            board_server.TOKEN_FILE.write_text(junk, encoding="utf-8")
+            token = board_server.load_token()
+            self.assertNotEqual(token, junk.strip())
+            self.assertGreaterEqual(len(token), 16, junk)
+
+    def test_an_unwritable_token_file_does_not_stop_the_board(self):
+        """A board with no place to save its token still has to serve.
+
+        Degrading to a per-process token costs you the open tabs; refusing to
+        start costs you the board.
+        """
+        board_server.TOKEN_FILE = Path(self.tmp.name) / "missing" / "sub" / "x"
+        board_server.TOKEN_FILE.parent.parent.mkdir()
+        board_server.TOKEN_FILE.parent.write_text("not a directory", encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()) as warning:
+            self.assertGreaterEqual(len(board_server.load_token()), 16)
+        self.assertIn("stop working when it restarts", warning.getvalue())
+
+    def test_the_client_shows_a_stale_link_instead_of_an_empty_board(self):
+        """The bug this whole change exists for: 403 must not render as "no runs"."""
+        js = (Path(board_server.STATIC) / "app.js").read_text(encoding="utf-8")
+        html = (Path(board_server.STATIC) / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="stale"', html)
+        self.assertIn("function checkAuth(response)", js)
+        self.assertIn("response.status===403", js)
+        # Every polling site has to consult it - one that does not is one that
+        # silently empties the view it owns.
+        for guarded in ('const response=await fetch("/api/runs?t="+T);if(!checkAuth(response)',
+                        'const response=await fetch(url);if(!checkAuth(response)',
+                        'const response=await fetch("/api/fetch/status?t="+T);if(!checkAuth(response)',
+                        'const response=await fetch("/api/jobs?t="+T);checkAuth(response)'):
+            self.assertIn(guarded, js, guarded)
+
+
+class ActivitySeedTest(unittest.TestCase):
+    """A restarted board shows the history that is on disk beside it.
+
+    The ring is per process and used to start empty, so two boards - or one
+    board either side of a restart - disagreed about what had happened, with
+    `activity.jsonl` holding the answer the whole time.
+    """
+
+    def setUp(self):
+        from tools.board import activity
+        self.activity = activity
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        saved = activity.LOG
+        self.addCleanup(lambda: setattr(activity, "LOG", saved))
+        self.addCleanup(activity.reset_for_tests)
+        activity.LOG = Path(self.tmp.name) / "activity.jsonl"
+        activity.reset_for_tests()
+
+    def write(self, count, start=900):
+        with open(self.activity.LOG, "w", encoding="utf-8") as handle:
+            handle.write("{ this line was torn by a crash\n")
+            for i in range(count):
+                handle.write(json.dumps({
+                    "epoch": "older", "seq": start + i, "source": "collect",
+                    "level": "info", "ts": "2026-09-18T10:00:00",
+                    "msg": "earlier event %d" % i}) + "\n")
+
+    def test_prior_events_are_seeded_and_renumbered_into_this_epoch(self):
+        """Their own seq numbers cannot be trusted: `since()` filters on seq, and
+        a client polling past a stale counter would never see a live event."""
+        self.write(3)
+        self.assertEqual(self.activity.seed(), 3)
+        self.activity.emit("server", "board listening")
+        snapshot = self.activity.since()
+        self.assertEqual([e["seq"] for e in snapshot["events"]], [1, 2, 3, 4])
+        self.assertEqual(snapshot["counts"]["all"], 4)
+        self.assertEqual([e.get("prior") for e in snapshot["events"]],
+                         [True, True, True, None])
+        live = self.activity.since(seq=3, epoch=snapshot["epoch"])
+        self.assertEqual([e["msg"] for e in live["events"]], ["board listening"])
+
+    def test_seeding_is_bounded_and_survives_a_missing_or_torn_log(self):
+        self.write(self.activity.RING + 50)
+        self.assertEqual(self.activity.seed(), self.activity.RING)
+        self.activity.reset_for_tests()
+        self.activity.LOG = Path(self.tmp.name) / "not-there.jsonl"
+        self.assertEqual(self.activity.seed(), 0)
+
+    def test_a_ring_that_already_has_events_is_never_seeded_twice(self):
+        self.write(3)
+        self.activity.emit("server", "board listening")
+        self.assertEqual(self.activity.seed(), 0)
+
+
 class LostUpdateTest(unittest.TestCase):
     """A status set while a fetch is running must survive the fetch.
 
@@ -484,6 +609,149 @@ class LostUpdateTest(unittest.TestCase):
         finally:
             fetch_jobs.ats_fetch.collect = real_collect
         self.assertFalse(fetch_jobs.LOCK.exists())
+
+
+class ArrivalStampTest(unittest.TestCase):
+    """A fetch marks what it brought in, so the board can show you only that.
+
+    `first_seen` is a date, and two fetches on one afternoon are one date. The
+    run stamp is what separates them - it has to be identical across every
+    source of one run, different between runs, and never rewritten on a row
+    that was already there.
+    """
+
+    def _sandbox(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        jm, af = fetch_jobs.jobs_md, fetch_jobs.ats_fetch
+        saved = (jm.SEEN, jm.MD, jm.CSV_ACTIVE, jm.CSV_EXCLUDED, fetch_jobs.CONFIG,
+                 fetch_jobs.LOG, fetch_jobs.LOCK, fetch_jobs.STATUS, af.REGISTRY)
+        jm.SEEN, jm.MD = root / "seen.json", root / "jobs.md"
+        jm.CSV_ACTIVE, jm.CSV_EXCLUDED = root / "a.csv", root / "e.csv"
+        fetch_jobs.CONFIG, fetch_jobs.LOG = root / "cfg.json", root / "log"
+        fetch_jobs.LOCK, fetch_jobs.STATUS = root / ".lock", root / "status.json"
+        af.REGISTRY = root / "companies.json"
+
+        def restore():
+            (jm.SEEN, jm.MD, jm.CSV_ACTIVE, jm.CSV_EXCLUDED, fetch_jobs.CONFIG,
+             fetch_jobs.LOG, fetch_jobs.LOCK, fetch_jobs.STATUS, af.REGISTRY) = saved
+        self.addCleanup(restore)
+        return root
+
+    def _clock(self):
+        """A run stamp that moves on every call, so "one run, one stamp" is a
+        claim about the code rather than about how fast the test machine is.
+        Two real fetches are minutes apart; two in one test are microseconds."""
+        ticks = iter("2026-09-18T10:0%d:00" % n for n in range(9))
+        real = fetch_jobs.ats_fetch.run_stamp
+        fetch_jobs.ats_fetch.run_stamp = lambda: next(ticks)
+        self.addCleanup(lambda: setattr(fetch_jobs.ats_fetch, "run_stamp", real))
+
+    @staticmethod
+    def _run(rows):
+        """One fetch over both an ATS source and a plain one, with stubbed collectors.
+
+        Patched on `fetch_jobs`'s own module references: `tools/` is on the path
+        twice over, so `tools.collectors` and the `collectors` this orchestrator
+        imported are two module objects and patching the wrong one silently runs
+        the real collector.
+        """
+        source = fetch_jobs.collectors
+        real_collect, real_freehire = fetch_jobs.ats_fetch.collect, source.collect_freehire
+        fetch_jobs.ats_fetch.collect = lambda _log, **_kw: (
+            [r for r in rows if r["portal"] == "ats"], {"companies": [], "requests": 0})
+        # The plain sources hand back a dict keyed by URL, already carrying the
+        # listing's description - which is also what keeps the screen local.
+        source.collect_freehire = lambda _cfg, _log: {
+            r["url"]: dict(r, description="We are hiring an engineer. English speaking team.")
+            for r in rows if r["portal"] == "freehire"}
+        try:
+            fetch_jobs.fetch(["ats", "freehire"])
+        finally:
+            fetch_jobs.ats_fetch.collect = real_collect
+            source.collect_freehire = real_freehire
+
+    @staticmethod
+    def _row(n, portal):
+        # Distinct titles and companies: two sources returning the same job in
+        # one run is one row by design (§11.1), which would hide the thing these
+        # tests are about.
+        return {"url": "https://example.test/%s/%d" % (portal, n), "id": str(n),
+                "title": "Machine Learning Engineer %d" % n, "company": "Example %d AG" % n,
+                "location": "Zurich, Switzerland", "posted": "2026-01-0%d" % n,
+                "portal": portal, "status": "new", "note": ""}
+
+    def test_one_run_is_one_stamp_across_every_source(self):
+        self._sandbox();self._clock()
+        self._run([self._row(1, "ats"), self._row(2, "freehire")])
+        seen = fetch_jobs.load_seen()
+        stamps = {entry["first_seen_at"] for entry in seen.values()}
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(len(stamps), 1, "two sources in one fetch are still one batch")
+        status = json.loads(fetch_jobs.STATUS.read_text(encoding="utf-8"))
+        # The board reads this to decide what "latest fetch" means, so it has to
+        # be the same value the rows carry - and it has to survive the run.
+        self.assertEqual(status["started_at"], stamps.pop())
+        self.assertTrue(status["finished_at"])
+
+    def test_a_later_run_is_a_different_batch_and_never_restamps_the_old_one(self):
+        self._sandbox();self._clock()
+        self._run([self._row(1, "ats")])
+        first = fetch_jobs.load_seen()["https://example.test/ats/1"]["first_seen_at"]
+        # Same row again plus a new one: the fetcher re-sees rows constantly, and
+        # a re-sighting that moved the arrival stamp would make every old row
+        # look like it arrived today.
+        self._run([self._row(1, "ats"), self._row(2, "ats")])
+        seen = fetch_jobs.load_seen()
+        self.assertEqual(seen["https://example.test/ats/1"]["first_seen_at"], first)
+        self.assertNotEqual(seen["https://example.test/ats/2"]["first_seen_at"], first)
+        status = json.loads(fetch_jobs.STATUS.read_text(encoding="utf-8"))
+        self.assertEqual(status["started_at"],
+                         seen["https://example.test/ats/2"]["first_seen_at"])
+
+    def test_the_last_fetch_is_still_known_after_the_server_restarts(self):
+        """The in-process copy starts empty; the file is what remembers.
+
+        Without this, restarting the board would silently redefine "latest
+        fetch" as "nothing", and the arrival dots would all go out.
+        """
+        root = self._sandbox()
+        # The board reads its own `fetch_jobs`: `tools/` is on the path twice,
+        # so the orchestrator this test drives and the one the server imported
+        # are two module objects with two STATUS paths.
+        served = board_server.fetch_jobs
+        saved_path, saved_state = served.STATUS, dict(board_server.FETCH)
+        served.STATUS = root / "status.json"
+        served.STATUS.write_text(json.dumps({
+            "running": False, "started_at": "2026-09-18T10:00:00",
+            "finished_at": "2026-09-18T10:04:00", "log": [], "sources": [],
+        }), encoding="utf-8")
+        board_server.FETCH.update({"running": False, "log": [], "sources": [],
+                                   "error": None, "finished_at": None})
+
+        def restore():
+            served.STATUS = saved_path
+            board_server.FETCH.update(saved_state)
+        self.addCleanup(restore)
+
+        status = board_server.fetch_status()
+        self.assertEqual(status["started_at"], "2026-09-18T10:00:00")
+        self.assertEqual(status["finished_at"], "2026-09-18T10:04:00")
+
+    def test_the_payload_carries_arrival_and_falls_back_for_older_rows(self):
+        rows = board_state._shape([
+            ("https://example.test/new", {"first_seen": "2026-09-01",
+                                          "first_seen_at": "2026-09-01T14:30:00"}),
+            ("https://example.test/old", {"first_seen": "2026-08-20"}),
+        ])
+        by_url = {row["url"]: row for row in rows}
+        self.assertEqual(by_url["https://example.test/new"]["first_seen_at"],
+                         "2026-09-01T14:30:00")
+        # A row collected before stamping existed still sorts and filters, on the
+        # date it does have. Both are ISO-8601, and a date is a prefix of a
+        # timestamp, so one string comparison covers the mixed board.
+        self.assertEqual(by_url["https://example.test/old"]["first_seen_at"], "2026-08-20")
 
 
 class PrimaryUrlTest(unittest.TestCase):

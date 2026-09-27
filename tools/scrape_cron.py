@@ -152,6 +152,9 @@ def main():
         by_portal.setdefault(row.get("portal") or "linkedin-search", []).append(row)
 
     today = date.today().isoformat()
+    # One unattended run is one batch on the board, the same as one press of
+    # Fetch, so every portal below is stamped with the same value.
+    stamp = ats_fetch.run_stamp()
     added = gated = 0
     pending = []
     with jobs_md.board_lock():
@@ -160,7 +163,7 @@ def main():
             seen = json.loads(jobs_md.SEEN.read_text(encoding="utf-8")).get("seen", {})
         for portal, portal_rows in sorted(by_portal.items()):
             stats = ats_fetch.merge(seen, portal_rows, today, log, portal=portal,
-                                    pending=pending)
+                                    pending=pending, stamp=stamp)
             added += stats["added"]
             gated += stats["gated"]
         log("  %d added (%d auto-gated on German, %d awaiting fit assessment)"

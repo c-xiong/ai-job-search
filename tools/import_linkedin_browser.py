@@ -175,17 +175,21 @@ def import_rows(seen, rows, today, log=lambda _message: None, pending=None):
     """
     total = {"added": 0, "gated": 0, "already_known": 0, "collapsed": 0,
              "possible_duplicates": 0, "german_gated_by_company": {}}
+    # One import is one batch, so the board shows the whole paste as a block
+    # rather than as one row per second of merging.
+    stamp = ats_fetch.run_stamp()
     for row in rows:
         linkedin_url = row["linkedin_url"]
         if row["url"] == linkedin_url:
             _add_stats(total, ats_fetch.merge(seen, [row], today, log, portal=PORTAL,
-                                              pending=pending))
+                                              pending=pending, stamp=stamp))
             continue
 
         source_portal = "ats-search" if row.get("ats_id") else COMPANY_PORTAL
         application_row = dict(row, id=row.get("ats_id") or "")
         _add_stats(total, ats_fetch.merge(
-            seen, [application_row], today, log, portal=source_portal, pending=pending))
+            seen, [application_row], today, log, portal=source_portal, pending=pending,
+            stamp=stamp))
         entry = _entry_for_source(seen, row["url"])
         if entry is None:
             raise InputError("could not resolve imported company URL after merge: %s" % row["url"])

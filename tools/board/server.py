@@ -8,10 +8,12 @@ thread: `POST /api/fetch` starts it, `GET /api/fetch/status` reports progress.
 Collection itself lives in `tools/fetch_jobs.py` and works the same from a
 terminal.
 
-Security: binds 127.0.0.1 only, and every API call must carry a random token
-minted at startup. Without the token any web page you happen to have open could
-POST to localhost and silently rewrite your job list - or make your machine crawl
-five vendors.
+Security: binds 127.0.0.1 only, and every API call must carry a random token.
+Without it any web page you happen to have open could POST to localhost and
+silently rewrite your job list - or make your machine crawl five vendors, or
+spend your model budget. The token lives in `job_scraper/.board-token` (0600)
+and survives a restart, so the URL you bookmarked keeps working; `--new-token`
+rotates it.
 
 Stdlib only, Python 3.9+.
 """
@@ -21,6 +23,7 @@ import atexit
 import errno
 import json
 import mimetypes
+import os
 import re
 import secrets
 import signal
@@ -39,8 +42,50 @@ import jobs_md  # noqa: E402
 
 from . import activity, companies, docs, run_registry, runs, state  # noqa: E402
 
+TOKEN_FILE = jobs_md.ROOT / "job_scraper" / ".board-token"
+TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
+# The process-local fallback, replaced in main() by the persisted token.
+# Importing this module - which the tests do - must never create a file, so
+# only a board that actually serves reads or writes one.
 TOKEN = secrets.token_urlsafe(16)
 STATIC = Path(__file__).resolve().parent / "static"
+
+
+def load_token(new=False):
+    """The board's token, persisted across restarts.
+
+    It used to be minted per process, and that quietly broke every tab you had
+    open whenever the board restarted: the page keeps polling, the API answers
+    403, and `{"error": "forbidden"}` is valid JSON - so the client parsed it,
+    found no `runs` key, and rendered a board with nothing on it. Two tabs, two
+    different pasts, and no error anywhere on screen.
+
+    A token that outlives the process is the same protection without that. The
+    secret still never leaves this machine and the file is 0600. `--new-token`
+    exists for the one case where rotation is the point: a token that has been
+    pasted somewhere it should not have been.
+    """
+    if not new:
+        try:
+            existing = TOKEN_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            existing = ""
+        if TOKEN_RE.fullmatch(existing):
+            return existing
+    token = secrets.token_urlsafe(16)
+    try:
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # 0600 at creation rather than write-then-chmod: the second leaves a
+        # window in which anyone with an account on this box can read it.
+        handle = os.open(str(TOKEN_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            fh.write(token + "\n")
+    except OSError as exc:
+        print("could not save the board token to %s (%s) - this board works, but "
+              "its URL will stop working when it restarts" % (TOKEN_FILE, exc),
+              file=sys.stderr)
+    return token
+
 
 FETCH_LOCK = threading.Lock()
 FETCH = {"running": False, "log": [], "sources": [], "error": None, "finished_at": None}
@@ -134,6 +179,13 @@ def fetch_status():
     if status["running"] and on_disk.get("log"):
         status["log"] = on_disk["log"]
         status["sources"] = on_disk.get("sources") or status["sources"]
+    # The run stamp belongs to the worker, not to this process: `fetch_jobs`
+    # allocates it, writes it onto every row that run inserts as `first_seen_at`,
+    # and records it here. The board reads it back to mark what the last fetch
+    # brought in - which has to keep working after a restart, when the
+    # in-process dict above is empty and the file is all there is.
+    status["started_at"] = on_disk.get("started_at")
+    status["finished_at"] = status.get("finished_at") or on_disk.get("finished_at")
     status["degraded"] = any(s.get("degraded") for s in status["sources"] or [])
     return status
 
@@ -148,7 +200,7 @@ RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-
 PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"/(?P<kind>cv|cover)$")
 COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
-                          r"(?:/(?P<action>resolve|identity|test-fetch))?$")
+                          r"(?:/(?P<action>resolve|identity|test-fetch|manage))?$")
 
 
 def run_route(path):
@@ -305,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
                                "/api/companies/resolve-all", "/api/companies/health-check") or \
             (run_id and action in ("approve", "cancel", "kill", "compile", "restore", "retry"))
         known = known or bool(company_match and company_match.group("action") in
-                              ("resolve", "identity", "test-fetch"))
+                              ("resolve", "identity", "test-fetch", "manage"))
         if not known or not self._authed(parse_qs(parts.query)):
             # The token is what stops any web page you happen to have open from
             # POSTing to localhost - and for /api/fetch that means it is what
@@ -357,6 +409,8 @@ class Handler(BaseHTTPRequestHandler):
                     body = companies.resolve(company_match.group("slug"), payload)
                 elif company_match.group("action") == "test-fetch":
                     body = companies.test_fetch(company_match.group("slug"), payload)
+                elif company_match.group("action") == "manage":
+                    body = companies.manage(company_match.group("slug"), payload)
                 else:
                     body = companies.identity(company_match.group("slug"), payload)
             except companies.CompanyError as exc:
@@ -426,11 +480,17 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Local job triage board")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-open", action="store_true", help="do not open a browser")
+    ap.add_argument("--new-token", action="store_true",
+                    help="mint a fresh token; every board tab you have open stops working")
     args = ap.parse_args(argv)
 
     if not jobs_md.SEEN.exists():
         print("no job_scraper/seen_jobs.json yet - run /scrape first")
         return 1
+
+    # Before anything emits: the ring takes history only while it is empty, and
+    # orphan reconciliation below is itself an emitter.
+    activity.seed()
 
     # Belt to the wrapper's braces: the model process holds its own lock and
     # survives us, which is what makes orphan detection sound - but a board that
@@ -449,7 +509,6 @@ def main(argv=None):
 
     runs.supervisor()          # reconcile orphans before the first request
 
-    url = "http://127.0.0.1:%d/?t=%s" % (args.port, TOKEN)
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     except OSError as exc:
@@ -466,11 +525,19 @@ def main(argv=None):
         print("  or:       python3 tools/jobs_board.py --port %d" % (args.port + 1),
               file=sys.stderr)
         return 1
+
+    # After the bind, so a board that could not start - the common case being
+    # a board already running on this port - never rotates the token out from
+    # under the one that did.
+    global TOKEN
+    TOKEN = load_token(new=args.new_token)
+    url = "http://127.0.0.1:%d/?t=%s" % (args.port, TOKEN)
     activity.emit("server", "board listening on 127.0.0.1:%d" % args.port)
-    # flush: stdout is block-buffered when piped, and the URL carries the only copy
-    # of the session token - a user redirecting the output must still be able to see it.
+    # flush: stdout is block-buffered when piped, and a user redirecting the
+    # output must still be able to see the URL.
     print("job board: %s" % url, flush=True)
-    print("(localhost only, token-protected; Ctrl-C to stop)", flush=True)
+    print("(localhost only, token-protected; the URL survives a restart; Ctrl-C to stop)",
+          flush=True)
     if not args.no_open:
         webbrowser.open(url)
     try:

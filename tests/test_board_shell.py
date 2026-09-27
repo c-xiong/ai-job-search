@@ -121,7 +121,7 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertIn("Gaps, stated not smoothed", self.js)
         self.assertIn("runpill", self.html)
         for marker in ("Retry from beginning", "provider_rate_limit", "failure-card",
-                       "data-run-base", "data-base-start", "latestApplications",
+                       "data-run-base", "latestApplications",
                        "retry_of"):
             self.assertIn(marker, self.js if marker != "failure-card" else self.css)
         # The job identity lives in the body, in sentence case - never in the
@@ -203,33 +203,38 @@ class ShellMarkupTest(unittest.TestCase):
 
     def test_a_run_can_be_asked_for_one_document_instead_of_both(self):
         """Some postings are worth a letter and not a fresh CV, and the choice
-        has to survive the poll that rebuilds the panel it lives in."""
-        for marker in ("data-scope-start", "data-run-scope", "scopeOptions",
-                       "TAILOR_LABEL", "DRAFT_LABEL", "docKinds",
-                       "Cover letter only", "const START={base:", "const base_cv=START.base,scope=START.scope"):
+        is made once, after the fit evaluation and before any drafting."""
+        for marker in ("data-run-scope", "scopeOptions", "DRAFT_LABEL", "docKinds",
+                       "Cover letter only", "Choose after fit evaluation.",
+                       "Choose & draft documents"):
             self.assertIn(marker, self.js)
+        for removed in ("data-scope-start", "TAILOR_LABEL", "const START={base:",
+                        "const base_cv=START.base,scope=START.scope"):
+            self.assertNotIn(removed, self.js)
+        self.assertIn('>Evaluate fit</button>', self.js)
+        self.assertIn('{job_url:url,kind:"apply",note}', self.js)
         # The approval card sends the scope it is showing, not a default.
         self.assertIn('scope:document.querySelector("[data-run-scope]")?.value||"both"',
                       self.js)
+
+    def test_run_output_can_follow_the_latest_line(self):
+        self.assertIn('let RUN_FOLLOW=true;', self.js)
+        self.assertIn('data-run-follow ${RUN_FOLLOW?"checked":""}', self.js)
+        self.assertIn('if(RUN_FOLLOW)runlog.scrollTop=runlog.scrollHeight;', self.js)
+        self.assertIn('RUN_LOG_SCROLL.set(ACTIVE_RUN,previousLog.scrollTop)', self.js)
 
     def test_revise_and_companies_artboards_are_on_the_runtime_surface(self):
         self.assertIn('data-nav="companies"', self.html)
         for marker in ("revise-shell", "grid-template-columns:268px", "428px",
                        "companies-shell", "360px", "company-table"):
             self.assertIn(marker, self.css)
-        # Target companies is a focused careers-page-to-ATS workflow. Internal
-        # registry metadata is deliberately absent from the UI.
         for marker in ("renderRevise", "/api/prefs", "data-restore-version",
-                       "--fork-session", "renderCompanies", "/api/companies",
-                       "Save company", "company-careers", "countries", "health-check",
-                       "Check monitoring health", "handleCompanyHealthClick", "company-batch-status",
-                       "data-company-confirm", "data-company-test-fetch", "company-settings",
-                       "monitoring_status", "will_be_searched"):
-            if marker == "--fork-session":
-                continue
+                       "renderCompanies", "/api/companies", "Add company",
+                       "company-careers", "data-company-confirm", "company-settings",
+                       "data-company-check", "Last updated", "Target companies"):
             self.assertIn(marker, self.js)
-        for removed in ("Technical details", "Suggested companies", "<dt>Priority</dt>",
-                        "<dt>Source</dt>", "<dt>Tags</dt>", "<dt>Notes</dt>"):
+        for removed in ("Check monitoring health", "Save & inspect", "Adapter missing",
+                        "<th>monitoring_status</th>", "will_be_searched</span>"):
             self.assertNotIn(removed, self.js)
 
     def test_source_column_custom_text_modal_and_no_price_chrome(self):
@@ -247,6 +252,25 @@ class ShellMarkupTest(unittest.TestCase):
         self.assertNotIn("prompt(", self.js)
         self.assertNotIn("money(", self.js)
         self.assertNotIn("<th>Cost</th>", self.html)
+
+    def test_the_board_filters_and_sorts_on_more_than_status(self):
+        """The status chips answer one question; these are the other three."""
+        for marker in ('id="filterbar"', 'id="sourcechips"', 'id="f-fit"',
+                       'id="f-found"', 'id="f-sort"', 'id="f-reset"'):
+            self.assertIn(marker, self.html)
+        # Arrival is a column of its own, after Posted: the employer's date and
+        # the date it reached the board are different facts, and only the second
+        # one can tell you what the last fetch brought in.
+        self.assertIn('<th class="foundcol">Found</th>', self.html)
+        self.assertLess(self.html.index('class="postedcol"'),
+                        self.html.index('class="foundcol"'))
+        # The fetch summary offers one click through to the rows it just added.
+        self.assertIn('id="show-new"', self.html)
+        # A standing preference, kept out of the layout blob and out of the URL.
+        self.assertIn('jobflow.board.v1', self.js)
+        self.assertNotIn('jobflow.board.v1', self.js.split("const LAYOUT_KEY")[1])
+        for rule in (".filterbar{", ".source-chip{", ".newdot{", ".foundcol{"):
+            self.assertIn(rule, self.css)
 
     def test_approved_tokens_and_hard_centre_minimum_are_present(self):
         for token in ("--bg:", "--panel:", "--line:", "--text:", "--dim:",
@@ -426,7 +450,8 @@ if(start<0||end<marker.length)throw new Error("routing block not found in app.js
 
 const build=new Function("ctx","location","history","addEventListener",`
   let JOBS=ctx.JOBS,RUNS=ctx.RUNS;
-  let filter="active",q="",sel=0,COMPANY_FILTER="all",COMPANY_SELECTED=null;
+  let filter="active",q="",sel=0,COMPANY_FILTER="all",COMPANY_SELECTED=null,facetsReset=0;
+  const resetFacets=()=>{facetsReset++};
   const shown=()=>JOBS.filter(job=>filter==="all"||job.status==="new");
   const el=()=>({value:"seeded"});
   const render=()=>{};
@@ -439,7 +464,7 @@ const build=new Function("ctx","location","history","addEventListener",`
   const renderRevise=run=>openView("revise",null,"/run/"+encodeURIComponent(run.id)+"/revise");
   ${src.slice(start,end)}
   return {applyRoute,renderReader,renderCompanies,renderTailor,renderPreview,
-          state:()=>({filter,sel,COMPANY_FILTER,COMPANY_SELECTED}),
+          state:()=>({filter,sel,COMPANY_FILTER,COMPANY_SELECTED,facetsReset}),
           set:(k,v)=>{if(k==="filter")filter=v;if(k==="sel")sel=v;if(k==="COMPANY_FILTER")COMPANY_FILTER=v;if(k==="COMPANY_SELECTED")COMPANY_SELECTED=v}};
 `);
 
@@ -495,10 +520,12 @@ t("a hash typed by hand does re-render", ctx.opened.includes("companies"));
     ctx.opened.includes("workspace")&&location.hash==="#/"&&stack.length===1);
 });
 
-// A deep link outranks whichever chip the board was left on.
+// A deep link outranks whichever chip the board was left on - and the source,
+// fit and found facets too, which can hide a row just as thoroughly.
 at("#/job/"+encodeURIComponent("https://ex.com/b")); R.applyRoute();
 t("deep link widens a filter that would hide the row",
   R.state().filter==="all"&&ctx.opened[0]==="reader");
+t("deep link clears the facets as well", R.state().facetsReset===1);
 
 process.exit(bad?1:0);
 """
@@ -521,61 +548,72 @@ class RouteBehaviourTest(unittest.TestCase):
                          (result.stdout + result.stderr).strip())
 
 
-HEALTH_CHECK_HARNESS = r"""
+RUN_OUTPUT_HARNESS = r"""
 const fs=require("fs");
 const src=fs.readFileSync(process.argv[2],"utf8");
-const start=src.indexOf("async function checkCompanyHealth("),end=src.indexOf('document.addEventListener("click"',start);
-if(start<0||end<start)throw new Error("health-check functions were not found in app.js");
+const start=src.indexOf("function renderTailor("),end=src.indexOf("function renderReader(",start);
+if(start<0||end<start)throw new Error("renderTailor was not found in app.js");
 
-(async()=>{
-  const checked={mtime:"new",companies:[],health_check:{tested:3,succeeded:2,failed:1}};
-  const ctx={COMPANIES:{mtime:"old",companies:[]},requests:[],toasts:[],rendered:[],
-    fetch:async(url,opts)=>{ctx.requests.push({url,opts});return {ok:true,json:async()=>checked}}};
-  const build=new Function("ctx",`
-    let COMPANIES=ctx.COMPANIES,T="token",COMPANY_HEALTH_RUNNING=false,COMPANY_HEALTH_RESULT=null;
-    const fetch=ctx.fetch,toast=(...args)=>ctx.toasts.push(args),renderCompanies=value=>ctx.rendered.push(value);
-    ${src.slice(start,end)}
-    return {handleCompanyHealthClick,state:()=>COMPANIES,result:()=>COMPANY_HEALTH_RESULT};
-  `);
-  const R=build(ctx),button={disabled:false,textContent:""};
-  const event={target:{closest:selector=>selector==="#company-health-check"?button:null}};
-  let bad=0;
-  const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
-  const pending=R.handleCompanyHealthClick(event);
-  t("click disables immediately",button.disabled===true);
-  t("click shows progress",button.textContent.includes("Testing"));
-  await pending;
-  t("one click makes one request",ctx.requests.length===1);
-  t("the health endpoint is used",ctx.requests[0].url==="/api/companies/health-check?t=token");
-  t("the request is POST",ctx.requests[0].opts.method==="POST");
-  t("the current registry version is sent",JSON.parse(ctx.requests[0].opts.body).mtime==="old");
-  t("the checked registry replaces local state",R.state()===checked);
-  t("the running and completed states rerender",ctx.rendered.length===2&&ctx.rendered.every(value=>value===false));
-  t("the final result stays visible",R.result().state==="error"&&R.result().message.includes("2 succeeded"));
-  t("a disabled button cannot start a second batch",R.handleCompanyHealthClick(event)===null&&ctx.requests.length===1);
+const ctx={nodes:{},html:""};
+const tailor={};
+Object.defineProperty(tailor,"innerHTML",{set(value){
+  ctx.html=value;
+  ctx.nodes.runlog={scrollTop:0,scrollHeight:900};
+},get(){return ctx.html}});
+ctx.nodes["tailor-view"]=tailor;
 
-  const failed={COMPANIES:{mtime:"old",companies:[]},requests:[],toasts:[],rendered:[],
-    fetch:async(url,opts)=>{failed.requests.push({url,opts});return {ok:false,json:async()=>({error:"resolver timed out"})}}};
-  const F=build(failed),failedButton={disabled:false,textContent:""};
-  await F.handleCompanyHealthClick({target:{closest:()=>failedButton}});
-  t("an error remains visible",F.result().state==="error"&&F.result().message==="resolver timed out");
-  t("an error also rerenders the status",failed.rendered.length===2);
-  process.exit(bad?1:0);
-})().catch(error=>{console.error(error);process.exit(1)});
+const build=new Function("ctx",`
+  const el=id=>ctx.nodes[id]||(ctx.nodes[id]={innerHTML:"",scrollTop:0,scrollHeight:0});
+  const esc=value=>String(value==null?"":value);
+  const PHASE_STEP={evaluating:1,awaiting_approval:1,queued:2,drafting:2,reviewing:3,compiling:5,inspecting:6,done:6};
+  const RUNNING=["evaluating","queued","drafting","reviewing","compiling","inspecting"];
+  const DRAFT_STEP={both:["Draft CV + cover letter","both"],cv:["Draft CV","cv"],cover:["Draft cover letter","cover"]};
+  const DOC_TITLE={cv:"CV",cover:"cover letter"};
+  const docKinds=scope=>(scope||"both")==="both"?["cv","cover"]:[scope];
+  const scopeOptions=()=>"<option>scope</option>",baseOptions=()=>"<option>base</option>";
+  const DRAFT_LABEL={both:"Draft both",cv:"Draft CV",cover:"Draft cover"};
+  const STEPS=[["Evaluate fit","eval"],["Draft","draft"],["Review","review"],["Revise","revise"],["Compile","compile"],["Verify","verify"]];
+  const runTitle=()=>"<header></header>",crumbRun=()=>({}),openView=()=>{},restoreWorkspace=()=>{};
+  let RUNS=[],EV=[],ACTIVE_RUN=null,RUN_FOLLOW=true;
+  const RUN_LOG_SCROLL=new Map();
+  ${src.slice(start,end)}
+  return {renderTailor,setFollow:value=>RUN_FOLLOW=value,active:()=>ACTIVE_RUN};
+`);
+const R=build(ctx);
+const run={id:"run-1",application_id:"run-1",kind:"apply",phase:"awaiting_approval",scope:"both",
+  company:"Acme",role:"Engineer",targets:{cv:"cv/secret.tex",cover:"cover/secret.tex"},fit:{}};
+let bad=0;
+const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
+
+R.renderTailor(run);
+t("targets stay hidden before approval",!ctx.html.includes("cv/secret.tex")&&!ctx.html.includes("cover/secret.tex"));
+t("the pending document decision is explicit",ctx.html.includes("Choose after fit evaluation."));
+t("follow is checked by default",ctx.html.includes("data-run-follow checked"));
+t("the newest line is visible",ctx.nodes.runlog.scrollTop===ctx.nodes.runlog.scrollHeight);
+
+ctx.nodes.runlog.scrollTop=123;
+R.setFollow(false);
+R.renderTailor(run);
+t("turning follow off preserves the reading position",ctx.nodes.runlog.scrollTop===123);
+t("the unchecked state survives a repaint",ctx.html.includes("data-run-follow >"));
+
+R.renderTailor({...run,phase:"queued",approved_at:"2026-08-24T15:00:00",scope:"cover"});
+t("approved scope reveals its final target",ctx.html.includes("cover/secret.tex"));
+t("an unselected target stays hidden",!ctx.html.includes("cv/secret.tex"));
+t("approved output is labelled writing to",ctx.html.includes(">Writing to<"));
+process.exit(bad?1:0);
 """
 
 
-class HealthCheckClickTest(unittest.TestCase):
-    """The visible health button must invoke exactly one real batch request."""
-
-    def test_click_posts_the_registry_version_and_applies_the_result(self):
+class RunOutputBehaviourTest(unittest.TestCase):
+    def test_follow_and_post_fit_document_rendering(self):
         node = shutil.which("node")
         if not node:
-            self.skipTest("node is not installed; resolve-all click is unchecked")
+            self.skipTest("node is not installed; run output behaviour is unchecked")
         app = ROOT / "tools" / "board" / "static" / "app.js"
         with tempfile.TemporaryDirectory() as tmp:
-            probe = Path(tmp) / "health-check.js"
-            probe.write_text(HEALTH_CHECK_HARNESS, encoding="utf-8")
+            probe = Path(tmp) / "run-output.js"
+            probe.write_text(RUN_OUTPUT_HARNESS, encoding="utf-8")
             result = subprocess.run([node, str(probe), str(app)],
                                     capture_output=True, text=True)
         self.assertEqual(result.returncode, 0,
@@ -623,61 +661,99 @@ class CompanyRowClickTest(unittest.TestCase):
                          (result.stdout + result.stderr).strip())
 
 
-ATS_ONLY_HARNESS = r"""
-const fs=require("fs");
-const src=fs.readFileSync(process.argv[2],"utf8");
-const start=src.indexOf("async function renderCompanies("),end=src.indexOf("function openView(",start);
-if(start<0||end<start)throw new Error("renderCompanies was not found in app.js");
-
+COMPANIES_HARNESS = r"""
+const fs=require("fs"),src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf("function companySummary("),end=src.indexOf("// The app bar",start);
 (async()=>{
-  const ctx={nodes:{},tablewrap:{scrollTop:0},companies:{mtime:"1",companies:[
-    {name:"ATS Co",route:"ats",status:"unresolved",countries:["CH"]},
-    {name:"Legacy Ready",route:"ats",status:"verified",vendor:"ashby",token:"legacy",countries:["CH","DE"]},
-    {name:"LinkedIn Co",route:"linkedin",status:"verified"},
+  const ctx={nodes:{},tablewrap:{scrollTop:0},companies:{schema_version:2,company_controls:true,mtime:"1",companies:[
+    {name:"Ready Co",route:"ats",status:"verified",will_be_searched:true,fetch_status:"never",board_url:"https://jobs.example.com"},
+    {name:"LinkedIn Co",route:"linkedin",status:"unresolved"},
     {name:"Manual Co",route:"manual",status:"paused"},
-    {name:"Legacy ATS Co",status:"unresolved",countries:["DE"]}
+    {name:"Failed Co",status:"verified",will_be_searched:true,fetch_status:"failed",last_success_at:"2026-09-01T10:00:00Z",stats:{last_eligible_jobs:12}},
+    {name:"Empty Co",status:"verified",will_be_searched:true,fetch_status:"success",last_success_at:"2026-09-01T10:00:00Z",stats:{last_eligible_jobs:0}}
   ]}};
-  const build=new Function("ctx",`
+  const R=new Function("ctx",`
     const el=id=>ctx.nodes[id]||(ctx.nodes[id]={innerHTML:"",querySelector:()=>ctx.tablewrap});
-    const esc=value=>String(value??"");
-    const openView=()=>{},toast=()=>{};
-    let COMPANIES=ctx.companies,COMPANY_FILTER="all",COMPANY_SELECTED=null,T="token",COMPANY_HEALTH_RUNNING=false,COMPANY_HEALTH_RESULT=null,COMPANY_TEST_RESULTS={},COMPANY_SOURCE_RESULTS={};
-    const fetch=async()=>{throw new Error("render should use the loaded registry")};
+    const esc=value=>String(value??""),openView=()=>{},toast=()=>{};
+    let COMPANIES=ctx.companies,COMPANY_FILTER="all",COMPANY_SELECTED=null,T="token",COMPANY_BUSY=null,COMPANY_ERROR="",COMPANY_QUERY="",COMPANY_ADD_DRAFT={name:"",url:""};
     ${src.slice(start,end)}
-    return {renderCompanies};
-  `);
-  await build(ctx).renderCompanies(false,612);
-  const html=ctx.nodes["tailor-view"].innerHTML;
-  let bad=0;
-  const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
-  t("ATS company is visible",html.includes("ATS Co"));
-  t("legacy rows default to ATS",html.includes("Legacy ATS Co"));
-  t("LinkedIn company is hidden",!html.includes("LinkedIn Co"));
-  t("manual company is hidden",!html.includes("Manual Co"));
-  t("the All count excludes other sources",html.includes("All<span class=\"n\">3</span>"));
-  t("legacy API fields do not become all No",html.includes("1 of 3 companies will be searched"));
-  t("a mixed frontend/backend version asks for restart",html.includes("Backend restart required"));
-  t("a company rerender restores the table position",ctx.tablewrap.scrollTop===612);
+    return {renderCompanies,companySummary,companyLink,select:name=>COMPANY_SELECTED=name};
+  `)(ctx);
+  await R.renderCompanies(false,612);
+  let html=ctx.nodes["tailor-view"].innerHTML,bad=0;
+  const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL "+name)}};
+  t("all company sources remain visible",html.includes("LinkedIn Co")&&html.includes("Manual Co"));
+  t("no details are forced open",!html.includes('id="company-settings"'));
+  t("unfetched is not called monitoring or updated",R.companySummary(ctx.companies.companies[0]).label==="Not checked");
+  t("a failed check keeps prior counts",html.includes("12 matching at last update"));
+  t("confirmed empty results are zero",html.includes("0 matching at last update"));
+  t("failure is visible despite a previous success",R.companySummary(ctx.companies.companies[3]).label==="Update failed");
+  t("paused non-ATS company is paused",R.companySummary(ctx.companies.companies[2]).label==="Paused");
+  t("all five companies are counted",html.includes('All<span class="n">5</span>'));
+  t("table scroll survives",ctx.tablewrap.scrollTop===612);
+  t("unsafe website links are not clickable",R.companyLink({careers_url:"javascript:alert(1)"})==="");
+  t("technical terminology is absent",!html.includes("monitoring_status")&&!html.includes("token")&&!html.includes("adapter"));
+  R.select("Ready Co");await R.renderCompanies(false);
+  t("manage opens editing on demand",ctx.nodes["tailor-view"].innerHTML.includes('id="company-settings"'));
   process.exit(bad?1:0);
 })().catch(error=>{console.error(error);process.exit(1)});
 """
 
 
-class AtsOnlyCompaniesViewTest(unittest.TestCase):
-    """Target Companies is an ATS monitor, not a LinkedIn/manual registry view."""
-
-    def test_linkedin_and_manual_companies_are_not_rendered_or_counted(self):
+class CompaniesViewTest(unittest.TestCase):
+    def test_plain_statuses_preserve_success_failure_and_unknown_distinctions(self):
         node = shutil.which("node")
         if not node:
-            self.skipTest("node is not installed; ATS-only rendering is unchecked")
-        app = ROOT / "tools" / "board" / "static" / "app.js"
+            self.skipTest("node is not installed")
         with tempfile.TemporaryDirectory() as tmp:
-            probe = Path(tmp) / "ats-only.js"
-            probe.write_text(ATS_ONLY_HARNESS, encoding="utf-8")
-            result = subprocess.run([node, str(probe), str(app)],
+            probe = Path(tmp) / "companies.js"
+            probe.write_text(COMPANIES_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(ROOT / "tools/board/static/app.js")],
                                     capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0,
-                         (result.stdout + result.stderr).strip())
+        self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).strip())
+
+
+COMPANY_WORK_HARNESS = r"""
+const fs=require("fs"),src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf("const companyPath="),end=src.indexOf("function selectCompanyRow",start);
+(async()=>{
+  const ctx={requests:[],renders:0,fail:false};
+  const R=new Function("ctx",`
+    let COMPANIES={mtime:"v1",companies:[{name:"New Co",status:"unresolved",route:"ats"}]},COMPANY_BUSY=null,COMPANY_ERROR="",VIEW="companies";
+    const renderCompanies=()=>ctx.renders++,toast=()=>{};
+    const postCompany=async(path,body)=>{ctx.requests.push({path,body});await Promise.resolve();if(ctx.fail)throw new Error("Offline");if(path.endsWith("/resolve")){COMPANIES.mtime="v2";COMPANIES.companies[0].will_be_searched=true}};
+    ${src.slice(start,end)}
+    return {companyWork,checkCompany,row:()=>COMPANIES.companies[0],state:()=>({busy:COMPANY_BUSY,error:COMPANY_ERROR}),leave:()=>VIEW="reader"};
+  `)(ctx);
+  let bad=0;const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL "+name)}};
+  const first=R.companyWork("New Co",()=>R.checkCompany("New Co"));
+  await R.companyWork("New Co",()=>R.checkCompany("New Co"));
+  await first;
+  t("double clicks do not start duplicate work",ctx.requests.length===2);
+  t("unconnected source is resolved before fetching",ctx.requests[0].path.endsWith("/resolve")&&ctx.requests[1].path.endsWith("/test-fetch"));
+  t("fetch uses the version returned after resolution",ctx.requests[1].body.mtime==="v2");
+  R.row().status="paused";await R.checkCompany("New Co");
+  t("paused companies never fetch",ctx.requests.length===2);
+  R.row().status="verified";ctx.fail=true;const renders=ctx.renders;
+  const failed=R.companyWork("New Co",()=>R.checkCompany("New Co"));R.leave();await failed;
+  t("errors release busy state and remain visible",R.state().busy===null&&R.state().error==="Offline");
+  t("completion cannot hijack another page",ctx.renders===renders+1);
+  process.exit(bad?1:0);
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+
+
+class CompanyWorkTest(unittest.TestCase):
+    def test_check_flow_prevents_duplicates_and_preserves_navigation(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "company-work.js"
+            probe.write_text(COMPANY_WORK_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(ROOT / "tools/board/static/app.js")],
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).strip())
 
 
 # A poll may repaint the tailor view and nothing else.  openView marks *every*
@@ -772,6 +848,258 @@ class LiveRefreshTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "probe.js"
             probe.write_text(VIEW_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(app)],
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         (result.stdout + result.stderr).strip())
+
+
+FACET_HARNESS = r"""
+const fs=require("fs");
+const src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf('const BOARD_KEY="jobflow.board.v1";');
+const marker="const selectedJob=()=>shown()[sel]||null;";
+const end=src.indexOf(marker)+marker.length;
+if(start<0||end<marker.length)throw new Error("the facet block was not found in app.js");
+
+const store=new Map();
+const localStorage={getItem:k=>store.has(k)?store.get(k):null,
+                    setItem:(k,v)=>store.set(k,String(v)),removeItem:k=>store.delete(k)};
+const build=new Function("ctx","localStorage",`
+  const ACTIVE=["star","yes","new","maybe"];
+  let JOBS=ctx.JOBS,filter=ctx.filter,q=ctx.q,sel=0;
+  ${src.slice(start,end)}
+  return {shown,match,isNewArrival,batchIsExact,facets:()=>facets,resetFacets,facetsAreDefault,
+          setLast:v=>{LAST_FETCH=v},dayFloor,
+          set:(patch)=>Object.assign(facets,patch),reload:()=>{facets=loadFacets()}};
+`);
+
+// Four rows from three sources, arriving in three batches. `old` predates
+// arrival stamping and carries a bare date, which is what the real board holds
+// for everything collected before this feature.
+const JOBS=[
+  {url:"a",title:"ML Engineer",company:"Zeta AG",status:"new",fit:"high",score:80,
+   primary_source:"ats-search",posted:"2026-09-10",first_seen:"2026-09-18",first_seen_at:"2026-09-18T12:00:00"},
+  {url:"b",title:"Backend Engineer",company:"Acme AG",status:"new",fit:"",score:40,
+   primary_source:"freehire-search",posted:"2026-09-12",first_seen:"2026-09-18",first_seen_at:"2026-09-18T12:00:00"},
+  {url:"c",title:"Data Engineer",company:"Mid AG",status:"new",fit:"medium",score:60,
+   primary_source:"linkedin-search",posted:"2026-09-01",first_seen:"2026-09-17",first_seen_at:"2026-09-17T09:00:00"},
+  {url:"d",title:"Analyst",company:"Old AG",status:"new",fit:"low",score:20,
+   primary_source:"freehire-search",posted:"2026-08-02",first_seen:"2026-08-20"},
+];
+let bad=0;
+const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
+const urls=R=>R.shown().map(j=>j.url).join("");
+const fresh=()=>build({JOBS,filter:"all",q:""},localStorage);
+
+store.clear();
+let R=fresh();
+t("nothing is filtered or reordered by default",urls(R)==="abcd"&&R.facetsAreDefault());
+
+// The whole point of the source chips: one low-signal board, gone.
+R.set({hidden:["freehire-search"]});
+t("hiding a source drops exactly its rows",urls(R)==="ac");
+t("hiding is not the default state",!R.facetsAreDefault());
+R.resetFacets();
+t("reset brings them back",urls(R)==="abcd"&&R.facetsAreDefault());
+
+R.set({fit:"unranked"});
+t("unranked means no band at all, not a low one",urls(R)==="b");
+R.set({fit:"high"});
+t("a band filter is exact",urls(R)==="a");
+R.resetFacets();
+
+// "Latest fetch" is measured against the run, not against the newest row.
+R.setLast("2026-09-18T12:00:00");
+R.set({found:"latest"});
+t("the latest fetch is the rows that run inserted",urls(R)==="ab");
+t("and they are the ones marked new",R.isNewArrival(JOBS[0])&&!R.isNewArrival(JOBS[2]));
+R.setLast("2026-09-19T08:00:00");
+t("a run that found nothing marks nothing",urls(R)===""&&!R.isNewArrival(JOBS[0]));
+// With no stamp recorded - every row collected before stamping existed - the
+// board falls back to its own newest arrival instead of showing an empty table
+// under a header that says 98 rows were added.
+R.setLast(null);
+t("with no stamp, the newest arrival stands in",
+  urls(R)==="ab"&&R.isNewArrival(JOBS[0])&&!R.isNewArrival(JOBS[2]));
+t("and the control says which of the two it is",!R.batchIsExact());
+R.setLast("2026-09-18T12:00:00");
+t("a real stamp takes over again",R.batchIsExact());
+R.resetFacets();
+
+// Sorting, including the row whose arrival is a bare date.
+R.set({sort:"found"});
+t("newest found first, mixing stamps and older dates",urls(R)==="abcd");
+R.set({sort:"found-asc"});
+t("oldest found first",urls(R)==="dcab");
+R.set({sort:"posted"});
+t("newest posted is a different order from newest found",urls(R)==="bacd");
+// LinkedIn posts "6 days ago" as often as a date; a row whose date cannot be
+// read is unknown, and unknown sinks instead of string-sorting among the dates.
+const relative=build({JOBS:[{url:"x",posted:"6 days ago",status:"new",fit:"",score:0,
+  primary_source:"linkedin-search",first_seen:"2026-09-18",first_seen_at:"2026-09-18T12:00:00"},
+  {url:"y",posted:"2026-09-11",status:"new",fit:"",score:0,
+   primary_source:"linkedin-search",first_seen:"",first_seen_at:""},
+  ...JOBS],filter:"all",q:""},localStorage);
+relative.set({sort:"posted"});
+t("an unreadable posted date sinks to the bottom",
+  relative.shown().map(j=>j.url).join("")==="byacdx");
+// Unknown sinks whichever way the sort runs: reversing the comparison would
+// have floated the row with no arrival recorded to the top of "oldest first".
+relative.set({sort:"found-asc"});
+t("a row with no arrival recorded sinks in ascending order too",
+  relative.shown().map(j=>j.url).join("").endsWith("y"));
+relative.set({sort:"found"});
+t("and in descending order",relative.shown().map(j=>j.url).join("").endsWith("y"));
+R.set({sort:"company"});
+t("company sorts by name, not by the payload order",urls(R)==="bcda");
+R.set({sort:"score"});
+t("best score first",urls(R)==="acbd");
+R.set({sort:"priority"});
+t("priority is the payload order, untouched",urls(R)==="abcd");
+
+// Ties fall back to the order the server sent, not to an arbitrary one.
+R.set({sort:"found"});
+t("rows sharing a stamp keep their server order",urls(R).slice(0,2)==="ab");
+
+// The facets are a standing preference; the status chip is not.
+store.clear();
+R=fresh();R.set({hidden:["freehire-search"],sort:"found",fit:"high",found:"7"});
+build({JOBS,filter:"all",q:""},localStorage);  // nothing saved yet
+t("a facet is only persisted when it is saved",store.size===0);
+store.set("jobflow.board.v1",JSON.stringify({version:1,hidden:["freehire-search"],
+  fit:"any",found:"any",sort:"found"}));
+R=fresh();
+t("a saved facet set comes back",urls(R)==="ac"&&R.facets().sort==="found");
+store.set("jobflow.board.v1",JSON.stringify({version:1,hidden:"not-an-array",
+  fit:"purple",found:"forever",sort:"__proto__"}));
+R=fresh();
+t("a corrupt blob falls back to the defaults rather than breaking the board",
+  R.facetsAreDefault()&&urls(R)==="abcd");
+store.set("jobflow.board.v1","{oh no");
+R=fresh();
+t("unparseable storage is dropped, not thrown",R.facetsAreDefault()&&store.size===0);
+
+// A day window is local midnight, which is not what toISOString() would give
+// anywhere east of UTC.
+const now=new Date(),pad=n=>String(n).padStart(2,"0");
+t("today's window starts at local midnight today",
+  R.dayFloor(1)===`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`);
+
+// The status chip and the search box still apply, and compose with the facets.
+R=build({JOBS,filter:"all",q:"engineer"},localStorage);
+t("the search box still narrows",urls(R)==="abc");
+R.set({hidden:["freehire-search"]});
+t("search and facets compose",urls(R)==="ac");
+
+const empty=build({JOBS:[],filter:"all",q:""},localStorage);
+empty.setLast(null);
+t("an empty board claims no batch at all",empty.shown().length===0);
+
+process.exit(bad?1:0);
+"""
+
+
+class FacetBehaviourTest(unittest.TestCase):
+    """Filtering and sorting the board: the rules, not the markup."""
+
+    def test_facets_filter_sort_and_survive_storage(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed; the filter algebra is unchecked")
+        app = ROOT / "tools" / "board" / "static" / "app.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "facets.js"
+            probe.write_text(FACET_HARNESS, encoding="utf-8")
+            result = subprocess.run([node, str(probe), str(app)],
+                                    capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         (result.stdout + result.stderr).strip())
+
+
+START_HARNESS = r"""
+const fs=require("fs");
+const src=fs.readFileSync(process.argv[2],"utf8");
+const start=src.indexOf("async function postRun(");
+const marker="async function startTailor(url){";
+const end=src.indexOf("\n}",src.indexOf(marker))+2;
+if(start<0||end<2)throw new Error("the run-start block was not found in app.js");
+
+const build=new Function("ctx",`
+  const T="tok";
+  const JOBS=ctx.JOBS;
+  let RUNS=ctx.RUNS;
+  const fetch=(url,init)=>ctx.fetch(url,init);
+  const checkAuth=()=>true;
+  const toast=(msg)=>ctx.toasts.push(msg);
+  const pollRuns=async()=>{RUNS=ctx.serverRuns};
+  const pollActivity=()=>{};
+  const openTextModal=async()=>ctx.note;
+  const renderTailor=run=>ctx.opened.push(run.id);
+  ${src.slice(start,end)}
+  return {startTailor,postRun};
+`);
+
+const RUN={id:"r-20260918-120000-acme-abc123",company:"Acme",role:"ML Engineer"};
+const JOBS=[{url:"https://ex.com/a",company:"Acme",title:"ML Engineer"}];
+const make=(status,body,serverRuns)=>{
+  const ctx={JOBS,RUNS:[],serverRuns:serverRuns||[],toasts:[],opened:[],note:"",posted:[],
+    fetch:async(url,init)=>{ctx.posted.push([url,JSON.parse(init.body)]);
+      return {ok:status<400,status,json:async()=>body}}};
+  return [build(ctx),ctx];
+};
+let bad=0;
+const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
+
+(async()=>{
+  // The press takes you to the run it started - no toast landing on the button
+  // in the corner it was pressed in.
+  let [R,ctx]=make(202,{run_id:RUN.id,phase:"queued"},[RUN]);
+  await R.startTailor("https://ex.com/a");
+  t("starting an evaluation opens its run",ctx.opened.join("")===RUN.id);
+  t("and says nothing on top of the button",ctx.toasts.length===0);
+  t("the one-off instruction still reaches the request",ctx.posted[0][1].kind==="apply");
+
+  // A posting that already has a run in flight: the server hands back which one,
+  // so show it instead of describing it.
+  [R,ctx]=make(409,{error:"a run for this posting is already drafting",run_id:RUN.id},[RUN]);
+  await R.startTailor("https://ex.com/a");
+  t("a duplicate opens the run that already exists",ctx.opened.join("")===RUN.id);
+  t("and the refusal is still reported",ctx.toasts.some(m=>String(m).includes("already drafting")));
+
+  // A refusal with no run behind it must not navigate, and must not go quiet.
+  [R,ctx]=make(429,{error:"the queue is full (8 waiting)"},[]);
+  await R.startTailor("https://ex.com/a");
+  t("a refusal with no run stays put",ctx.opened.length===0);
+  t("and is reported",ctx.toasts.some(m=>String(m).includes("queue is full")));
+
+  // Started, but the run list did not come back with it.
+  [R,ctx]=make(202,{run_id:RUN.id,phase:"queued"},[]);
+  await R.startTailor("https://ex.com/a");
+  t("a started run that cannot be found still acknowledges the press",
+    ctx.opened.length===0&&ctx.toasts.some(m=>String(m).includes("queued")));
+
+  // Cancelling the instruction modal starts nothing at all.
+  [R,ctx]=make(202,{run_id:RUN.id},[RUN]);ctx.note=null;
+  await R.startTailor("https://ex.com/a");
+  t("cancelling the modal posts nothing",ctx.posted.length===0&&ctx.opened.length===0);
+
+  process.exit(bad?1:0);
+})();
+"""
+
+
+class StartEvaluationTest(unittest.TestCase):
+    """Pressing Evaluate fit opens the run, rather than toasting over itself."""
+
+    def test_the_press_navigates_to_the_run_it_started(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed; the start path is unchecked")
+        app = ROOT / "tools" / "board" / "static" / "app.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "start.js"
+            probe.write_text(START_HARNESS, encoding="utf-8")
             result = subprocess.run([node, str(probe), str(app)],
                                     capture_output=True, text=True)
         self.assertEqual(result.returncode, 0,

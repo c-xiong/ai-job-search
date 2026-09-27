@@ -13,6 +13,25 @@ per-file diff commands.
 
 ## [Unreleased]
 
+### Added
+
+- **The job board records when a row arrived, and can be filtered and sorted on it.** Every
+  row a fetch inserts now carries `first_seen_at`, the run's own timestamp, shared by every
+  source in that run and never rewritten when the row is seen again; `fetch_status.json`
+  records the same stamp as `started_at` so the board still knows what the last fetch brought
+  in after a restart. `first_seen` is a date, so before this a day with two fetches in it was
+  one indistinguishable block. The board gained a `Found` column beside `Posted`, a dot on the
+  rows the latest fetch added, a count of them in the panel header, and a `Show them` link on
+  the fetch summary. Alongside the status chips there is now a filter bar: one toggle chip per
+  source the board actually holds (click to hide a low-signal aggregator, alt-click to solo
+  one), a fit-band filter, a "found" window (latest fetch / today / 7 / 30 days), and a sort -
+  priority (the default, unchanged), newest or oldest found, newest posted, best score,
+  company, role. The facets persist under `jobflow.board.v1` as standing preferences; the
+  status chip stays session-only, and a deep link to a posting still widens everything.
+  A board whose last fetch predates the stamp falls back to its newest arrival date and
+  renames the control `newest batch`, rather than answering "what did the last fetch bring
+  in" with an empty table.
+
 ### Changed
 
 - **Job matching reframed around function, not title** (`framework_version` 1.2.2 -> 1.2.3 in
@@ -31,6 +50,16 @@ per-file diff commands.
   arrival order. Prospective from 2026-08-14. Sits alongside the existing credit norm.
 
 ### Fixed
+
+- **`Evaluate fit` now opens the run it starts.** It used to stay on the board and confirm in
+  a toast, which failed twice over: the toast is fixed to the bottom-right corner, which is
+  exactly where the right rail keeps that button, so the confirmation landed on top of the
+  control that had just been pressed - and it described a screen ("you will choose documents
+  before drafting") that was not being shown. The press now lands on the run's own Tailor
+  view, where the same information is six named steps and `Esc` returns. A posting that
+  already has a run in flight opens that run instead of only being told about it, which is
+  what the 409's `run_id` was always for. The design canvas's `you stay on the board` caption
+  is amended to match (owner, 2026-09-18).
 
 - **The `/html-report` dashboard now reads and renders the tracker's `deadline`** (follow-up to
   #319). The tracker gained a fourteenth `deadline` column and every other consumer (`/outcome`,

@@ -84,6 +84,14 @@ def _shape(items):
             "company": entry.get("company", ""),
             "location": entry.get("location", ""),
             "posted": entry.get("posted") or entry.get("first_seen", ""),
+            # When this row reached *you*, which is a different question from
+            # when it was posted and the only one the "what did the last fetch
+            # bring in" filter can be built on. `first_seen_at` is the run
+            # stamp; rows collected before it existed fall back to their
+            # first-seen date, which sorts correctly against a timestamp
+            # because both are ISO-8601 and a date is a prefix of one.
+            "first_seen": entry.get("first_seen", ""),
+            "first_seen_at": entry.get("first_seen_at") or entry.get("first_seen", ""),
             "why": why,
             "note": entry.get("user_note", ""),
             "portal": entry.get("portal", ""),

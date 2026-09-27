@@ -174,12 +174,21 @@ def make_logger(lines):
     return log
 
 
-def write_status(running, lines, summaries, error=None):
-    """A tiny status file the board polls while a background run is in flight."""
+def write_status(running, lines, summaries, error=None, started_at=None):
+    """A tiny status file the board polls while a background run is in flight.
+
+    `started_at` is the run stamp every row this run inserts carries as
+    `first_seen_at`, and it outlives the run on purpose: it is how the board
+    knows which rows the *last* fetch brought in, including across a restart of
+    the server, whose in-process copy of this dict starts empty. A finished run
+    also records when it finished, so "Last checked" survives the same restart.
+    """
     try:
         jobs_md.write_json_atomic(STATUS, {
             "running": running,
             "updated_at": datetime.now().isoformat(),
+            "started_at": started_at,
+            "finished_at": None if running else datetime.now().isoformat(),
             "log": lines[-40:],
             "sources": summaries,
             "error": error,
@@ -282,10 +291,14 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
     log = make_logger(lines)
     cfg = load_config()
     today = date.today().isoformat()
+    # One run, one stamp, shared by every source below: the board groups rows by
+    # it to show what this fetch - rather than this *day* - brought in, and two
+    # fetches in one afternoon are otherwise indistinguishable.
+    stamp = ats_fetch.run_stamp()
     summaries = []
 
     with RunLock(), activity_hook(emit):
-        write_status(True, lines, summaries)
+        write_status(True, lines, summaries, started_at=stamp)
         log("fetch start - sources: %s%s" % (", ".join(sources), " (dry run)" if dry_run else ""))
 
         # ---- collect (slow, network) ---------------------------------------
@@ -301,7 +314,7 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
                 dry_run=dry_run,
                 known_ids=ats_fetch.known_ids_from(load_seen()),
             )
-            write_status(True, lines, summaries)
+            write_status(True, lines, summaries, started_at=stamp)
 
         budget = _detail_budget(cfg, detail_budget)
         known_urls = set(load_seen())
@@ -313,7 +326,7 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
             found = collect(cfg, log)
             rows = _screened_rows(found, budget if name == "linkedin" else None, log, known_urls)
             plain.append((name, rows))
-            write_status(True, lines, summaries)
+            write_status(True, lines, summaries, started_at=stamp)
 
         if budget.deferred:
             log("  . %d LinkedIn postings stored without a description - the run's detail "
@@ -331,14 +344,15 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
             pending = []
             if "ats" in sources:
                 summaries.append(ats_fetch.summarize(
-                    ats_fetch.merge(seen, ats_rows, today, log, pending=pending),
+                    ats_fetch.merge(seen, ats_rows, today, log, pending=pending,
+                                    stamp=stamp),
                     ats_meta, len(ats_rows), log, dry_run))
             for name, rows in plain:
                 portal = name + "-search"
                 # Same conservative merge as the ATS source, so a job that an ATS
                 # board and LinkedIn both return in one click is one row, not two.
                 stats = ats_fetch.merge(seen, rows, today, log, portal=portal,
-                                        pending=pending)
+                                        pending=pending, stamp=stamp)
                 stats.pop("german_gated_by_company", None)
                 summary = {"source": portal, "found": len(rows),
                            "deferred_descriptions": budget.deferred if name == "linkedin" else 0}
@@ -357,7 +371,7 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
                 jobs_md.save_seen(seen)
                 log("done - %d jobs in the board" % len(seen))
 
-    write_status(False, lines, summaries)
+    write_status(False, lines, summaries, started_at=stamp)
     return summaries, lines
 
 

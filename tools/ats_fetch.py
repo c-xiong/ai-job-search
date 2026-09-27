@@ -68,9 +68,9 @@ APPENDABLE = ("sources", "also_seen", "possible_duplicate_of", "last_seen_at",
 # enrich_existing() now proves it on every call: it snapshots these before it
 # starts and refuses to return if any of them moved. A dozen dict lookups per
 # row is a cheap price for the only copy of every status and note you have set.
-PROTECTED = ("user_status", "user_note", "note", "first_seen", "url", "title",
-             "company", "posted", "rank_score", "rank_verdict", "rank_date",
-             "strengths", "gaps", "language_gate", "language_note")
+PROTECTED = ("user_status", "user_note", "note", "first_seen", "first_seen_at",
+             "url", "title", "company", "posted", "rank_score", "rank_verdict",
+             "rank_date", "strengths", "gaps", "language_gate", "language_note")
 
 
 class ProtectedFieldWritten(RuntimeError):
@@ -219,6 +219,18 @@ def find_duplicate(seen, row, aliases, portal, row_fingerprint=None):
     return best
 
 
+def run_stamp():
+    """One fetch run's identity, to the second.
+
+    Deliberately not a counter: a number would need a home of its own in a file
+    whose writer only persists `{"seen": ...}`, and would have to be allocated
+    under the board lock to stay unique. A timestamp is already unique per run -
+    `RunLock` makes two fetches in the same second impossible - and it sorts,
+    groups and prints without a lookup table behind it.
+    """
+    return datetime.now().isoformat(timespec="seconds")
+
+
 def source_record(row, today, portal=PORTAL):
     return {"portal": portal, "url": row["url"], "id": row.get("id", ""), "first_seen": today}
 
@@ -342,7 +354,7 @@ def enrich_existing(entry, row, key, today, portal, pending=None, ctx=None):
     return entry
 
 
-def merge(seen, rows, today, log, portal=PORTAL, pending=None):
+def merge(seen, rows, today, log, portal=PORTAL, pending=None, stamp=None):
     """Fold one source's results into the board. Append-only (§11.6).
 
     Portal-agnostic on purpose: LinkedIn and freehire rows go through the same
@@ -358,7 +370,16 @@ def merge(seen, rows, today, log, portal=PORTAL, pending=None):
     filesystem, because a `--dry-run` runs this function in full and only skips
     `save_seen()` - so the caller commits the bodies in the same branch that
     saves the state, or not at all.
+
+    `stamp` is the *run's* timestamp, written onto every row this merge inserts
+    as `first_seen_at`. It is what lets the board answer "which of these did the
+    last fetch bring in": `first_seen` is a date, and a day with two fetches in
+    it collapses into one indistinguishable block. One run means one stamp, so a
+    caller that merges several sources passes the same value to each call;
+    omitting it stamps this call's own clock, which is right for a lone merge
+    and wrong for a fan-out, hence the parameter.
     """
+    stamp = stamp or run_stamp()
     registry = load_registry()
     aliases = alias_map(registry)
     ctx = scoring_context(log)
@@ -420,6 +441,7 @@ def merge(seen, rows, today, log, portal=PORTAL, pending=None):
             "location": row.get("location") or "",
             "url": key,
             "first_seen": today,
+            "first_seen_at": stamp,
             "posted": row.get("posted") or "",
             "deadline": row.get("deadline"),
             "fit": "",

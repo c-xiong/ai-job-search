@@ -6,6 +6,7 @@
 <link rel="stylesheet" href="/static/app.css">
 </head><body>
 <div class="app" id="app">
+  <div class="banner stale" id="stale" hidden></div>
   <div class="banner" id="degraded" hidden></div>
   <header class="appbar">
     <button class="brand" data-nav="board" aria-label="JobFlow — back to the board">JobFlow</button>
@@ -23,29 +24,13 @@
 
   <main class="workspace" id="workspace">
     <aside class="rail left-rail" id="left-rail">
-      <button class="spine" data-collapse="left" aria-expanded="true"><span>Collect · Runs</span><b>›</b></button>
-      <section class="panel collect-panel" id="collect-panel">
-        <div class="panelhead"><span class="label">Collect</span><span class="spacer"></span><span id="collectlast" class="dim"></span></div>
-        <div class="collectbody">
-          <label class="source"><input type="checkbox" id="s-ats" checked> <span>ATS boards</span></label>
-          <label class="source"><input type="checkbox" id="s-freehire" checked> <span>freehire</span></label>
-          <label class="source"><input type="checkbox" id="s-linkedin" checked> <span>LinkedIn</span></label>
-          <div class="collectopts">
-            <label>companies / click <input type="number" id="mc" value="8" min="1" max="20"></label>
-            <label>new rows cap <input type="number" id="mn" value="40" min="1" max="200"></label>
-            <label>LinkedIn details <input type="number" id="md" value="15" min="0" max="20"></label>
-          </div>
-          <button class="primary" id="fetch">↻&nbsp; Fetch new jobs</button>
-        </div>
-        <div class="collectlog" id="collectlog"><span class="dim">No collection run in this session.</span></div>
-      </section>
-      <div class="splitter horizontal" id="left-row-split" role="separator" tabindex="0" aria-label="Resize Collect and Runs" aria-orientation="horizontal"></div>
+      <button class="spine" data-collapse="left" aria-expanded="true"><span>Runs</span><b>›</b></button>
       <section class="panel runs-panel" id="runs">
         <div class="panelhead"><span class="label">Runs</span><span id="runqueue" class="count"></span><span class="spacer"></span></div>
         <div id="runlist" class="runlist"><div class="panel-empty">No runs yet.</div></div>
       </section>
     </aside>
-    <div class="splitter vertical" id="left-split" role="separator" tabindex="0" aria-label="Resize Collect and Runs" aria-orientation="vertical"></div>
+    <div class="splitter vertical" id="left-split" role="separator" tabindex="0" aria-label="Resize Runs" aria-orientation="vertical"></div>
     <div class="centre" id="centre">
       <section class="panel board-panel" id="board-panel">
         <div class="panelhead">
@@ -54,11 +39,53 @@
           <button class="secondary" id="shortcut-toggle" aria-expanded="true" title="Show or hide keyboard shortcuts">Hide shortcuts</button>
           <button class="secondary expand" data-expand="board">↗ Expand</button>
         </div>
+        <div class="fetch-toolbar">
+          <button class="primary" id="fetch">Fetch new jobs</button>
+          <div class="fetch-feedback" role="status" aria-live="polite"><span id="collectlog">Ready to fetch</span><span id="collectlast" class="dim"></span></div>
+          <button class="linkish" id="show-new" hidden>Show them</button>
+          <details class="fetch-settings" id="fetch-settings">
+            <summary>Settings</summary>
+            <div class="fetch-settings-body">
+              <fieldset id="fetch-options"><legend>Job sources</legend>
+                <label class="source"><input type="checkbox" id="s-ats" checked> Target companies</label>
+                <label class="source"><input type="checkbox" id="s-freehire" checked> freehire</label>
+                <label class="source"><input type="checkbox" id="s-linkedin" checked> LinkedIn</label>
+                <p class="hint">Recent searches are reused for an hour. Each fetch checks the next batch of companies.</p>
+                <details class="fetch-advanced"><summary>Advanced</summary><div class="collectopts">
+                  <label>Companies per fetch <input type="number" id="mc" value="8" min="1" max="20"></label>
+                  <label>New company jobs per fetch <input type="number" id="mn" value="40" min="1" max="200"></label>
+                  <label>LinkedIn details per fetch <input type="number" id="md" value="15" min="0" max="20"></label>
+                  <p class="hint">A company’s job list is always finished, so its new-job limit may be exceeded. These limits keep each fetch manageable.</p>
+                  <button class="secondary" type="button" id="fetch-reset">Reset defaults</button>
+                </div></details>
+              </fieldset>
+            </div>
+          </details>
+        </div>
         <div class="chips" id="chips"></div>
+        <div class="filterbar" id="filterbar">
+          <div class="sourcechips" id="sourcechips"></div>
+          <span class="spacer"></span>
+          <label class="facet"><span>Fit</span><select id="f-fit" aria-label="Filter by fit band">
+            <option value="any">any</option><option value="high">high</option><option value="medium">medium</option>
+            <option value="low">low</option><option value="unranked">unranked</option>
+          </select></label>
+          <label class="facet"><span>Found</span><select id="f-found" aria-label="Filter by when the job was found">
+            <option value="any">any time</option><option value="latest">latest fetch</option><option value="1">today</option>
+            <option value="7">last 7 days</option><option value="30">last 30 days</option>
+          </select></label>
+          <label class="facet"><span>Sort</span><select id="f-sort" aria-label="Sort the list">
+            <option value="priority">priority</option><option value="found">newest found</option>
+            <option value="found-asc">oldest found</option><option value="posted">newest posted</option>
+            <option value="score">best score</option><option value="company">company A–Z</option>
+            <option value="role">role A–Z</option>
+          </select></label>
+          <button class="linkish" id="f-reset" hidden>Reset</button>
+        </div>
         <div class="tablewrap">
           <table class="jobtable"><thead><tr>
             <th class="fitcol">Fit</th><th>Role</th><th class="companycol">Company</th><th class="sourcecol">Source</th>
-            <th class="locationcol">Location</th><th class="postedcol">Posted</th><th class="statuscol">Status</th>
+            <th class="locationcol">Location</th><th class="postedcol">Posted</th><th class="foundcol">Found</th><th class="statuscol">Status</th>
             <th class="wide-only whycol">Why</th><th class="wide-only notescol">My notes</th>
           </tr></thead><tbody id="tb"></tbody></table>
           <div class="panel-empty" id="empty" hidden>Nothing here.</div>

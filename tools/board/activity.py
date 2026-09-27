@@ -17,6 +17,14 @@ Every event carries `(epoch, seq)`. `epoch` is minted at server start, `seq` is
 monotonic within it, so a browser that polled across a restart gets a `reset`
 rather than silently suppressing every event whose `seq` looks old.
 
+The ring is seeded from the log at startup. It used to begin empty, which meant
+a restarted board showed no history at all while the file beside it held all of
+it - two boards, side by side, disagreeing about what had happened. Seeded
+events keep their original `ts` and `epoch` (they really were emitted by an
+earlier process) but are renumbered into this epoch's `seq` space, because
+`since()` filters on `seq` alone and a stale counter there would drop live
+events.
+
 Stdlib only, Python 3.9+.
 """
 
@@ -41,6 +49,10 @@ RING = 500
 # An event whose message is longer than this is truncated rather than allowed to
 # push a multi-megabyte line into the log - a LaTeX error can be very long.
 MAX_MSG = 2000
+
+# How much of the tail of the log to read at startup. Comfortably more than
+# RING lines of ordinary events, and small enough to be free.
+TAIL_BYTES = 512 * 1024
 
 SOURCES = ("collect", "board", "claude", "latex", "verify", "registry", "server")
 LEVELS = ("info", "warn", "error")
@@ -92,6 +104,39 @@ def emit(source, msg, level="info", cmd=None, exit_code=None, ms=None,
         # the disk does not. A logger that raises is worse than a lossy one.
         pass
     return event
+
+
+def seed(limit=RING):
+    """Fill the ring from the tail of `activity.jsonl`. Never raises."""
+    global _seq
+    try:
+        size = LOG.stat().st_size
+        with open(LOG, "rb") as handle:
+            # A board that has been busy for months has a log far larger than
+            # the ring; reading the whole file to keep 500 lines of it is the
+            # kind of startup cost nobody notices until it is seconds long.
+            handle.seek(max(0, size - TAIL_BYTES))
+            raw = handle.read().decode("utf-8", "replace")
+    except OSError:
+        return 0
+    events = []
+    for line in raw.splitlines()[-(limit * 2):]:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue    # a truncated first line, or a torn write
+        if isinstance(event, dict) and "msg" in event:
+            events.append(event)
+    events = events[-limit:]
+    with _lock:
+        if _events:
+            return 0    # already seeded, or events have been emitted since
+        for event in events:
+            _seq += 1
+            event["seq"] = _seq
+            event["prior"] = True
+            _events.append(event)
+        return len(events)
 
 
 def since(seq=0, epoch=None):

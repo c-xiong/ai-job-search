@@ -104,6 +104,36 @@ class CompaniesTest(unittest.TestCase):
             companies.add({"mtime": companies.listing()["mtime"], "name": "Nope",
                            "careers_url": "https://nope.test/careers", "countries": ["AT"]})
 
+    def test_url_only_add_uses_board_name(self):
+        result = companies.add({"mtime": companies.listing()["mtime"],
+                                "careers_url": "https://jobs.ashbyhq.com/example"})
+        self.assertEqual(result["companies"][-1]["name"], "example")
+
+    def test_pause_resume_preserves_unconfirmed_identity(self):
+        before = companies.listing()["companies"][0]
+        paused = companies.manage("acme", {"mtime": companies.listing()["mtime"], "action": "pause"})
+        self.assertEqual(paused["companies"][0]["monitoring_status"], "paused")
+        resumed = companies.manage("acme", {"mtime": paused["mtime"], "action": "resume"})
+        self.assertEqual(resumed["companies"][0]["status"], "ambiguous")
+        self.assertEqual(resumed["companies"][0]["candidates"], before["candidates"])
+
+    def test_remove_rejects_stale_write_and_keeps_backup(self):
+        with self.assertRaises(companies.CompanyError):
+            companies.manage("acme", {"mtime": "stale", "action": "remove"})
+        result = companies.manage("acme", {"mtime": companies.listing()["mtime"], "action": "remove"})
+        self.assertEqual(result["companies"], [])
+        self.assertEqual(json.loads(self.registry.with_name("companies.backup.json").read_text())["companies"][0]["name"], "Acme")
+
+    def test_edit_paused_source_keeps_pause_and_restores_new_identity(self):
+        paused = companies.manage("acme", {"mtime": companies.listing()["mtime"], "action": "pause"})
+        edited = companies.patch_company("acme", {"mtime": paused["mtime"], "inspect": True,
+            "changes": {"careers_url": "https://jobs.ashbyhq.com/newco", "countries": []}})
+        self.assertEqual(edited["companies"][0]["status"], "paused")
+        self.assertNotIn("countries", edited["companies"][0])
+        resumed = companies.manage("acme", {"mtime": edited["mtime"], "action": "resume"})
+        self.assertTrue(resumed["companies"][0]["will_be_searched"])
+        self.assertEqual(resumed["companies"][0]["token"], "newco")
+
     def test_changing_careers_url_clears_old_identity_and_fetch_bookkeeping(self):
         data = json.loads(self.registry.read_text(encoding="utf-8"))
         row = data["companies"][0]
@@ -238,7 +268,15 @@ class CompaniesHttpTest(CompaniesTest):
             return exc.code, json.loads(exc.read())
 
     def test_all_company_routes_require_the_token(self):
+        self.assertEqual(self.request("POST", "/api/companies/acme/manage",
+                                      {"mtime": "x", "action": "remove"}, token=None)[0], 403)
         self.assertEqual(self.request("GET", "/api/companies", token=None)[0], 403)
+
+    def test_follow_controls_http_endpoint(self):
+        status, body = self.request("POST", "/api/companies/acme/manage",
+                                    {"mtime": companies.listing()["mtime"], "action": "pause"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["companies"][0]["status"], "paused")
         self.assertEqual(self.request("PATCH", "/api/companies/acme",
                                       {"mtime": "x", "changes": {"countries": ["CH"]}},
                                       token=None)[0], 403)

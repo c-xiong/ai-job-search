@@ -163,12 +163,12 @@ def _monitoring_fields(row, defaults):
     status = row.get("status", "unresolved")
     vendor = row.get("vendor")
     token = row.get("token")
-    if route != "ats":
-        monitoring_status = "other_route"
-        reason = "route is %s, not ats" % route
-    elif status == "paused":
+    if status == "paused":
         monitoring_status = "paused"
         reason = "status is paused"
+    elif route != "ats":
+        monitoring_status = "other_route"
+        reason = "route is %s, not ats" % route
     elif status == "ambiguous":
         monitoring_status = "needs_confirmation"
         reason = "status is ambiguous; a candidate board needs human confirmation"
@@ -233,7 +233,8 @@ def _public(data):
         routes[row.get("route", "ats")] = routes.get(row.get("route", "ats"), 0) + 1
         monitoring_counts[row["monitoring_status"]] = monitoring_counts.get(row["monitoring_status"], 0) + 1
         fetch_counts[row["fetch_status"]] = fetch_counts.get(row["fetch_status"], 0) + 1
-    return {"schema_version": 2, "companies": companies, "defaults": defaults,
+    return {"schema_version": 2, "company_controls": True,
+            "companies": companies, "defaults": defaults,
             "mtime": _mtime(), "counts": counts, "routes": routes,
             "monitoring_counts": monitoring_counts, "fetch_counts": fetch_counts,
             "will_be_searched_count": sum(1 for row in companies if row["will_be_searched"]),
@@ -255,12 +256,14 @@ def _fresh(expected):
 
 
 def add(payload):
+    careers_url = _careers_url(payload.get("careers_url") or payload.get("website"))
+    direct_ats = _ats_identity(careers_url)
     name = str(payload.get("name") or "").strip()
     if not name:
-        raise CompanyError("name is required")
-    careers_url = _careers_url(payload.get("careers_url") or payload.get("website"))
+        name = direct_ats[1] if direct_ats else _domain(careers_url)
+    if not slug(name):
+        raise CompanyError("Please enter a company name containing letters or numbers.")
     countries = _countries(payload.get("countries") or ["CH", "DE"])
-    direct_ats = _ats_identity(careers_url)
     domain = None if direct_ats else _domain(careers_url)
     with company_lock():
         data = _load()
@@ -298,7 +301,7 @@ def patch_company(company_slug, payload):
     changes = payload.get("changes")
     if not isinstance(changes, dict) or not changes or set(changes) - EDITABLE:
         raise CompanyError("changes contain fields the UI does not own")
-    if "countries" in changes:
+    if "countries" in changes and changes["countries"] != []:
         changes["countries"] = _countries(changes["countries"])
     if "careers_url" in changes:
         changes["careers_url"] = _careers_url(changes["careers_url"])
@@ -309,8 +312,21 @@ def patch_company(company_slug, payload):
         if row is None:
             raise CompanyError("unknown company", 404)
         source_changed = "careers_url" in changes and changes["careers_url"] != row.get("careers_url")
+        paused = row.get("status") == "paused"
+        if "name" in changes:
+            name = str(changes["name"]).strip()
+            if not slug(name):
+                raise CompanyError("Please enter a company name containing letters or numbers.")
+            if any(other is not row and slug(name) in
+                   {slug(value) for value in [other.get("name")] + list(other.get("aliases") or [])}
+                   for other in data["companies"]):
+                raise CompanyError("A company with this name already exists.", 409)
+            changes["name"] = name
         row.update(changes)
+        if changes.get("countries") == []:
+            row.pop("countries", None)
         if source_changed:
+            row["route"] = "ats"
             direct_ats = _ats_identity(row["careers_url"])
             for key in ("vendor", "token", "identity", "candidates", "last_attempt_at",
                         "last_success_at", "last_status"):
@@ -335,10 +351,37 @@ def patch_company(company_slug, payload):
                 needs_inspection = True
         elif inspect and row.get("status") not in ("verified", "paused"):
             needs_inspection = True
+        if paused:
+            if source_changed:
+                row["status_before_pause"] = row["status"]
+            row["status"] = "paused"
+            needs_inspection = False
         _write(data)
     activity.emit("registry", "updated %s" % row["name"])
     if inspect and needs_inspection:
         return resolve(slug(row["name"]), {"mtime": _mtime()})
+    return listing()
+
+
+def manage(company_slug, payload):
+    """User-owned follow controls; keep discovery evidence when pausing."""
+    action = payload.get("action")
+    if action not in ("pause", "resume", "remove"):
+        raise CompanyError("Unknown company action.")
+    with company_lock():
+        data = _load(); _fresh(payload.get("mtime")); row = _find(data, company_slug)
+        if row is None:
+            raise CompanyError("unknown company", 404)
+        name = row["name"]
+        if action == "remove":
+            data["companies"].remove(row)
+        elif action == "pause" and row.get("status") != "paused":
+            row["status_before_pause"] = row.get("status", "unresolved")
+            row["status"] = "paused"
+        elif action == "resume" and row.get("status") == "paused":
+            row["status"] = row.pop("status_before_pause", "unresolved")
+        _write(data)
+    activity.emit("registry", "%s: %s" % (name, action))
     return listing()
 
 

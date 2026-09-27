@@ -14,8 +14,10 @@ let REVISE_RUN=null;
 // was actually open - the companies view lasted until the next 3-second poll.
 let VIEW=null;
 let COMPANIES=null,COMPANY_FILTER="all",COMPANY_SELECTED=null;
-let COMPANY_HEALTH_RUNNING=false,COMPANY_HEALTH_RESULT=null,COMPANY_TEST_RESULTS={},COMPANY_SOURCE_RESULTS={};
+let COMPANY_BUSY=null,COMPANY_ERROR="",COMPANY_QUERY="",COMPANY_ADD_DRAFT={name:"",url:""};
 let EV=[],EPOCH=null,SEQ=0,actFilter="all",COUNTS={};
+let RUN_FOLLOW=true;
+const RUN_LOG_SCROLL=new Map();
 const HISTORY=[];
 let toastTimer=null,undoTimer=null,POLL=null;
 let MODAL_RESOLVE=null;
@@ -44,6 +46,23 @@ function cycleTheme(){
 }
 applyTheme();media.addEventListener("change",()=>{if(themeMode==="system")applyTheme()});
 
+// A dead token is not an empty board. Every API answer carries a body, and a
+// 403's body - {"error":"forbidden"} - is valid JSON, so the poll sites used to
+// parse it, find no `runs`/`events` key, and render the fallback: a board with
+// nothing on it, and no error anywhere on screen. The token now outlives a
+// restart (server.py load_token), so this should be rare - but when a link
+// really is stale the page says so instead of showing you a past that is not
+// there.
+let STALE=false;
+function checkAuth(response){
+  const stale=response.status===403;
+  if(stale!==STALE){
+    STALE=stale;const banner=el("stale");banner.hidden=!stale;
+    banner.textContent=stale?"This tab's link is not valid for the board that is running \u2014 nothing below is live. Open the URL printed in your terminal.":"";
+  }
+  return !stale;
+}
+
 function toast(msg,opts={}){
   const box=el("toast"),btn=el("toastundo");el("toastmsg").textContent=msg;
   clearTimeout(toastTimer);clearInterval(undoTimer);box.classList.toggle("warn",!!opts.warn);box.classList.add("on");
@@ -54,13 +73,133 @@ function toast(msg,opts={}){
 }
 
 const buildFilters=()=>[["active","active"],...STATUSES.map(s=>[s,s]),["all","all"]];
-function match(j){
-  const inFilter=filter==="all"||filter==="active"&&ACTIVE.includes(j.status)||j.status===filter;
-  if(!inFilter)return false;if(!q)return true;
+
+// ---------------------------------------------------------------- facets
+//
+// The status chip answers "where is this in my pipeline". These answer the
+// three other questions the list could not be asked before: where did it come
+// from, how well does it score, and *when did it reach me*. They are separate
+// predicates rather than one growing `match()` so the source chips can count
+// what turning one back on would bring in - a count computed with every facet
+// applied except the one being counted.
+//
+// They live in localStorage, not in the URL. §0.5 gives the fragment one job,
+// naming the view you are on; "never show me freehire" is a standing
+// preference and belongs with the other ones. The status chip deliberately
+// does not persist: it is a triage move you make and unmake within a sitting,
+// and coming back tomorrow to a board silently stuck on `no` would be a bug
+// with a plausible-looking cause.
+const BOARD_KEY="jobflow.board.v1";
+const FACET_DEFAULTS={version:1,hidden:[],fit:"any",found:"any",sort:"priority"};
+const SORT_KEYS=["priority","found","found-asc","posted","score","company","role"];
+const FIT_VALUES=["any","high","medium","low","unranked"];
+const FOUND_VALUES=["any","latest","1","7","30"];
+function loadFacets(){
+  try{
+    const value=JSON.parse(localStorage.getItem(BOARD_KEY));
+    if(value?.version===1)return {
+      version:1,
+      hidden:Array.isArray(value.hidden)?value.hidden.filter(v=>typeof v==="string"):[],
+      fit:FIT_VALUES.includes(value.fit)?value.fit:"any",
+      found:FOUND_VALUES.includes(value.found)?value.found:"any",
+      sort:SORT_KEYS.includes(value.sort)?value.sort:"priority",
+    };
+    localStorage.removeItem(BOARD_KEY);
+  }catch(_){try{localStorage.removeItem(BOARD_KEY)}catch(__){}}
+  return {...FACET_DEFAULTS,hidden:[]};
+}
+let facets=loadFacets();
+function saveFacets(){try{localStorage.setItem(BOARD_KEY,JSON.stringify(facets))}catch(_){}}
+const facetsAreDefault=()=>!facets.hidden.length&&facets.fit==="any"&&facets.found==="any"&&facets.sort==="priority";
+function resetFacets(){facets={...FACET_DEFAULTS,hidden:[]};saveFacets()}
+
+// The run stamp of the most recent fetch, read from /api/fetch/status. It is
+// what "latest fetch" means, and it comes from the fetch rather than from the
+// rows on purpose: a run that found nothing new must mark nothing, where
+// "whatever arrived most recently" would have gone on pointing at the run
+// before it and quietly called week-old rows new.
+let LAST_FETCH=null;
+const foundAt=j=>j.first_seen_at||j.first_seen||"";
+
+// …but only a fetch that ran since arrival stamping existed leaves a stamp
+// behind, and a board full of rows from before it would otherwise answer "what
+// did the last fetch bring in" with an empty table - which is what it did, on a
+// board holding 98 rows collected that morning.
+//
+// So when no stamp is recorded, fall back to the newest arrival the board
+// actually holds. It is the weaker claim the paragraph above rejects - it
+// cannot tell "this run added nothing" from "this run added these" - so it is
+// only ever the fallback, and `batchIsExact()` is what the control reads to
+// name itself honestly rather than the board quietly meaning something else.
+function latestBatch(){
+  if(LAST_FETCH)return LAST_FETCH;
+  let newest="";
+  for(const job of JOBS){const at=foundAt(job);if(at>newest)newest=at}
+  return newest;
+}
+const batchIsExact=()=>!!LAST_FETCH;
+function isNewArrival(j){
+  const batch=latestBatch();
+  return !!batch&&!!foundAt(j)&&foundAt(j)>=batch;
+}
+const sourceKey=j=>j.primary_source||j.portal||"";
+// Local midnight `days-1` days back, formatted by hand: toISOString() would
+// convert local midnight to the previous day everywhere east of UTC.
+function dayFloor(days){
+  const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-(days-1));
+  const pad=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+const inStatus=j=>filter==="all"||filter==="active"&&ACTIVE.includes(j.status)||j.status===filter;
+function inQuery(j){
+  if(!q)return true;
   const hay=[j.title,j.company,j.location,j.why,j.note].join(" ").toLowerCase();
   return q.toLowerCase().split(/\s+/).every(word=>hay.includes(word));
 }
-const shown=()=>JOBS.filter(match);
+const inSource=j=>!facets.hidden.includes(sourceKey(j));
+const inFit=j=>facets.fit==="any"||(facets.fit==="unranked"?!j.fit:j.fit===facets.fit);
+function inFound(j){
+  if(facets.found==="any")return true;
+  if(facets.found==="latest")return isNewArrival(j);
+  // A date is a prefix of the timestamp that replaced it, so one string
+  // comparison covers both the stamped rows and the older date-only ones.
+  return foundAt(j)>=dayFloor(+facets.found);
+}
+function match(j){return inStatus(j)&&inQuery(j)&&inSource(j)&&inFit(j)&&inFound(j)}
+
+// Sorting is a client-side reorder of the payload, never a second opinion
+// about it: `priority` is the absence of a sorter, so the default order stays
+// the one `state._sorted()` and the markdown export agree on. Every other key
+// sorts a copy, and because Array#sort is stable, rows that tie fall back to
+// that same server order rather than to an arbitrary one.
+const byName=(a,b)=>String(a||"").localeCompare(String(b||""),undefined,{sensitivity:"base"});
+// Not every `posted` is a date. LinkedIn hands back "6 days ago" and "Reposted
+// 2 weeks ago" for a fair share of rows, which string-sort among the dates as
+// nonsense - so an unparseable one is *unknown*, and unknown sinks rather than
+// pretending to a position. `first_seen` is always a real date, which is half
+// of why arrival is the more honest column to sort on.
+const isoDate=value=>/^\d{4}-\d{2}-\d{2}/.test(String(value||""))?String(value):"";
+const undated=(x,y)=>x===y?0:!x?1:!y?-1:null;   // unknown sinks, either way round
+const newestFirst=(a,b)=>{
+  const x=isoDate(a),y=isoDate(b),sunk=undated(x,y);
+  return sunk===null?(x<y?1:-1):sunk;
+};
+const oldestFirst=(a,b)=>{
+  const x=isoDate(a),y=isoDate(b),sunk=undated(x,y);
+  return sunk===null?(x<y?-1:1):sunk;
+};
+const SORTERS={
+  found:(a,b)=>newestFirst(foundAt(a),foundAt(b)),
+  "found-asc":(a,b)=>oldestFirst(foundAt(a),foundAt(b)),
+  posted:(a,b)=>newestFirst(a.posted,b.posted),
+  score:(a,b)=>(b.score||0)-(a.score||0),
+  company:(a,b)=>byName(a.company,b.company),
+  role:(a,b)=>byName(a.title,b.title),
+};
+function shown(){
+  const rows=JOBS.filter(match),sorter=SORTERS[facets.sort];
+  return sorter?rows.sort(sorter):rows;
+}
 const selectedJob=()=>shown()[sel]||null;
 const baseOptions=(selected="auto",recommended="")=>[
   ["auto",`Auto${recommended?" (recommended: "+recommended.toUpperCase()+")":""}`],
@@ -68,11 +207,9 @@ const baseOptions=(selected="auto",recommended="")=>[
 ].map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
 // Not every posting deserves both documents: a speculative application may want
 // the letter alone, and a portal that only takes a CV has nowhere to put one.
-// The choice is made before the run and can still be changed on the approval
-// card, which is the first moment the fit evaluation is in front of you.
+// The fit evaluation is the first honest moment to make that choice, so it lives
+// only on the approval card instead of being asked once before and once after.
 const SCOPES=[["both","CV + cover letter"],["cv","CV only"],["cover","Cover letter only"]];
-const SCOPE_TITLE=Object.fromEntries(SCOPES);
-const TAILOR_LABEL={both:"Tailor CV + cover letter",cv:"Tailor CV only",cover:"Tailor cover letter only"};
 const DRAFT_LABEL={both:"Draft CV + cover letter",cv:"Draft CV",cover:"Draft cover letter"};
 const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and audits every factual claim."],
   cv:["Draft CV","Tailors the CV and audits every factual claim."],
@@ -80,9 +217,6 @@ const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and au
 const DOC_TITLE={cv:"CV",cover:"cover letter"};
 const docKinds=scope=>(scope||"both")==="both"?["cv","cover"]:[scope];
 const scopeOptions=(selected="both")=>SCOPES.map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
-// render() rebuilds the panel these two pickers live in on every run poll, so
-// the choice is held here rather than in DOM that is about to be replaced.
-const START={base:"auto",scope:"both"};
 const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","ats-search":"Company ATS","company-careers":"Company careers","freehire-search":"freehire"};
 const sourceLabel=value=>SOURCE_LABELS[value]||String(value||"Other website").replace(/-search$/,"").replaceAll("-"," ");
 const sourceTitle=job=>[...new Set([job.primary_source,...(job.sources||[])].filter(Boolean))].map(sourceLabel).join(" · ");
@@ -92,17 +226,72 @@ function renderChips(){
   STATUSES.forEach(s=>counts[s]=JOBS.filter(j=>j.status===s).length);
   el("chips").innerHTML=FILTERS.map(([key,label])=>`<button class="chip ${key===filter?"on":""}" data-filter="${esc(key)}">${esc(label)}<span class="n">${counts[key]||0}</span></button>`).join("");
 }
+
+// One chip per source the board actually holds - not per source the fetcher
+// can run, because a portal you stopped fetching from still owns rows you can
+// see. Each count is what that chip would add back, so it is taken with every
+// facet applied *except* this one: a chip reading 0 because the fit filter
+// excludes its rows is telling you the truth about clicking it.
+function renderSourceChips(){
+  const pool=JOBS.filter(j=>inStatus(j)&&inQuery(j)&&inFit(j)&&inFound(j));
+  const counts=new Map();
+  for(const j of JOBS)if(!counts.has(sourceKey(j)))counts.set(sourceKey(j),0);
+  for(const j of pool)counts.set(sourceKey(j),(counts.get(sourceKey(j))||0)+1);
+  const chips=[...counts.keys()].sort((a,b)=>byName(sourceLabel(a),sourceLabel(b)));
+  el("sourcechips").innerHTML=chips.map(key=>{
+    const on=!facets.hidden.includes(key);
+    return `<button class="chip source-chip ${on?"on":""}" data-source="${esc(key)}" aria-pressed="${on}"
+      title="${esc(sourceLabel(key))} — click to ${on?"hide":"show"}, alt-click to show only this source">${esc(sourceLabel(key))}<span class="n">${counts.get(key)}</span></button>`;
+  }).join("");
+  el("f-fit").value=facets.fit;el("f-found").value=facets.found;el("f-sort").value=facets.sort;
+  // The option names what it can actually deliver. Without a run stamp the best
+  // the board can do is the newest arrival date it holds, which on a board
+  // fetched twice in one day is a day, not a run.
+  const exact=batchIsExact(),option=el("f-found").options[1];
+  option.textContent=exact?"latest fetch":"newest batch";
+  option.title=exact?"The rows the last fetch inserted."
+    :"No fetch has recorded its own timestamp yet, so this is everything that arrived on the most recent day the board saw new rows. The next fetch will be exact.";
+  el("f-reset").hidden=facetsAreDefault();
+}
 function render(){
-  renderChips();const rows=shown();if(sel>=rows.length)sel=Math.max(0,rows.length-1);
-  el("tb").innerHTML=rows.map((j,i)=>`<tr class="${i===sel?"sel":""}" data-row="${i}">
+  renderChips();renderSourceChips();
+  const rows=shown();if(sel>=rows.length)sel=Math.max(0,rows.length-1);
+  el("tb").innerHTML=rows.map((j,i)=>`<tr class="${i===sel?"sel":""}${isNewArrival(j)?" fresh":""}" data-row="${i}">
     <td><span class="fitword ${esc(j.fit)}">${esc(j.fit||"—")}</span></td>
     <td class="role" title="${esc(j.title)}">${esc(j.title)}</td><td class="co">${esc(j.company)}</td><td class="co sourcecell" title="${esc(sourceTitle(j))}">${esc(sourceLabel(j.primary_source||j.portal))}</td>
-    <td class="co">${esc(j.location)}</td><td class="co">${esc(j.posted).slice(5)}</td>
+    <td class="co">${esc(j.location)}</td><td class="co" title="${esc(j.posted)}">${esc(postedLabel(j))}</td>
+    <td class="co foundcell" title="${esc(foundTitle(j))}">${isNewArrival(j)?'<span class="newdot" aria-label="new in the latest fetch"></span>':""}${esc(foundAt(j).slice(5,10))}</td>
     <td><select data-url="${esc(j.url)}">${STATUSES.map(s=>`<option value="${esc(s)}" ${s===j.status?"selected":""}>${esc(s)}</option>`).join("")}</select></td>
     <td class="wide-only why" title="${esc(j.why)}">${esc(j.why)}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td>
     <td class="wide-only note" data-note="${esc(j.url)}">${esc(j.note)}</td></tr>`).join("");
-  el("empty").hidden=rows.length>0;el("count").textContent=`${rows.length} shown · ${JOBS.length} total`;
+  const fresh=JOBS.filter(isNewArrival).length;
+  el("empty").hidden=rows.length>0;
+  el("empty").textContent=rows.length||facetsAreDefault()?"Nothing here."
+    :"No job matches these filters. Reset them to see the rest of the board.";
+  el("count").textContent=`${rows.length} shown · ${JOBS.length} total${fresh?` · ${fresh} new`:""}`;
   renderJob();document.querySelector("tr.sel")?.scrollIntoView({block:"nearest"});
+}
+// "Found" is when the row reached the board, which is not when it was posted:
+// a job posted in June can arrive today because a company was added to the
+// registry today. The cell prints a bare MM-DD like the Posted column beside
+// it; the full stamp, and what it means, are in the tooltip.
+// MM-DD for a date. For the rows where LinkedIn gives an interval instead, the
+// same interval abbreviated - "Reposted 2 weeks ago" becomes "2 w" - so a 58px
+// column shows the whole fact rather than a truncated "Repo…". Nothing is
+// converted into a date here: the collector did not know one, and inventing it
+// from the day the page happens to be open would be a guess printed as data.
+const AGE_UNITS={hour:"h",day:"d",week:"w",month:"mo",year:"y"};
+function postedLabel(j){
+  const raw=String(j.posted||"");
+  if(isoDate(raw))return raw.slice(5,10);
+  const age=raw.match(/(\d+)\s*(hour|day|week|month|year)/i);
+  return age?age[1]+" "+AGE_UNITS[age[2].toLowerCase()]:raw;
+}
+function foundTitle(j){
+  const at=foundAt(j);
+  if(!at)return "Not recorded - this row predates arrival stamping.";
+  return (isNewArrival(j)?"Arrived in the latest fetch, ":"Arrived ")
+    +at.replace("T"," ")+(j.posted&&j.posted!==j.first_seen?" · posted "+j.posted:"");
 }
 // Which number the row is actually sorted on. Calling a rank score a "prefit"
 // was wrong in both directions: it understated an LLM judgement and overstated
@@ -173,9 +362,8 @@ function renderJob(){
     <div class="posting"><span class="label">Posting</span><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
     <div class="jobactions"><div class="statusbuttons">${statusButtons}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
-      <label class="base-picker"><span>Documents</span><select data-scope-start>${scopeOptions(START.scope)}</select></label><label class="base-picker"><span>CV base</span><select data-base-start>${baseOptions(START.base)}</select></label>
-      <button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; ${esc(TAILOR_LABEL[START.scope])}</button>
-      <div class="hint">runs /apply in the background · you stay on the board</div></div>`;
+      <button class="primary tailor" data-tailor="${esc(j.url)}">Evaluate fit</button>
+      <div class="hint">opens the run · you choose documents after the fit evaluation</div></div>`;
   loadPosting(j);
 }
 
@@ -253,23 +441,45 @@ function renderRuns(){
   if(VIEW==="tailor"&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
 }
 async function pollRuns(){
-  let data;try{data=await(await fetch("/api/runs?t="+T)).json()}catch(_){return}
+  let data;try{const response=await fetch("/api/runs?t="+T);if(!checkAuth(response)||!response.ok)return;data=await response.json()}catch(_){return}
   const before=JSON.stringify(RUNS.map(r=>[r.id,r.phase]));RUNS=data.runs||[];QUEUE=data.queue||[];LEDGER=data.ledger;BUDGET=data.budget_usd;renderRuns();
   if(JSON.stringify(RUNS.map(r=>[r.id,r.phase]))!==before)render();
   const busy=activeRuns().length>0;if(busy&&!RUNPOLL)RUNPOLL=setInterval(pollRuns,2000);if(!busy&&RUNPOLL){clearInterval(RUNPOLL);RUNPOLL=null}
 }
+// Returns the response body with `ok` on it. The body is worth keeping: a
+// started run answers with its `run_id`, and so does the 409 that says one is
+// already in flight for this posting - which is the id you want to be taken to
+// rather than told about.
 async function postRun(path,body){
   const response=await fetch(path+"?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  checkAuth(response);
   let data={};try{data=await response.json()}catch(_){}
   if(!response.ok)toast(data.error||("request failed ("+response.status+")"),{warn:true,ms:6000});
-  await pollRuns();pollActivity();return response.ok;
+  await pollRuns();pollActivity();return {...data,ok:response.ok};
 }
+// Starting an evaluation opens the run it started.
+//
+// It used to stay on the board and say so in a toast, which was the wrong
+// answer twice: the toast is fixed to the bottom-right corner, which is exactly
+// where the right rail keeps this button, so the confirmation landed on top of
+// the control that had just been pressed - and what it said ("evaluating - you
+// will choose documents before drafting") described a screen you were not being
+// shown. The run's own view carries the same information as six named steps,
+// and `Esc` comes back.
 async function startTailor(url){
   const j=JOBS.find(x=>x.url===url);if(!j)return;
-  const base_cv=START.base,scope=START.scope;
-  const note=await openTextModal({eyebrow:"Tailor application · "+SCOPE_TITLE[scope],title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Start tailoring"});
+  const note=await openTextModal({eyebrow:"Evaluate application",title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Start fit evaluation"});
   if(note===null)return;
-  postRun("/api/runs",{job_url:url,kind:"apply",note,base_cv,scope}).then(ok=>ok&&toast("evaluating — you will be asked before it drafts",{ms:3000}));
+  const started=await postRun("/api/runs",{job_url:url,kind:"apply",note});
+  // `run_id` on a refusal means this posting already has a run: `postRun` has
+  // said so, and the honest next move is to show it rather than leave you to
+  // find it in the rail.
+  const run=started.run_id&&RUNS.find(r=>r.id===started.run_id);
+  if(run){renderTailor(run);return}
+  // The run list is refreshed inside postRun and the supervisor records the run
+  // before it answers, so this is the blipped-poll case rather than a real one.
+  // Say something anyway: a press that neither moves nor speaks reads as broken.
+  if(started.ok)toast("evaluation queued — open it from Runs",{ms:3000});
 }
 
 // A run's identity belongs in the document it is about, not squeezed into the
@@ -284,21 +494,30 @@ const STEPS=[
   ["Verify","ATS text extraction and the final verification checklist."]
 ];
 function renderTailor(run){
-  if(!run){restoreWorkspace();return}ACTIVE_RUN=run.id;const current=PHASE_STEP[run.phase]||1,fit=run.fit||{};
+  if(!run){restoreWorkspace();return}
+  const previousLog=el("runlog");if(previousLog&&ACTIVE_RUN)RUN_LOG_SCROLL.set(ACTIVE_RUN,previousLog.scrollTop);
+  ACTIVE_RUN=run.id;const current=PHASE_STEP[run.phase]||1,fit=run.fit||{};
   const lineage=RUNS.filter(r=>(r.application_id||r.id)===(run.application_id||run.id)).sort((a,b)=>(a.attempt||1)-(b.attempt||1));
   const kinds=docKinds(run.scope);
-  const steps=STEPS.map((s,i)=>{const n=i+1,state=n<current||run.phase==="done"?"done":n===current?"live":"todo",step=i===1?DRAFT_STEP[run.scope||"both"]:s;return `<div class="step ${state}"><div class="steprow"><span class="stepdot">${n}</span><div><div class="steptitle">${step[0]}</div><div class="stepdetail">${step[1]}</div></div><span class="steptime">${state==="live"?esc(run.phase.replaceAll("_"," ")):""}</span></div></div>`}).join("");
+  // `approved_at` is authoritative for current records. The phase fallback
+  // keeps completed records from older registries readable after an upgrade.
+  const documentsChosen=run.kind!=="apply"||!!run.approved_at||
+    ["drafting","reviewing","compiling","inspecting","done"].includes(run.phase);
+  const pendingDraft=["Choose & draft documents","After fit review, choose CV, cover letter, or both."];
+  const steps=STEPS.map((s,i)=>{const n=i+1,state=n<current||run.phase==="done"?"done":n===current?"live":"todo",step=i===1?(documentsChosen?DRAFT_STEP[run.scope||"both"]:pendingDraft):s;return `<div class="step ${state}"><div class="steprow"><span class="stepdot">${n}</span><div><div class="steptitle">${step[0]}</div><div class="stepdetail">${step[1]}</div></div><span class="steptime">${state==="live"?esc(run.phase.replaceAll("_"," ")):""}</span></div></div>`}).join("");
   const matches=(fit.matches||[]).map(x=>`<div>${esc(x)}</div>`).join("")||"<div>No structured match list yet.</div>";
   const gaps=(fit.gaps||[]).map(x=>`<div>${esc(x)}</div>`).join("")||"<div>No structured gap list yet.</div>";
   const logs=EV.filter(e=>e.run_id===run.id&&(e.source==="claude"||e.source==="latex"||e.source==="verify")).slice(-100).map(e=>`<div><span>${esc((e.ts||"").slice(11,19))}</span>&nbsp; ${esc(e.cmd?"$ "+e.cmd:e.msg)}</div>`).join("")||"<div>No run-specific activity recorded yet.</div>";
   const failureTitle=run.failure_code==="provider_rate_limit"?"Claude session limit reached":run.failure_code==="budget_cap"?"Local run budget exhausted":"Run failed";
   const failure=run.phase==="failed"?`<div class="failure-card"><strong>${failureTitle}</strong><div>${esc(run.error||"No error detail was recorded.")}</div><div class="dim">Failed during ${esc((run.failed_phase||"unknown").replaceAll("_"," "))}${run.model_started===false?" · no model work started":""}${Number(run.cost?.total_usd||0)===0?" · no model cost incurred":""}</div></div>`:"";
-  el("tailor-view").innerHTML=`<div class="tailor-shell"><section class="pipeline"><div class="panelhead"><span class="label">Pipeline</span><span class="spacer"></span><span class="dim">step ${current} of 6</span></div>${steps}<div class="writing"><div class="label">Writing to</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}</div></section>
-    <section class="runoutput"><div class="panelhead"><span class="label">Run output${lineage.length>1?` · attempt ${esc(run.attempt||1)} of ${lineage.length}`:""}</span><span class="spacer"></span><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
+  el("tailor-view").innerHTML=`<div class="tailor-shell"><section class="pipeline"><div class="panelhead"><span class="label">Pipeline</span><span class="spacer"></span><span class="dim">step ${current} of 6</span></div>${steps}<div class="writing"><div class="label">${documentsChosen?"Writing to":"Documents"}</div>${documentsChosen?kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join(""):"<div>Choose after fit evaluation.</div>"}</div></section>
+    <section class="runoutput"><div class="panelhead"><span class="label">Run output${lineage.length>1?` · attempt ${esc(run.attempt||1)} of ${lineage.length}`:""}</span><span class="spacer"></span><label class="source"><input type="checkbox" data-run-follow ${RUN_FOLLOW?"checked":""}> follow</label><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
       ${runTitle(run)}<div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Fit evaluation — ${esc(fit.verdict||"pending")}${fit.overall!=null?", "+esc(fit.overall):""}</strong><span class="spacer"></span><span class="dim">${run.phase==="awaiting_approval"?"waiting for your approval":""}</span></div>
       <div class="fitgrid"><div><span class="label">Matches</span>${matches}</div><div><span class="label">Gaps, stated not smoothed</span>${gaps}</div></div></div>
-      ${failure}<div class="runlog">${logs}</div><div class="runfooter"><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>
+      ${failure}<div class="runlog" id="runlog">${logs}</div><div class="runfooter"><span class="dim">Closing this panel does not stop the run.</span><span class="spacer"></span>
       ${run.phase==="awaiting_approval"?`<label class="base-picker compact"><span>Documents</span><select data-run-scope>${scopeOptions(run.scope||"both")}</select></label><label class="base-picker compact"><span>CV base</span><select data-run-base>${baseOptions(run.base_cv||"auto",run.recommended_base_cv||"")}</select></label><button class="primary approve" data-run-id="${esc(run.id)}" data-phase="${esc(run.phase)}">${esc(DRAFT_LABEL[run.scope||"both"])}</button>`:""}${RUNNING.includes(run.phase)?`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`:""}${run.phase==="failed"?`<button class="primary retryrun" data-run-id="${esc(run.id)}">Retry from beginning</button>`:""}${run.phase==="done"?`<button class="primary" data-preview="${esc(run.id)}">Preview PDFs</button>`:""}</div></section></div>`;
+  const runlog=el("runlog");if(RUN_FOLLOW)runlog.scrollTop=runlog.scrollHeight;
+  else if(RUN_LOG_SCROLL.has(run.id))runlog.scrollTop=RUN_LOG_SCROLL.get(run.id);
   openView("tailor",[crumbRun(run)],"/run/"+encodeURIComponent(run.id));
 }
 
@@ -308,7 +527,7 @@ function renderReader(){
   const marks=["star","yes","maybe","gate","no","applied"].map(s=>`<button class="${j.status===s?"on":""}" data-status="${s}">${s}</button>`).join("");
   el("tailor-view").innerHTML=`<div class="reader-shell"><section class="reader-queue"><div class="panelhead"><span class="label">Queue</span><span class="spacer"></span><span class="dim">${rows.length} active</span></div><div class="queue-list">${queue}</div></section>
     <section class="reader-main"><div class="reader-scroll"><article class="reader-copy"><div class="reader-badges"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"unranked")}</span><span class="badge">${esc(j.portal||"source unknown")}</span>${j.score?`<span class="badge" title="${esc(scoreTitle(j))}">${esc(SCORE_LABEL[j.score_source]||"score")} ${esc(Math.round(j.score))}</span>`:""}${j.fit_evidence==="title-only"?'<span class="badge">title only</span>':""}<span class="spacer"></span><a class="open" href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener">open posting ↗</a></div><h1>${esc(j.title)}</h1><div class="reader-meta"><strong>${esc(j.company)}</strong><span>·</span><span>${esc(j.location)}</span><span>·</span><span>posted ${esc(j.posted).slice(5)}</span></div><div class="reader-posting" id="postingbody">${esc(postingText(j))}</div></article></div></section>
-    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Tailor re-evaluates properly.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><label class="base-picker"><span>Documents</span><select data-scope-start>${scopeOptions(START.scope)}</select></label><label class="base-picker"><span>CV base</span><select data-base-start>${baseOptions(START.base)}</select></label><button class="primary tailor" data-tailor="${esc(j.url)}">✎&nbsp; ${esc(TAILOR_LABEL[START.scope])}</button><div class="hint">marks it yes and queues the run · <kbd>t</kbd></div></div></aside></div>`;
+    <aside class="reader-decide"><div class="panelhead"><span class="label">Decide</span></div><div class="decision-section"><span class="label">Gates</span>${gateLines(j)}</div><div class="decision-section"><span class="label">Why it surfaced</span><div class="dim">${esc(j.why||"No reason was stored.")}</div><div class="hint">${esc(scoreTitle(j))} Evaluation reads the full posting.</div></div><div class="decision-section"><span class="label">Mark it</span><div class="statusbuttons">${marks}</div><textarea class="noteinput" data-note-input="${esc(j.url)}" placeholder="note to yourself — saved on blur">${esc(j.note)}</textarea><button class="primary tailor" data-tailor="${esc(j.url)}">Evaluate fit</button><div class="hint">opens the run · you choose documents after the fit evaluation · <kbd>t</kbd></div></div></aside></div>`;
   loadPosting(j);
   openView("reader",[{label:j.company,sub:j.title,count:`${sel+1} of ${rows.length}`}],"/job/"+encodeURIComponent(j.url));
 }
@@ -347,45 +566,53 @@ async function renderRevise(run){
   openView("revise",[crumbRun(run),{label:"Revise"}],"/run/"+encodeURIComponent(run.id)+"/revise");
 }
 
+function companySummary(row){
+  if(row.status==="paused")return {label:"Paused",tone:"quiet",detail:"This company is saved, but job checks are paused."};
+  if(COMPANY_BUSY===row.name)return {label:"Checking…",tone:"working",detail:"Looking for a jobs page and checking available jobs."};
+  if(row.monitoring_status==="needs_confirmation"||row.status==="ambiguous")return {label:"Confirm company",tone:"attention",detail:"We found a possible jobs page. Please confirm it belongs to this company."};
+  if(row.will_be_searched){
+    if(row.fetch_status==="failed")return {label:"Update failed",tone:"attention",detail:"The latest check failed. Any previous results are still shown. You can try again."};
+    if(row.last_success_at)return {label:"Updated",tone:"good",detail:"The last successful check is shown in the table. Check again for the latest jobs."};
+    return {label:"Not checked",tone:"quiet",detail:"The jobs page is connected. Check jobs to get the first results."};
+  }
+  const details={
+    adapter_missing:"Automatic checks are not available for this jobs website yet. You can still open it directly.",
+    policy_disabled:"Automatic access to this jobs website is disabled. You can still open it directly.",
+    no_public_board:"No public jobs page has been confirmed for this company.",
+    other_route:"This company is saved, but its website is not connected for automatic job checks. You can add a careers link below.",
+    careers_url_needed:"A jobs page has not been connected yet. Check jobs to look for one, or add a link below.",
+    source_not_detected:"We could not connect a supported jobs page from this link. You can try another link or open the website directly."
+  };
+  return {label:"Not connected",tone:"quiet",detail:details[row.monitoring_status]||"A jobs page has not been connected yet. Add a website or careers link below."};
+}
+function companyLink(row){
+  const value=row.board_url||row.careers_url||(row.domain?"https://"+row.domain:"");
+  try{const url=new URL(value);return ["https:","http:"].includes(url.protocol)?url.href:""}catch(_){return ""}
+}
 async function renderCompanies(reload=true,scrollTop=null){
-  if(reload||!COMPANIES){try{COMPANIES=await(await fetch("/api/companies?t="+T)).json()}catch(error){toast("could not load companies",{warn:true});return}}
-  const schemaReady=COMPANIES.schema_version===2;
-  const withLegacyFields=row=>{if(row.monitoring_status)return row;const status=row.status||"unresolved",vendor=row.vendor,token=row.token,enabled=vendor!=="smartrecruiters"||COMPANIES.defaults?.vendor_access?.smartrecruiters?.enabled===true;let monitoring_status="source_not_detected";if(status==="paused")monitoring_status="paused";else if(status==="ambiguous")monitoring_status="needs_confirmation";else if(status==="unsupported_vendor")monitoring_status="adapter_missing";else if(status==="no_public_board")monitoring_status="no_public_board";else if(status==="unresolved"&&!row.careers_url)monitoring_status="careers_url_needed";else if(status==="verified"&&vendor&&token&&!enabled)monitoring_status="policy_disabled";else if(status==="verified"&&vendor&&token)monitoring_status="monitoring";const attempted=row.last_attempt_at,fetch_status=!attempted?"never":row.last_success_at===attempted?"success":"failed";return {...row,monitoring_status,will_be_searched:monitoring_status==="monitoring",monitoring_reason:"Derived from legacy API fields; restart the backend for the authoritative value.",fetch_status}};
-  const all=(COMPANIES.companies||[]).filter(row=>(row.route||"ats")==="ats").map(withLegacyFields);
-  const actionStatuses=new Set(["careers_url_needed","source_not_detected","needs_confirmation","adapter_missing","policy_disabled","no_public_board"]);
-  const filterKey=row=>row.monitoring_status==="paused"?"paused":row.fetch_status==="failed"?"errors":row.monitoring_status==="monitoring"?"monitoring":actionStatuses.has(row.monitoring_status)?"action":"action";
-  const buckets={monitoring:all.filter(r=>filterKey(r)==="monitoring").length,action:all.filter(r=>filterKey(r)==="action").length,errors:all.filter(r=>filterKey(r)==="errors").length,paused:all.filter(r=>filterKey(r)==="paused").length};
-  const rows=all.filter(row=>COMPANY_FILTER==="all"||filterKey(row)===COMPANY_FILTER);
-  if(!COMPANY_SELECTED||!all.some(row=>row.name===COMPANY_SELECTED))COMPANY_SELECTED=rows[0]?.name;
-  const selected=all.find(row=>row.name===COMPANY_SELECTED);
-  const filters=[["all","All"],["monitoring","Monitoring"],["action","Action needed"],["errors","Fetch errors"],["paused","Paused"]];
-  const chips=filters.map(([key,label])=>`<button class="chip ${COMPANY_FILTER===key?"on":""}" data-company-filter="${key}">${label}<span class="n">${key==="all"?all.length:buckets[key]}</span></button>`).join("");
-  const monitoringLabel=value=>({monitoring:"Monitoring",needs_confirmation:"Needs confirmation",adapter_missing:"Adapter missing",policy_disabled:"Policy disabled",careers_url_needed:"Careers URL needed",source_not_detected:"Source not detected",no_public_board:"No public board",paused:"Paused",other_route:"Other route"})[value]||value;
-  const fetchLabel=value=>({never:"Never tested",success:"Success",failed:"Failed"})[value]||value;
-  const shortTime=value=>value?String(value).replace("T"," ").slice(0,16):"—";
-  const marketLabel=row=>{const countries=row.countries||[];return countries.includes("CH")&&countries.includes("DE")?"Switzerland + Germany":countries.includes("CH")?"Switzerland":countries.includes("DE")?"Germany":"Not set"};
-  const marketValue=row=>{const countries=row?.countries||[];return countries.includes("CH")&&countries.includes("DE")?"CH,DE":countries.includes("DE")?"DE":"CH"};
-  const marketOptions=value=>[["CH","Switzerland"],["DE","Germany"],["CH,DE","Switzerland + Germany"]].map(([key,label])=>`<option value="${key}" ${value===key?"selected":""}>${label}</option>`).join("");
-  const table=rows.map(row=>`<tr class="${row===selected?"sel":""}" data-company-row="${esc(row.name)}"><td><strong>${esc(row.name)}</strong></td><td>${esc(marketLabel(row))}</td><td><span class="phase ${esc(row.monitoring_status)}">${esc(monitoringLabel(row.monitoring_status))}</span></td><td>${row.stats?.last_eligible_jobs==null?"—":esc(row.stats.last_eligible_jobs)}</td><td><span>${esc(fetchLabel(row.fetch_status))}</span><div class="dim">${esc(shortTime(row.last_attempt_at))}</div></td></tr>`).join("");
-  const boardUrl=item=>{const token=item?.token;if(!token)return "";return item.board_url||({greenhouse:`https://job-boards.greenhouse.io/${encodeURIComponent(token)}`,ashby:`https://jobs.ashbyhq.com/${encodeURIComponent(token)}`,personio:`https://${encodeURIComponent(token)}.jobs.personio.de`,lever:`https://jobs.lever.co/${encodeURIComponent(token)}`,smartrecruiters:`https://careers.smartrecruiters.com/${encodeURIComponent(token)}`}[item?.vendor]||"")};
-  const candidates=(selected?.candidates||[]).map(candidate=>{const url=boardUrl(candidate);return `<div class="candidate"><strong>Possible ${esc(candidate.vendor)} board</strong><div class="dim">${esc(candidate.note||"The system found this board but cannot prove ownership.")}</div><div class="company-actions">${url?`<a class="secondary" target="_blank" rel="noopener" href="${esc(url)}">Open candidate ↗</a>`:""}<button class="primary" data-company-confirm="${esc(candidate.vendor)}|${esc(candidate.token)}">Yes, this is their board</button></div></div>`}).join("");
-  const evidenceKind=selected?.identity?.evidence_kind||selected?.identity?.method;
-  const evidenceText={company_site_link:"Confirmed from a link on the company’s own website.",vendor_identifier:"Confirmed because the ATS company identifier matches.",human_confirmed:"Confirmed manually by you."}[evidenceKind]||selected?.identity?.evidence||"Verification evidence is recorded.";
-  const careersLink=selected?.careers_url||"";
-  const testResult=selected?COMPANY_TEST_RESULTS[selected.name]:null;
-  const sourceResult=selected?COMPANY_SOURCE_RESULTS[selected.name]:null;
-  const testCard=testResult?`<div class="company-test-result ${["ok","empty"].includes(testResult.status)?"done":"error"}"><strong>test_fetch.status: ${esc(testResult.status)}</strong><span>${esc(testResult.jobs_seen)} jobs_seen · ${esc(testResult.eligible_jobs)} eligible_jobs · ${esc(testResult.requests)} requests</span>${testResult.message?`<span>${esc(testResult.message)}</span>`:""}${(testResult.sample_jobs||[]).map(job=>`<a target="_blank" rel="noopener" href="${esc(job.url)}">${esc(job.title)} ↗</a>`).join("")}</div>`:"";
-  const sourceCard=sourceResult?`<div class="company-test-result ${sourceResult.status==="verified"?"done":"error"}"><strong>resolve.status: ${esc(sourceResult.status)}</strong><span>${esc(sourceResult.requests||0)} requests</span><span>${esc(sourceResult.detail||"No diagnostic detail returned.")}</span></div>`:"";
-  const canResolve=schemaReady&&selected&&["careers_url_needed","source_not_detected","needs_confirmation"].includes(selected.monitoring_status);
-  const resolveLabel=selected?.monitoring_status==="careers_url_needed"?"Resolve from domain":"Resolve source again";
-  const monitorCard=!selected?'<div class="panel-empty">Add a careers page to start monitoring.</div>':`<div class="company-status-card"><div class="monitoring-answer ${selected.will_be_searched?"yes":"no"}"><span>will_be_searched</span><strong>${selected.will_be_searched?"Yes":"No"}</strong></div><h3>${esc(monitoringLabel(selected.monitoring_status))}</h3><p>${esc(selected.monitoring_reason)}</p>${selected.monitoring_status==="needs_confirmation"?candidates:""}<div class="company-actions">${schemaReady&&selected.will_be_searched?`<button class="primary" data-company-test-fetch="${esc(selected.name)}">Test fetch now</button>`:canResolve?`<button class="primary" data-company-resolve="${esc(selected.name)}">${resolveLabel}</button>`:""}${boardUrl(selected)?`<a class="secondary" target="_blank" rel="noopener" href="${esc(boardUrl(selected))}">Open board ↗</a>`:""}${careersLink?`<a class="secondary" target="_blank" rel="noopener" href="${esc(careersLink)}">Open careers page ↗</a>`:""}</div>${schemaReady&&selected.monitoring_status==="needs_confirmation"?'<button class="linkish" data-company-neither>None match — pause company</button>':""}</div>${sourceCard}${testCard}`;
-  const settings=selected?`<form id="company-settings" class="company-settings"><label for="company-careers-value">careers_url</label><input id="company-careers-value" type="url" required value="${esc(selected.careers_url||"")}" placeholder="Paste the exact careers page URL"><label for="company-market-value">countries</label><select id="company-market-value">${marketOptions(marketValue(selected))}</select><button class="secondary" ${schemaReady?"":"disabled"}>Save & inspect</button><span class="hint">${schemaReady?"Changing careers_url clears the previous vendor/token identity before inspection.":"Restart the backend before editing; this browser loaded a newer frontend than the running API."}</span></form>`:"";
-  const diagnostics=selected?`<details class="company-diagnostics"><summary>Technical fields</summary><dl><dt>status</dt><dd>${esc(selected.status||"unresolved")}</dd><dt>monitoring_status</dt><dd>${esc(selected.monitoring_status)}</dd><dt>will_be_searched</dt><dd>${selected.will_be_searched?"true":"false"}</dd><dt>vendor</dt><dd>${esc(selected.vendor||"—")}</dd><dt>token</dt><dd>${esc(selected.token||"—")}</dd><dt>identity.evidence_kind</dt><dd>${esc(evidenceKind||"—")}</dd><dt>last_status</dt><dd>${esc(selected.last_status||"—")}</dd><dt>last_attempt_at</dt><dd>${esc(selected.last_attempt_at||"—")}</dd><dt>last_success_at</dt><dd>${esc(selected.last_success_at||"—")}</dd></dl>${evidenceKind?`<p>${esc(evidenceText)}</p>`:""}</details>`:"";
-  const batchStatus=COMPANY_HEALTH_RESULT?`<div class="company-batch-status ${esc(COMPANY_HEALTH_RESULT.state)}"><strong>${COMPANY_HEALTH_RESULT.state==="running"?"Monitoring health check is running":"Last monitoring health check"}</strong><span>${esc(COMPANY_HEALTH_RESULT.message)}</span></div>`:"";
-  const schemaNotice=schemaReady?"":'<div class="company-batch-status error"><strong>Backend restart required</strong><span>The company data is safe. Restart JobFlow, then open the newly printed URL to enable Save & inspect and fetch tests.</span></div>';
-  const monitorable=all.filter(row=>row.will_be_searched).length;
-  const healthLabel=COMPANY_HEALTH_RUNNING?`Testing ${monitorable} monitored companies…`:"Check monitoring health";
-  el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main"><div class="companies-head"><div><strong>${monitorable} of ${all.length} companies will be searched</strong><div class="dim">Derived from route, status, vendor, token, and vendor access policy.</div></div><span class="spacer"></span><button class="primary" id="company-health-check" ${!schemaReady||COMPANY_HEALTH_RUNNING||!monitorable?"disabled":""}>${healthLabel}</button></div>${schemaNotice}${batchStatus}<form id="company-add" class="company-add"><input id="company-name" required placeholder="Company name"><input id="company-careers" type="url" required placeholder="Paste the exact careers page URL"><select id="company-country" aria-label="countries">${marketOptions("CH,DE")}</select><button class="primary" ${schemaReady?"":"disabled"}>Save company</button><span class="hint">The company is saved immediately. The backend then detects a supported source; use Test fetch now to verify the complete fetch path.</span></form><div class="chips">${chips}</div><div class="tablewrap"><table class="company-table"><thead><tr><th>Company</th><th>countries</th><th>monitoring_status</th><th>Last eligible jobs</th><th>fetch_status / last_attempt_at</th></tr></thead><tbody>${table||'<tr><td colspan="5" class="panel-empty">No companies in this view.</td></tr>'}</tbody></table></div></section><aside class="company-rail"><div class="panelhead"><span class="label">${selected?esc(selected.name):"Company status"}</span></div>${settings}${monitorCard}${diagnostics}</aside></div>`;
+  if(reload||!COMPANIES){try{const response=await fetch("/api/companies?t="+T);if(!response.ok)throw new Error();COMPANIES=await response.json()}catch(error){toast("Could not load companies. Please try again.",{warn:true});return}}
+  const schemaReady=COMPANIES.schema_version===2&&COMPANIES.company_controls===true;
+  const all=COMPANIES.companies||[];
+  if(!["all","following","paused"].includes(COMPANY_FILTER))COMPANY_FILTER="all";
+  const following=all.filter(row=>row.status!=="paused").length;
+  const rows=all.filter(row=>(COMPANY_FILTER==="all"||(row.status==="paused"?"paused":"following")===COMPANY_FILTER)&&[row.name,row.domain,row.careers_url].join(" ").toLowerCase().includes(COMPANY_QUERY.toLowerCase()));
+  const selected=rows.find(row=>row.name===COMPANY_SELECTED);
+  const shortTime=value=>{if(!value)return "Never";const date=new Date(value);return Number.isNaN(date.getTime())?String(value).slice(0,16):date.toLocaleString("en-GB",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})};
+  const marketValue=row=>row?.countries?.length?row.countries.join(","):"";
+  const marketOptions=value=>[["","Use search defaults"],["CH","Switzerland"],["DE","Germany"],["CH,DE","Switzerland + Germany"]].map(([key,label])=>`<option value="${key}" ${value===key?"selected":""}>${label}</option>`).join("");
+  const disabled=COMPANY_BUSY||!schemaReady?"disabled":"";
+  const details=row=>{
+    const summary=companySummary(row),link=companyLink(row);
+    const canCheck=row.status!=="paused"&&((row.route||"ats")==="ats")&&(!["unsupported_vendor","no_public_board","ambiguous"].includes(row.status))&&row.monitoring_status!=="policy_disabled";
+    const candidates=row.status==="ambiguous"?(row.candidates||[]).map(candidate=>`<div class="company-candidate"><a class="open" href="${esc(companyLink(candidate)||"#")}" target="_blank" rel="noopener">Open possible jobs page ↗</a><button class="secondary" ${disabled} data-company-confirm="${esc(candidate.vendor)}|${esc(candidate.token)}">This is the right company</button></div>`).join(""):"";
+    return `<tr class="company-detail-row"><td colspan="5"><div class="company-detail"><div class="company-detail-summary"><strong>${esc(row.name)}</strong><p>${esc(summary.detail)}</p>${candidates}<div class="company-actions">${canCheck?`<button class="primary" ${disabled} data-company-check="${esc(row.name)}">${COMPANY_BUSY===row.name?"Checking…":"Check jobs"}</button>`:""}${link?`<a class="secondary" href="${esc(link)}" target="_blank" rel="noopener">Open website ↗</a>`:""}<button class="secondary" ${disabled} data-company-action="${row.status==="paused"?"resume":"pause"}">${row.status==="paused"?"Resume following":"Pause following"}</button><button class="linkish company-remove" ${disabled} data-company-action="remove">Remove company</button></div></div><form id="company-settings" class="company-settings"><label>Company name<input id="company-name-value" required value="${esc(row.name)}"></label><label>Website or careers link<input id="company-careers-value" inputmode="url" value="${esc(row.careers_url||(row.domain?"https://"+row.domain:""))}" placeholder="https://company.com/careers"></label><label>Job locations<select id="company-market-value">${marketOptions(marketValue(row))}</select></label><button class="secondary" ${disabled}>Save changes</button></form></div></td></tr>`;
+  };
+  const table=rows.map(row=>{
+    const summary=companySummary(row),link=companyLink(row),count=row.last_success_at?row.stats?.last_eligible_jobs:null;
+    return `<tr class="${row===selected?"sel":""}"><td><strong>${esc(row.name)}</strong></td><td class="company-updated">${esc(shortTime(row.last_success_at))}</td><td>${link?`<a class="open" href="${esc(link)}" target="_blank" rel="noopener">${row.will_be_searched||row.last_success_at?"View jobs":"Open website"} ↗</a>`:'<span class="dim">No link yet</span>'}${count!=null?`<div class="company-match-count">${esc(count)} matching at last update</div>`:""}</td><td><span class="company-state ${summary.tone}" title="${esc(summary.detail)}">${summary.label}</span></td><td class="company-manage-cell"><button class="secondary" data-company-row="${esc(row.name)}" aria-expanded="${row===selected}" aria-label="${row===selected?"Close":"Manage"} ${esc(row.name)}">${row===selected?"Close":"Manage"}</button></td></tr>${row===selected?details(row):""}`;
+  }).join("");
+  const chips=[["all","All",all.length],["following","Following",following],["paused","Paused",all.length-following]].map(([key,label,count])=>`<button class="chip ${COMPANY_FILTER===key?"on":""}" data-company-filter="${key}">${label}<span class="n">${count}</span></button>`).join("");
+  el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main"><div class="companies-head"><h1>Target companies</h1><p>Keep your company list here. Add a link to find and check its jobs page.</p></div>${!schemaReady?'<div class="company-notice" role="status">Restart JobFlow to enable company editing.</div>':""}${COMPANY_ERROR?`<div class="company-notice" role="alert">${esc(COMPANY_ERROR)}</div>`:""}<form id="company-add" class="company-add"><label class="company-url-label">Website or careers link<input id="company-careers" inputmode="url" required value="${esc(COMPANY_ADD_DRAFT.url)}" placeholder="Paste a company or careers URL"></label><label>Company name <span class="dim">(optional)</span><input id="company-name" value="${esc(COMPANY_ADD_DRAFT.name)}" placeholder="Use the name from the link"></label><button class="primary" ${disabled}>${COMPANY_BUSY==="__add__"?"Adding…":"Add company"}</button><span class="hint">We’ll find a supported jobs page and check it when available. You can edit the name and job locations later.</span></form><div class="company-toolbar"><div class="chips">${chips}</div><input id="company-search" type="search" aria-label="Search companies" placeholder="Search companies" value="${esc(COMPANY_QUERY)}"></div><div class="tablewrap"><table class="company-table"><thead><tr><th>Company</th><th>Last updated</th><th>Jobs</th><th>Status</th><th><span class="sr-only">Manage company</span></th></tr></thead><tbody>${table||`<tr><td colspan="5" class="panel-empty">${all.length?"No companies match this view.":"Add your first company using the link field above."}</td></tr>`}</tbody></table></div><div class="companies-foot">Last updated means the last successful check. Matching jobs use your location and language preferences. Use Check jobs to refresh a company.</div></section></div>`;
   if(scrollTop!==null)el("tailor-view").querySelector(".tablewrap").scrollTop=scrollTop;
   openView("companies",null,"/companies?f="+encodeURIComponent(COMPANY_FILTER)+(COMPANY_SELECTED?"&c="+encodeURIComponent(COMPANY_SELECTED):""));
 }
@@ -480,7 +707,7 @@ function dispatchRoute(){
   if(head==="job"){
     if(!JOBS.some(job=>job.url===first))return false;
     // A deep link outranks whichever chip you happened to leave the board on.
-    if(!shown().some(row=>row.url===first)){filter="all";q="";el("q").value="";render()}
+    if(!shown().some(row=>row.url===first)){filter="all";q="";el("q").value="";resetFacets();render()}
     const index=shown().findIndex(row=>row.url===first);
     if(index<0)return false;
     sel=index;renderReader();return true;
@@ -504,12 +731,12 @@ addEventListener("hashchange",()=>{if(SELF_WRITE){SELF_WRITE=false;return}applyR
 // because that answers the back button and is per-tab. User collapses and
 // automatic narrow-window collapses stay distinct.
 const LAYOUT_KEY="jobflow.layout.v1";
-const DEFAULT_LAYOUT={version:1,left:264,right:452,collect:300,leftCollapsed:false,rightCollapsed:false,autoLeft:false,autoRight:false,shortcutsHidden:false};
-function loadLayout(){try{const value=JSON.parse(localStorage.getItem(LAYOUT_KEY));if(value?.version===1){const merged={...DEFAULT_LAYOUT,...value};delete merged.expanded;delete merged.applications;return merged}localStorage.removeItem(LAYOUT_KEY)}catch(_){try{localStorage.removeItem(LAYOUT_KEY)}catch(__){}}return {...DEFAULT_LAYOUT}}
+const DEFAULT_LAYOUT={version:1,left:264,right:452,leftCollapsed:false,rightCollapsed:false,autoLeft:false,autoRight:false,shortcutsHidden:false};
+function loadLayout(){try{const value=JSON.parse(localStorage.getItem(LAYOUT_KEY));if(value?.version===1){const merged={...DEFAULT_LAYOUT,...value};delete merged.expanded;delete merged.applications;delete merged.collect;return merged}localStorage.removeItem(LAYOUT_KEY)}catch(_){try{localStorage.removeItem(LAYOUT_KEY)}catch(__){}}return {...DEFAULT_LAYOUT}}
 let layout=loadLayout();
 function saveLayout(){try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(layout))}catch(_){}}
 function applyLayout(){
-  const app=el("app");app.style.setProperty("--left",layout.left+"px");app.style.setProperty("--right",layout.right+"px");app.style.setProperty("--collect",layout.collect+"px");
+  const app=el("app");app.style.setProperty("--left",layout.left+"px");app.style.setProperty("--right",layout.right+"px");
   app.classList.toggle("left-collapsed",layout.leftCollapsed||layout.autoLeft);app.classList.toggle("right-collapsed",layout.rightCollapsed||layout.autoRight);
   el("left-rail").classList.toggle("collapsed",layout.leftCollapsed||layout.autoLeft);el("right-rail").classList.toggle("collapsed",layout.rightCollapsed||layout.autoRight);
   document.querySelector('[data-collapse="left"]').setAttribute("aria-expanded",String(!(layout.leftCollapsed||layout.autoLeft)));document.querySelector('[data-collapse="right"]').setAttribute("aria-expanded",String(!(layout.rightCollapsed||layout.autoRight)));
@@ -528,13 +755,12 @@ function autoCollapse(){
   applyLayout();saveLayout();
 }
 function updateSeparatorAria(){
-  const specs={"left-split":[layout.left,200,420],"right-split":[layout.right,320,640],"left-row-split":[layout.collect,120,Math.max(120,el("left-rail").clientHeight-120)]};
+  const specs={"left-split":[layout.left,200,420],"right-split":[layout.right,320,640]};
   Object.entries(specs).forEach(([id,[now,min,max]])=>{const node=el(id);node.setAttribute("aria-valuenow",Math.round(now));node.setAttribute("aria-valuemin",min);node.setAttribute("aria-valuemax",Math.round(max))});
 }
 const splitSpecs={
   "left-split":{key:"left",axis:"x",sign:1,min:200,max:420,def:264},
-  "right-split":{key:"right",axis:"x",sign:-1,min:320,max:640,def:452},
-  "left-row-split":{key:"collect",axis:"y",sign:1,min:120,def:300,max:()=>Math.max(120,el("left-rail").clientHeight-120)}
+  "right-split":{key:"right",axis:"x",sign:-1,min:320,max:640,def:452}
 };
 function clampSplit(spec,value){
   let max=typeof spec.max==="function"?spec.max():spec.max;
@@ -557,30 +783,84 @@ Object.entries(splitSpecs).forEach(([id,spec])=>{
 });
 applyLayout();autoCollapse();addEventListener("resize",autoCollapse);
 
-// Fetching
+// Fetching: one action, truthful status, optional settings.
+const FETCH_SETTINGS_KEY="jobflow.fetch.v1";
+const FETCH_DEFAULTS={sources:["ats","freehire","linkedin"],mc:8,mn:40,md:15};
+let FETCH_STARTING=false,FETCH_POLLING=false;
 const chosenSources=()=>["ats","freehire","linkedin"].filter(s=>el("s-"+s).checked);
-async function reloadJobs(){const data=await(await fetch("/api/jobs?t="+T)).json();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();render()}
-function renderFetchLog(status){
-  const lines=status.log||[];el("collectlog").innerHTML=lines.length?lines.slice(-12).map(line=>`<div class="${/403|error|failed/i.test(line)?"bad":""}">${esc(line)}</div>`).join(""):'<span class="dim">Collection is running…</span>';
+function fetchSettings(){return {sources:chosenSources(),mc:+el("mc").value,mn:+el("mn").value,md:+el("md").value}}
+function applyFetchSettings(value){
+  ["ats","freehire","linkedin"].forEach(s=>el("s-"+s).checked=(value.sources||FETCH_DEFAULTS.sources).includes(s));
+  for(const [id,min,max] of [["mc",1,20],["mn",1,200],["md",0,20]]){const n=value[id];el(id).value=Number.isInteger(n)?Math.max(min,Math.min(max,n)):FETCH_DEFAULTS[id]}
 }
+try{applyFetchSettings(JSON.parse(localStorage.getItem(FETCH_SETTINGS_KEY))||FETCH_DEFAULTS)}catch(_){applyFetchSettings(FETCH_DEFAULTS)}
+el("fetch-options").addEventListener("change",()=>{applyFetchSettings(fetchSettings());try{localStorage.setItem(FETCH_SETTINGS_KEY,JSON.stringify(fetchSettings()))}catch(_){}});
+el("fetch-reset").addEventListener("click",()=>{applyFetchSettings(FETCH_DEFAULTS);try{localStorage.removeItem(FETCH_SETTINGS_KEY)}catch(_){}});
+async function reloadJobs(){const response=await fetch("/api/jobs?t="+T);checkAuth(response);if(!response.ok)throw new Error("Could not reload the job list.");const data=await response.json();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();render()}
+function fetchSummary(status){
+  if(status.running)return {message:"Checking for new jobs…",running:true};
+  const sources=status.sources||[],added=sources.reduce((n,s)=>n+(s.added||0),0);
+  const labels={"ats-search":"Target companies","linkedin-search":"LinkedIn","freehire-search":"freehire"};
+  const failed=sources.filter(s=>s.degraded||s.error||s.failed?.length||s.retry_later).map(s=>labels[s.source]||s.source);
+  const result=added?`${added} new job${added===1?"":"s"} added`:"No new jobs found";
+  if(status.error)return {message:added?`${result} · Fetch stopped early. See Activity.`:"Could not finish fetching. Try again or see Activity.",error:true};
+  if(failed.length)return {message:`${result} · ${failed.join(", ")} could not be fully checked. See Activity.`,error:true};
+  if(!status.finished_at)return {message:"Ready to fetch"};
+  const remaining=sources.reduce((n,s)=>n+(s.remaining_due||0)+(s.deferred_descriptions||0),0);
+  if(remaining)return {message:`${result} · More to check — fetch again.`};
+  if(sources.length&&sources.every(s=>s.source==="ats-search"?s.remaining_due===0:s.cached===true))return {message:added?`${result} · Up to date for connected sources.`:"Up to date for connected sources. Recent searches are reused for an hour."};
+  return {message:result};
+}
+function renderFetchLog(status){
+  // The run stamp is what "latest fetch" filters on and what the arrival dots
+  // are measured against, so a status poll that moves it repaints the list.
+  // Only a real status carries the field. This function is also called with
+  // `{}` and `{error:true}` to repaint the button synchronously, and treating
+  // those as "no fetch has ever run" would blink every arrival dot off and on.
+  if("started_at" in status&&(status.started_at||null)!==LAST_FETCH){
+    LAST_FETCH=status.started_at||null;
+    if(JOBS.length)render();
+  }
+  const added=(status.sources||[]).reduce((n,s)=>n+(s.added||0),0);
+  el("show-new").hidden=!(added&&!status.running&&status.finished_at);
+  const view=fetchSummary(status);el("collectlog").textContent=view.message;
+  el("collectlog").parentElement.classList.toggle("error",!!view.error);
+  el("fetch").disabled=!!view.running||FETCH_STARTING;el("fetch").textContent=view.running?"Fetching…":FETCH_STARTING?"Starting…":"Fetch new jobs";
+  el("fetch-options").disabled=!!view.running||FETCH_STARTING;
+  el("collectlast").textContent=status.finished_at?"Last checked: "+new Date(status.finished_at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"";
+  const banner=el("degraded");banner.hidden=true;
+}
+function watchFetch(){if(!POLL)POLL=setInterval(()=>void pollFetch(),2000)}
 async function pollFetch(){
-  const status=await(await fetch("/api/fetch/status?t="+T)).json();renderFetchLog(status);pollActivity();
-  if(status.running)return;clearInterval(POLL);POLL=null;el("fetch").disabled=false;await reloadJobs();
-  const failed=(status.sources||[]).flatMap(x=>x.failed||[]),banner=el("degraded");
-  if(failed.length){banner.hidden=false;banner.textContent="Degraded run: "+failed.join(", ")+" did not answer. Everything else was kept."}else banner.hidden=true;
-  el("collectlast").textContent=status.finished_at?"last run "+String(status.finished_at).slice(11,16):"";
+  if(FETCH_POLLING)return;
+  FETCH_POLLING=true;
+  try{
+    const response=await fetch("/api/fetch/status?t="+T);if(!checkAuth(response))return;if(!response.ok)throw new Error();
+    const status=await response.json();renderFetchLog(status);
+    if(status.running){watchFetch();return}
+    const completed=!!POLL;clearInterval(POLL);POLL=null;
+    if(completed){try{await reloadJobs()}catch(error){el("collectlog").textContent="Fetch finished, but the list could not reload. Refresh this page."}void pollActivity()}
+  }catch(_){
+    el("collectlog").textContent="Cannot check fetch status. Retrying…";
+    el("fetch").disabled=true;el("fetch-options").disabled=true;watchFetch();
+  }finally{FETCH_POLLING=false}
 }
 el("fetch").addEventListener("click",async()=>{
-  const sources=chosenSources();if(!sources.length){toast("select at least one source",{warn:true});return}
-  el("fetch").disabled=true;const body={sources,max_companies:+el("mc").value||8,max_new_jobs:+el("mn").value||40,linkedin_detail_fetches:+el("md").value};
-  const response=await fetch("/api/fetch?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  if(!response.ok){el("fetch").disabled=false;toast((await response.json()).error||"could not start",{warn:true});return}
-  POLL=setInterval(pollFetch,2000);pollFetch();
+  if(FETCH_STARTING||el("fetch").disabled)return;
+  const sources=chosenSources();if(!sources.length){el("fetch-settings").open=true;toast("Choose at least one job source.",{warn:true});return}
+  for(const id of ["mc","mn","md"])if(!el(id).reportValidity()){el("fetch-settings").open=true;return}
+  FETCH_STARTING=true;renderFetchLog({});el("fetch-settings").open=false;el("collectlog").textContent="Starting fetch…";
+  try{
+    const response=await fetch("/api/fetch?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sources,max_companies:+el("mc").value,max_new_jobs:+el("mn").value,linkedin_detail_fetches:+el("md").value})});
+    const data=await response.json();
+    if(!response.ok&&response.status!==409)throw new Error(data.error||"Could not start fetching.");
+    FETCH_STARTING=false;watchFetch();await pollFetch();
+  }catch(error){FETCH_STARTING=false;renderFetchLog({error:true});toast(error.message||"Could not start fetching.",{warn:true,ms:4000});watchFetch()}
 });
 
 // Activity strip and drawer
 async function pollActivity(){
-  const url="/api/activity?t="+T+"&since="+SEQ+(EPOCH?"&epoch="+EPOCH:"");let data;try{data=await(await fetch(url)).json()}catch(_){return}
+  const url="/api/activity?t="+T+"&since="+SEQ+(EPOCH?"&epoch="+EPOCH:"");let data;try{const response=await fetch(url);if(!checkAuth(response)||!response.ok)return;data=await response.json()}catch(_){return}
   if(data.reset||EPOCH===null)EV=[];EPOCH=data.epoch;SEQ=data.seq;COUNTS=data.counts||{};if(data.events?.length)EV=EV.concat(data.events).slice(-500);
   renderStrip();if(!el("drawer").hidden)renderActivity();if(VIEW==="tailor"&&ACTIVE_RUN)renderTailor(RUNS.find(r=>r.id===ACTIVE_RUN));
 }
@@ -597,34 +877,30 @@ function renderActivity(){
 function toggleDrawer(){el("drawer").hidden=!el("drawer").hidden;el("stripcaret").textContent=el("drawer").hidden?"⌃":"⌄";if(!el("drawer").hidden)renderActivity()}
 function copyLog(){const text=EV.slice(-200).map(e=>[(e.ts||"").slice(11,19),e.source,e.cmd?"$ "+e.cmd:e.msg].join("  ")).join("\n");navigator.clipboard.writeText(text).then(()=>toast("copied "+Math.min(EV.length,200)+" lines"),()=>toast("could not copy",{warn:true}))}
 
-async function checkCompanyHealth(button){
-  const total=(COMPANIES.companies||[]).filter(row=>(row.route||"ats")==="ats"&&row.will_be_searched).length;
-  button.disabled=true;button.textContent="Testing monitored companies…";
-  COMPANY_HEALTH_RUNNING=true;COMPANY_HEALTH_RESULT={state:"running",message:`Testing ${total} companies through their real search adapters. Progress is also recorded in Activity.`};
-  renderCompanies(false);
-  try{
-    const response=await fetch("/api/companies/health-check?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mtime:COMPANIES.mtime})});
-    const data=await response.json();if(!response.ok)throw new Error(data.error||"monitoring health check failed");
-    COMPANIES=data;const report=data.health_check||{};
-    COMPANY_HEALTH_RESULT={state:report.failed?"error":"done",message:`Tested ${report.tested||0}: ${report.succeeded||0} succeeded · ${report.failed||0} failed.`};
-    toast("Monitoring health check finished",{ms:5000});
-  }catch(error){COMPANY_HEALTH_RESULT={state:"error",message:error.message};toast(error.message,{warn:true,ms:5000})}
-  COMPANY_HEALTH_RUNNING=false;
-  renderCompanies(false);
+const companyPath=name=>"/api/companies/"+name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+async function companyWork(name,work){
+  if(COMPANY_BUSY)return;
+  COMPANY_BUSY=name;COMPANY_ERROR="";renderCompanies(false);
+  try{await work()}catch(error){COMPANY_ERROR=error.message||"Could not finish. Please try again.";toast(COMPANY_ERROR,{warn:true,ms:5000})}
+  finally{COMPANY_BUSY=null;if(VIEW==="companies")renderCompanies(false)}
 }
-function handleCompanyHealthClick(event){
-  const button=event.target.closest("#company-health-check");
-  if(!button||button.disabled)return null;
-  return checkCompanyHealth(button);
+async function checkCompany(name){
+  let row=COMPANIES.companies.find(row=>row.name===name);
+  if(!row||row.status==="paused")return;
+  if(!row.will_be_searched){
+    if((row.route||"ats")!=="ats"||row.status==="ambiguous")return;
+    await postCompany(companyPath(name)+"/resolve",{mtime:COMPANIES.mtime});
+    row=COMPANIES.companies.find(row=>row.name===name);
+  }
+  if(row?.will_be_searched)await postCompany(companyPath(name)+"/test-fetch",{mtime:COMPANIES.mtime});
 }
 function selectCompanyRow(row){
   const scrollTop=row.closest(".tablewrap")?.scrollTop||0;
-  COMPANY_SELECTED=row.dataset.companyRow;
+  COMPANY_SELECTED=COMPANY_SELECTED===row.dataset.companyRow?null:row.dataset.companyRow;
   renderCompanies(false,scrollTop);
 }
 
 document.addEventListener("click",event=>{
-  const healthCheck=handleCompanyHealthClick(event);if(healthCheck){void healthCheck;return}
   if(event.target.closest("#text-modal-submit"))return void closeTextModal(true);
   if(event.target.closest("#text-modal-cancel,#text-modal-close"))return void closeTextModal(false);
   if(event.target===el("text-modal"))return void closeTextModal(false);
@@ -637,6 +913,15 @@ document.addEventListener("click",event=>{
   const collapse=event.target.closest("[data-collapse]");if(collapse)return void toggleCollapse(collapse.dataset.collapse);
   const expand=event.target.closest("[data-expand]");if(expand){const kind=expand.dataset.expand;if(kind==="job")renderReader();else if(kind==="board")openView(kind);return}
   const chip=event.target.closest("[data-filter]");if(chip){filter=chip.dataset.filter;sel=0;render();return}
+  const source=event.target.closest("[data-source]");
+  if(source){
+    const key=source.dataset.source,others=[...new Set(JOBS.map(sourceKey))].filter(k=>k!==key);
+    // Alt-click solos: with five sources, "show me only the ATS rows" is one
+    // click that way and four the other.
+    facets.hidden=event.altKey?(facets.hidden.length===others.length?[]:others)
+      :facets.hidden.includes(key)?facets.hidden.filter(k=>k!==key):[...facets.hidden,key];
+    saveFacets();sel=0;render();return;
+  }
   const act=event.target.closest("[data-act-filter]");if(act){actFilter=act.dataset.actFilter;renderActivity();return}
   const status=event.target.closest("[data-status]");if(status)return void setStatus(status.dataset.status);
   const note=event.target.closest("[data-note]");if(note)return void editNote(JOBS.find(j=>j.url===note.dataset.note));
@@ -644,41 +929,62 @@ document.addEventListener("click",event=>{
   const readerRow=event.target.closest("[data-reader-row]");if(readerRow){sel=+readerRow.dataset.readerRow;renderReader();return}
   const companyFilter=event.target.closest("[data-company-filter]");if(companyFilter){COMPANY_FILTER=companyFilter.dataset.companyFilter;renderCompanies(false);return}
   const companyRow=event.target.closest("[data-company-row]");if(companyRow)return void selectCompanyRow(companyRow);
-  const companyResolve=event.target.closest("[data-company-resolve]");if(companyResolve){companyResolve.disabled=true;const name=companyResolve.dataset.companyResolve,slug=name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");postCompany("/api/companies/"+slug+"/resolve",{mtime:COMPANIES.mtime}).then(data=>{if(!data){companyResolve.disabled=false;return}COMPANY_SOURCE_RESULTS[name]=data.result?.results?.[0]||{status:"unresolved",detail:"Resolver returned no company report.",requests:0};renderCompanies(false)});return}
-  const companyTest=event.target.closest("[data-company-test-fetch]");if(companyTest){companyTest.disabled=true;const name=companyTest.dataset.companyTestFetch,slug=name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");postCompany("/api/companies/"+slug+"/test-fetch",{mtime:COMPANIES.mtime}).then(data=>{if(!data){companyTest.disabled=false;return}COMPANY_TEST_RESULTS[name]=data.test_fetch;renderCompanies(false)});return}
-  const companyConfirm=event.target.closest("[data-company-confirm]");if(companyConfirm){const [vendor,token]=companyConfirm.dataset.companyConfirm.split("|"),slug=COMPANY_SELECTED.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");postCompany("/api/companies/"+slug+"/identity",{mtime:COMPANIES.mtime,decision:"confirm",candidate:{vendor,token}}).then(ok=>ok&&renderCompanies());return}
-  if(event.target.closest("[data-company-neither]")){const slug=COMPANY_SELECTED.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");postCompany("/api/companies/"+slug+"/identity",{mtime:COMPANIES.mtime,decision:"neither"}).then(ok=>ok&&renderCompanies());return}
+  const companyCheck=event.target.closest("[data-company-check]");if(companyCheck){const name=companyCheck.dataset.companyCheck;void companyWork(name,()=>checkCompany(name));return}
+  const companyAction=event.target.closest("[data-company-action]");if(companyAction){const name=COMPANY_SELECTED,action=companyAction.dataset.companyAction;if(action==="remove"&&!confirm("Remove "+name+" from your company list? Saved jobs will stay on the Board."))return;void companyWork(name,async()=>{await postCompany(companyPath(name)+"/manage",{mtime:COMPANIES.mtime,action});if(action==="remove")COMPANY_SELECTED=null});return}
+  const companyConfirm=event.target.closest("[data-company-confirm]");if(companyConfirm){const name=COMPANY_SELECTED,[vendor,token]=companyConfirm.dataset.companyConfirm.split("|");void companyWork(name,async()=>{await postCompany(companyPath(name)+"/identity",{mtime:COMPANIES.mtime,decision:"confirm",candidate:{vendor,token}});await checkCompany(name)});return}
   const preview=event.target.closest("[data-preview]");if(preview){const run=RUNS.find(r=>r.id===preview.dataset.preview);if(run)renderPreview(run);return}
   const revise=event.target.closest("[data-revise]");if(revise){const run=RUNS.find(r=>r.id===revise.dataset.revise);if(run)renderRevise(run);return}
-  const restoreVersion=event.target.closest("[data-restore-version]");if(restoreVersion){restoreVersion.disabled=true;postRun("/api/runs/"+restoreVersion.dataset.restoreVersion+"/restore").then(ok=>{const run=RUNS.find(r=>r.id===REVISE_RUN);if(ok&&run)renderRevise(run)});return}
+  const restoreVersion=event.target.closest("[data-restore-version]");if(restoreVersion){restoreVersion.disabled=true;postRun("/api/runs/"+restoreVersion.dataset.restoreVersion+"/restore").then(({ok})=>{const run=RUNS.find(r=>r.id===REVISE_RUN);if(ok&&run)renderRevise(run)});return}
   const versionPreview=event.target.closest("[data-version-preview]");if(versionPreview){const run=RUNS.find(r=>r.id===versionPreview.dataset.versionPreview);if(run)renderPreview(run);return}
   const previewFilter=event.target.closest("[data-preview-filter]");if(previewFilter){const main=el("preview-main");main.classList.toggle("cv-only",previewFilter.dataset.previewFilter==="cv");main.classList.toggle("cover-only",previewFilter.dataset.previewFilter==="cover");document.querySelectorAll("[data-preview-filter]").forEach(node=>node.classList.toggle("on",node===previewFilter));return}
-  const recompile=event.target.closest("[data-recompile]");if(recompile){recompile.disabled=true;postRun("/api/runs/"+recompile.dataset.recompile+"/compile").then(ok=>{const run=RUNS.find(r=>r.id===recompile.dataset.recompile);if(ok&&run)renderPreview(run)});return}
+  const recompile=event.target.closest("[data-recompile]");if(recompile){recompile.disabled=true;postRun("/api/runs/"+recompile.dataset.recompile+"/compile").then(({ok})=>{const run=RUNS.find(r=>r.id===recompile.dataset.recompile);if(ok&&run)renderPreview(run)});return}
   const runNode=event.target.closest("[data-run]");if(runNode){const run=RUNS.find(r=>r.id===runNode.dataset.run);if(run)renderTailor(run);return}
   const pill=event.target.closest("#runpill");if(pill){const run=RUNS.find(r=>r.id===pill.dataset.run);if(run)renderTailor(run);return}
   const approve=event.target.closest(".approve");if(approve){approve.disabled=true;postRun("/api/runs/"+approve.dataset.runId+"/approve",{phase:approve.dataset.phase,base_cv:document.querySelector("[data-run-base]")?.value||"auto",scope:document.querySelector("[data-run-scope]")?.value||"both"});return}
   const cancel=event.target.closest(".cancelrun");if(cancel){postRun("/api/runs/"+cancel.dataset.runId+"/cancel");return}
-  const retry=event.target.closest(".retryrun");if(retry){retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry").then(ok=>{if(!ok){retry.disabled=false;return}toast("fresh attempt queued",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
+  const retry=event.target.closest(".retryrun");if(retry){retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry").then(({ok})=>{if(!ok){retry.disabled=false;return}toast("fresh attempt queued",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
   const row=event.target.closest("tr[data-row]");if(row&&!event.target.closest("select")){sel=+row.dataset.row;render()}
 });
-async function postCompany(path,body,method="POST"){const response=await fetch(path+"?t="+T,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});let data={};try{data=await response.json()}catch(_){}if(!response.ok){toast(data.error||"registry request failed",{warn:true,ms:5000});if(response.status===409)renderCompanies();return false}COMPANIES=data.companies?data:(data.result&&data.mtime?data:COMPANIES);return data}
+async function postCompany(path,body,method="POST"){
+  const response=await fetch(path+"?t="+T,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  checkAuth(response);
+  let data={};try{data=await response.json()}catch(_){}
+  if(!response.ok){
+    if(response.status===409){const latest=await fetch("/api/companies?t="+T);if(latest.ok)COMPANIES=await latest.json()}
+    throw new Error(response.status===409&&data.error?.includes("registry changed")?"This list changed in another window. Please try again.":path.endsWith("/test-fetch")?"Could not check jobs. Your company is saved; please try again.":data.error||"Could not save changes. Please try again.");
+  }
+  if(data.companies)COMPANIES=data;
+  return data;
+}
+document.addEventListener("input",event=>{
+  if(event.target.id!=="company-search")return;
+  const position=event.target.selectionStart;COMPANY_QUERY=event.target.value;
+  renderCompanies(false);const search=el("company-search");search.focus();try{search.setSelectionRange(position,position)}catch(_){}
+});
 document.addEventListener("submit",event=>{
-  if(event.target.id==="company-add"){event.preventDefault();postCompany("/api/companies",{mtime:COMPANIES.mtime,name:el("company-name").value,careers_url:el("company-careers").value,countries:el("company-country").value.split(",")}).then(ok=>ok&&renderCompanies());return}
-  if(event.target.id==="company-settings"){event.preventDefault();const slug=COMPANY_SELECTED.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");postCompany("/api/companies/"+slug,{mtime:COMPANIES.mtime,inspect:true,changes:{careers_url:el("company-careers-value").value,countries:el("company-market-value").value.split(",")}},"PATCH").then(ok=>{if(ok){delete COMPANY_TEST_RESULTS[COMPANY_SELECTED];delete COMPANY_SOURCE_RESULTS[COMPANY_SELECTED];renderCompanies(false);toast("careers_url and countries saved",{ms:3000})}});return}
+  if(event.target.id==="company-add"){
+    event.preventDefault();const name=el("company-name").value,careers_url=el("company-careers").value,known=new Set(COMPANIES.companies.map(row=>row.name));
+    COMPANY_ADD_DRAFT={name,url:careers_url};
+    void companyWork("__add__",async()=>{await postCompany("/api/companies",{mtime:COMPANIES.mtime,name,careers_url});COMPANY_ADD_DRAFT={name:"",url:""};const added=COMPANIES.companies.find(row=>!known.has(row.name));if(added){COMPANY_FILTER="all";COMPANY_QUERY="";COMPANY_SELECTED=added.name;COMPANY_BUSY=added.name;if(VIEW==="companies")renderCompanies(false);if(added.will_be_searched)await checkCompany(added.name)}});return;
+  }
+  if(event.target.id==="company-settings"){
+    event.preventDefault();const oldName=COMPANY_SELECTED,name=el("company-name-value").value.trim(),careers_url=el("company-careers-value").value.trim(),market=el("company-market-value").value;
+    const old=COMPANIES.companies.find(row=>row.name===oldName),sourceChanged=careers_url&&careers_url!==(old?.careers_url||(old?.domain?"https://"+old.domain:""));
+    const changes={name,countries:market?market.split(","):[]};if(sourceChanged)changes.careers_url=careers_url;
+    void companyWork(oldName,async()=>{await postCompany(companyPath(oldName),{mtime:COMPANIES.mtime,inspect:true,changes},"PATCH");COMPANY_SELECTED=name;COMPANY_BUSY=name;if(sourceChanged&&COMPANIES.companies.find(row=>row.name===name)?.will_be_searched)await checkCompany(name);toast("Company saved")});return;
+  }
   if(event.target.id!=="revise-form")return;event.preventDefault();const button=event.submitter,kind=button?.dataset.reentryKind,run=RUNS.find(r=>r.id===REVISE_RUN);if(!run||!kind)return;
   const scope=new FormData(event.target).get("scope")||"both",note=el("revision-note").value.trim(),remember=el("revision-remember").value.trim();
   if(kind!=="apply"&&!note){toast("say what should change",{warn:true});return}
   button.disabled=true;const body={job_url:run.job_url,kind,note,scope,remember};if(kind!=="apply")body.parent=run.id;
-  postRun("/api/runs",body).then(ok=>{if(ok){restoreWorkspace();toast(kind+" queued",{ms:2500})}else button.disabled=false});
+  postRun("/api/runs",body).then(({ok})=>{if(ok){restoreWorkspace();toast(kind+" queued",{ms:2500})}else button.disabled=false});
 });
 document.addEventListener("change",event=>{
-  // The board panel and the reader panel both carry a copy of these pickers, so
-  // a choice made in one is mirrored into the other rather than silently diverging.
-  if(event.target.matches("[data-scope-start]")){START.scope=event.target.value;
-    document.querySelectorAll("[data-scope-start]").forEach(node=>node.value=START.scope);
-    document.querySelectorAll("[data-tailor]").forEach(node=>node.innerHTML="✎&nbsp; "+esc(TAILOR_LABEL[START.scope]))}
-  if(event.target.matches("[data-base-start]")){START.base=event.target.value;
-    document.querySelectorAll("[data-base-start]").forEach(node=>node.value=START.base)}
+  if(event.target.id==="f-fit"||event.target.id==="f-found"||event.target.id==="f-sort"){
+    facets[event.target.id.slice(2)]=event.target.value;saveFacets();sel=0;render();return;
+  }
+  if(event.target.matches("[data-run-follow]")){RUN_FOLLOW=event.target.checked;
+    const runlog=el("runlog");if(RUN_FOLLOW&&runlog)runlog.scrollTop=runlog.scrollHeight}
   if(event.target.matches("[data-run-scope]")){const button=document.querySelector(".approve");if(button)button.textContent=DRAFT_LABEL[event.target.value]||DRAFT_LABEL.both}
   if(event.target.matches("select[data-url]"))update(event.target.dataset.url,{status:event.target.value});
   if(event.target.matches("[data-note-input]"))update(event.target.dataset.noteInput,{note:event.target.value}).then(ok=>ok&&toast("note saved"));
@@ -686,13 +992,14 @@ document.addEventListener("change",event=>{
 document.addEventListener("keydown",event=>{
   if(MODAL_RESOLVE){if(event.key==="Escape"){event.preventDefault();closeTextModal(false)}else if((event.metaKey||event.ctrlKey)&&event.key==="Enter"){event.preventDefault();closeTextModal(true)}return}
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
-  if(event.key==="/"&&!typing){event.preventDefault();el("q").focus();return}
+  if(event.key==="/"&&!typing){event.preventDefault();el(VIEW==="companies"?"company-search":"q").focus();return}
   if(typing){if(event.key==="Escape")event.target.blur();return}
   if(event.key==="Escape"&&!el("drawer").hidden){toggleDrawer();return}
   if(event.key==="Escape"&&el("app").classList.contains("expanded")){restoreWorkspace();return}
   if(event.key==="["){event.preventDefault();toggleCollapse("left");return}
   if(event.key==="]"){event.preventDefault();toggleCollapse("right");return}
   if(event.key==="\\"){event.preventDefault();resetLayout();return}
+  if(VIEW==="companies")return;
   const rows=shown(),move={j:1,ArrowDown:1,k:-1,ArrowUp:-1};
   if(event.key in move){event.preventDefault();sel=Math.min(rows.length-1,Math.max(0,sel+move[event.key]));if(el("app").classList.contains("reader-mode"))renderReader();else render();return}
   if(event.key==="Enter"){const j=selectedJob();if(j)open(j.open_url||j.url,"_blank","noopener");return}
@@ -701,10 +1008,17 @@ document.addEventListener("keydown",event=>{
   const map={s:"star",y:"yes",m:"maybe",n:"no",a:"applied",u:"new",g:"gate"};if(event.key in map){event.preventDefault();setStatus(map[event.key])}
 });
 el("q").addEventListener("input",event=>{q=event.target.value;sel=0;render()});
+el("f-reset").addEventListener("click",()=>{resetFacets();sel=0;render()});
+// The fetch summary says "8 new jobs added"; this is the one click that shows
+// which eight, instead of leaving you to find them in four hundred rows.
+el("show-new").addEventListener("click",()=>{
+  facets.found="latest";facets.sort="found";saveFacets();sel=0;render();
+  document.querySelector(".tablewrap")?.scrollTo({top:0});
+});
 
 renderChrome(null);
 setInterval(pollActivity,3000);setInterval(pollRuns,6000);
 Promise.all([reloadJobs(),pollActivity(),pollRuns()]).then(()=>{
   applyRoute();
-  fetch("/api/fetch/status?t="+T).then(r=>r.json()).then(status=>{renderFetchLog(status);if(status.running){el("fetch").disabled=true;POLL=setInterval(pollFetch,2000)}});
+  void pollFetch();
 });
