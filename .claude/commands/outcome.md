@@ -9,6 +9,8 @@ You are recording what happened to a job application: progress updates (intervie
 
 The command also owns the stretch *before* there is an outcome to record: the **follow-up branch** (Step 2b) surfaces open applications that have gone quiet, drafts a brief follow-up note in the user's voice, and logs it - so the chase and the resolution it eventually leads to live in one flow.
 
+**When Notion sync is configured** (`job_scraper/notion_sync.json` exists - see `/notion-sync`), Notion owns application status and the tracker is its cache. Then: run `python3 tools/notion_sync.py pull` before Step 1 so the list is current; record a new status by setting **Stage** (and Outcome Reason if final) on the Notion row - through the Notion MCP when connected, otherwise tell the owner which Stage to pick - then pull again instead of editing the tracker's status column. The archive (`documents/applications/.../outcome.md`) and the follow-up branch are unchanged.
+
 Follow these steps **in order**.
 
 ---
