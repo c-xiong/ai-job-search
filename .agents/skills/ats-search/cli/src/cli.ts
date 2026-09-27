@@ -90,7 +90,7 @@ const KNOWN_FLAGS: Record<string, string[]> = {
   search: ["query", "company", "max-companies", "max-new-jobs", "known-ids", "limit", "jobage",
            "page", "format", "force-refresh", "no-write"],
   detail: ["format"],
-  resolve: ["company", "all-unresolved", "max-companies", "max-probes", "dry-run", "format"],
+  resolve: ["company", "all-unresolved", "due", "max-companies", "max-probes", "dry-run", "format"],
   companies: ["list", "due", "suggest", "max-companies", "format"],
 }
 const UNIVERSAL_FLAGS = ["help", "h"]
@@ -123,7 +123,7 @@ const HELP = `ats-search — watch your target companies' own ATS boards (Greenh
 USAGE
   bun run src/cli.ts search    [-q "<text>"] [--company <name>] [--max-companies N] [--limit N]
   bun run src/cli.ts detail    <vendor:token:posting_id | posting-url> [--format json|plain]
-  bun run src/cli.ts resolve   (--company <name> | --all-unresolved) [--dry-run]
+  bun run src/cli.ts resolve   (--company <name> | --due | --all-unresolved) [--dry-run]
   bun run src/cli.ts companies [--list | --due | --suggest] [--format json|table]
 
 SEARCH — one batch call over the companies whose cadence is up
@@ -155,6 +155,8 @@ DETAIL
 
 RESOLVE — find a board and decide whether we know it is really theirs
   --company, -c <name>    Resolve these companies. Repeatable.
+  --due                   Resolve the retry queue: unresolved rows whose backoff has
+                          elapsed, and verified rows whose board keeps answering 404.
   --all-unresolved        Resolve every company whose status is "unresolved".
   --max-companies <n>     Cap per run. Default 12 (one Phase 0 batch).
   --max-probes <n>        Slug-fallback probes per company. Default 12.
@@ -247,6 +249,7 @@ async function main(): Promise<number> {
     const opts: ResolveOpts = {
       only: Array.isArray(flags.company) ? flags.company : [],
       allUnresolved: flags["all-unresolved"] === true,
+      due: flags.due === true,
       maxCompanies,
       maxProbes,
       dryRun: flags["dry-run"] === true,
@@ -265,11 +268,21 @@ async function main(): Promise<number> {
   return badArg(`unknown command "${cmd}" - expected search, detail, resolve or companies`)
 }
 
+// Never `process.exit()` straight after writing: on a pipe, Bun drops whatever
+// has not been flushed, and the caller received the first 65,536 bytes of a
+// larger JSON payload - "unparseable output", and a whole run's boards lost.
+// Setting the exit code lets stdout drain; the unref'd timer only fires if
+// something (a keep-alive socket) would otherwise hold the process open.
+function finish(code: number): void {
+  process.exitCode = code
+  setTimeout(() => process.exit(code), 30000).unref()
+}
+
 main()
-  .then((code) => process.exit(code))
+  .then(finish)
   .catch((e) => {
     process.stderr.write(
       JSON.stringify({ error: e instanceof Error ? e.message : String(e), code: "INTERNAL_ERROR" }) + "\n",
     )
-    process.exit(1)
+    finish(1)
   })

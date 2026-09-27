@@ -73,8 +73,37 @@ describe("evidence-first resolution", () => {
   })
 
   test("a recognizable ATS with no adapter is unsupported_vendor, not silence", async () => {
-    const { payload } = await resolve(["ResolveWorkday"])
+    const session = newSession()
+    const registry = JSON.parse(readFileSync(session.registryPath, "utf-8"))
+    registry.companies.find((c: { name: string }) => c.name === "ResolveWorkday").domain = "resolve-teamtailor.test"
+    require("fs").writeFileSync(session.registryPath, JSON.stringify(registry), "utf-8")
+    const { payload } = await resolve(["ResolveWorkday"], [], session)
     expect(payload.results[0].status).toBe("unsupported_vendor")
+    // Monthly re-check, so a later adapter picks it up without the owner.
+    expect(companyIn(session.registryPath, "ResolveWorkday").next_resolve_at).toBe("2026-09-17")
+  })
+
+  test("a board the careers page names but that no longer exists is not offered as a choice", async () => {
+    const session = newSession()
+    const registry = JSON.parse(readFileSync(session.registryPath, "utf-8"))
+    registry.companies.find((c: { name: string }) => c.name === "ResolveWorkday").domain = "resolve-dead.test"
+    require("fs").writeFileSync(session.registryPath, JSON.stringify(registry), "utf-8")
+    const { payload } = await resolve(["ResolveWorkday"], [], session)
+    const report = payload.results[0]
+    expect(report.status).not.toBe("ambiguous")
+    expect(report.candidates.some((c) => c.token === "deadco")).toBe(false)
+    expect((report as unknown as { detail: string }).detail).toContain("greenhouse:deadco, but that board no longer exists")
+  })
+
+  test("a Workday link on the careers page is verified through the listing API", async () => {
+    const { payload, session, res } = await resolve(["ResolveWorkday"])
+    const report = payload.results[0]
+    expect(report.status).toBe("verified")
+    expect(report.vendor).toBe("workday")
+    expect(report.token).toBe("acme.wd3/External")
+    expect(report.evidence_kind).toBe("company_site_link")
+    expect(res.requests).toContain("https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/External/jobs")
+    expect(companyIn(session.registryPath, "ResolveWorkday").resolve_attempts).toBe(0)
   })
 
   test("failing to find anything is `unresolved` - never `no_public_board`", async () => {

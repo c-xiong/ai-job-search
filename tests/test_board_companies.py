@@ -244,6 +244,73 @@ class CompaniesTest(unittest.TestCase):
         self.assertIn("already running", str(caught.exception))
 
 
+class WatchStateTest(unittest.TestCase):
+    """COMPANIES_PLAN §4: one state per company, the question the page answers."""
+
+    setUp = CompaniesTest.setUp
+
+    def _state(self, **row):
+        row = {"name": "X", "tier": 3, "status": "unresolved", "route": "ats", **row}
+        self.registry.write_text(json.dumps({"defaults": {}, "companies": [row]}), encoding="utf-8")
+        return companies.listing()["companies"][0]["watch_state"]
+
+    def test_every_registry_shape_lands_in_one_group(self):
+        self.assertEqual(self._state(), "finding")
+        self.assertEqual(self._state(next_resolve_at="2026-10-01", resolve_attempts=2), "finding")
+        self.assertEqual(self._state(next_resolve_at=None, resolve_attempts=4), "needs_you")
+        self.assertEqual(self._state(status="ambiguous"), "needs_you")
+        self.assertEqual(self._state(status="verified", vendor="greenhouse", token="x"), "watching")
+        self.assertEqual(self._state(status="verified", vendor="workday", token="acme.wd3/Ext"), "watching")
+        self.assertEqual(self._state(status="unsupported_vendor"), "cant_watch")
+        self.assertEqual(self._state(status="verified", vendor="smartrecruiters", token="x"), "cant_watch")
+        self.assertEqual(self._state(route="linkedin"), "not_watched")
+        self.assertEqual(self._state(status="paused"), "paused")
+
+    def test_a_pasted_workday_board_is_watched_immediately_and_checked_daily(self):
+        mtime = companies.listing()["mtime"]
+        result = companies.add({"mtime": mtime, "name": "Novartis",
+                                "careers_url": "https://novartis.wd3.myworkdayjobs.com/en-US/Novartis_Careers"})
+        row = next(r for r in result["companies"] if r["name"] == "Novartis")
+        self.assertEqual((row["vendor"], row["token"]), ("workday", "novartis.wd3/Novartis_Careers"))
+        self.assertEqual(row["watch_state"], "watching")
+        self.assertEqual(row["cadence_days"], 1)
+        self.assertEqual(row["board_url"], "https://novartis.wd3.myworkdayjobs.com/Novartis_Careers")
+
+    def test_watch_brings_a_reference_row_into_the_retry_queue(self):
+        self.registry.write_text(json.dumps({"defaults": {}, "companies": [
+            {"name": "Ref", "tier": 3, "status": "unresolved", "route": "linkedin",
+             "domain": "ref.test", "next_resolve_at": None, "resolve_attempts": 4}]}), encoding="utf-8")
+        result = companies.manage("ref", {"mtime": companies.listing()["mtime"], "action": "watch"})
+        row = result["companies"][0]
+        self.assertEqual((row["route"], row["watch_state"]), ("ats", "finding"))
+        self.assertNotIn("resolve_attempts", row)
+
+    def test_none_of_these_asks_for_the_link_instead_of_pausing(self):
+        result = companies.identity("acme", {"mtime": companies.listing()["mtime"],
+                                             "decision": "neither"})
+        row = result["companies"][0]
+        self.assertEqual((row["status"], row["watch_state"]), ("unresolved", "needs_you"))
+        self.assertNotIn("candidates", row)
+
+    def test_a_pasted_greenhouse_embed_link_names_its_board(self):
+        self.assertEqual(companies._ats_identity(
+            "https://job-boards.greenhouse.io/embed/job_board?for=n26&b=https%3A%2F%2Fn26.com"),
+            ("greenhouse", "n26"))
+        self.assertIsNone(companies._ats_identity("https://job-boards.greenhouse.io/embed/job_app"))
+
+    def test_look_now_skips_the_rows_that_wait_for_you(self):
+        self.registry.write_text(json.dumps({"defaults": {}, "companies": [
+            {"name": "Due", "tier": 3, "status": "unresolved", "route": "ats", "domain": "due.test"},
+            {"name": "Asked", "tier": 3, "status": "unresolved", "route": "ats",
+             "domain": "asked.test", "next_resolve_at": None}]}), encoding="utf-8")
+        with mock.patch.object(companies.collectors, "bun",
+                               return_value={"meta": {"status_counts": {}}}) as bun:
+            companies.resolve_all({"mtime": companies.listing()["mtime"]})
+        args = bun.call_args[0][0]
+        self.assertIn("Due", args)
+        self.assertNotIn("Asked", args)
+
+
 class CompaniesHttpTest(CompaniesTest):
     def setUp(self):
         super().setUp()

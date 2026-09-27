@@ -15,7 +15,7 @@ let REVISE_RUN=null;
 // live refresh that asked the class list repainted the tailor run over whatever
 // was actually open - the companies view lasted until the next 3-second poll.
 let VIEW=null;
-let COMPANIES=null,COMPANY_FILTER="all",COMPANY_SELECTED=null;
+let COMPANIES=null,COMPANY_SELECTED=null;
 let COMPANY_BUSY=null,COMPANY_ERROR="",COMPANY_QUERY="",COMPANY_ADD_DRAFT={name:"",url:""};
 let EV=[],EPOCH=null,SEQ=0,actFilter="all",COUNTS={};
 let RUN_FOLLOW=true;
@@ -223,7 +223,7 @@ const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and au
 const DOC_TITLE={cv:"CV",cover:"cover letter"};
 const docKinds=scope=>(scope||"both")==="both"?["cv","cover"]:[scope];
 const scopeOptions=(selected="both")=>SCOPES.map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
-const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","ats-search":"Company ATS","company-careers":"Company careers","freehire-search":"freehire"};
+const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","ats-search":"Your companies","company-careers":"Company careers","freehire-search":"freehire"};
 const sourceLabel=value=>SOURCE_LABELS[value]||String(value||"Other website").replace(/-search$/,"").replaceAll("-"," ");
 const sourceTitle=job=>[...new Set([job.primary_source,...(job.sources||[])].filter(Boolean))].map(sourceLabel).join(" · ");
 
@@ -663,55 +663,103 @@ async function renderRevise(run){
   openView("revise",[crumbRun(run),{label:"Revise"}],"/run/"+encodeURIComponent(run.id)+"/revise");
 }
 
-function companySummary(row){
-  if(row.status==="paused")return {label:"Paused",tone:"quiet",detail:"This company is saved, but job checks are paused."};
-  if(COMPANY_BUSY===row.name)return {label:"Checking…",tone:"working",detail:"Looking for a jobs page and checking available jobs."};
-  if(row.monitoring_status==="needs_confirmation"||row.status==="ambiguous")return {label:"Confirm company",tone:"attention",detail:"We found a possible jobs page. Please confirm it belongs to this company."};
-  if(row.will_be_searched){
-    if(row.fetch_status==="failed")return {label:"Update failed",tone:"attention",detail:"The latest check failed. Any previous results are still shown. You can try again."};
-    if(row.last_success_at)return {label:"Updated",tone:"good",detail:"The last successful check is shown in the table. Check again for the latest jobs."};
-    return {label:"Not checked",tone:"quiet",detail:"The jobs page is connected. Check jobs to get the first results."};
-  }
-  const details={
-    adapter_missing:"Automatic checks are not available for this jobs website yet. You can still open it directly.",
-    policy_disabled:"Automatic access to this jobs website is disabled. You can still open it directly.",
-    no_public_board:"No public jobs page has been confirmed for this company.",
-    other_route:"This company is saved, but its website is not connected for automatic job checks. You can add a careers link below.",
-    careers_url_needed:"A jobs page has not been connected yet. Check jobs to look for one, or add a link below.",
-    source_not_detected:"We could not connect a supported jobs page from this link. You can try another link or open the website directly."
-  };
-  return {label:"Not connected",tone:"quiet",detail:details[row.monitoring_status]||"A jobs page has not been connected yet. Add a website or careers link below."};
+// ---------------------------------------------------------------- companies
+//
+// COMPANIES_PLAN §4: paste a careers page, and JobFlow finds the company's job
+// board and checks it on every fetch. One row per company, grouped by the one
+// question that matters - does this need me, is it still being looked for, or is
+// it watched - with the rest behind ⋯.
+const WATCH_GROUPS=[["needs_you","Needs you"],["finding","Finding"],["watching","Watching"],["cant_watch","Can't watch yet"],["not_watched","Not watched"],["paused","Paused"]];
+const FOLDED_GROUPS=["cant_watch","not_watched","paused"];
+let COMPANY_OPEN_GROUPS=new Set();
+const VENDOR_LABEL={greenhouse:"Greenhouse",ashby:"Ashby",personio:"Personio",lever:"Lever",smartrecruiters:"SmartRecruiters",workday:"Workday"};
+function ago(value){
+  const at=Date.parse(value||"");if(Number.isNaN(at))return "";
+  const minutes=Math.max(0,Math.round((Date.now()-at)/60000));
+  if(minutes<60)return minutes<2?"just now":minutes+" min ago";
+  const hours=Math.round(minutes/60);if(hours<36)return hours+" h ago";
+  return Math.round(hours/24)+" d ago";
 }
+const shortDay=value=>{const at=Date.parse((value||"")+"T12:00:00");return Number.isNaN(at)?"":new Date(at).toLocaleDateString("en-GB",{day:"numeric",month:"short"})};
+const sameCompany=(a,b)=>String(a||"").toLowerCase().replace(/[^a-z0-9]+/g,"")===String(b||"").toLowerCase().replace(/[^a-z0-9]+/g,"");
+const boardCount=row=>JOBS.filter(j=>sameCompany(j.company,row.name)||(row.aliases||[]).some(alias=>sameCompany(j.company,alias))).length;
 function companyLink(row){
   const value=row.board_url||row.careers_url||(row.domain?"https://"+row.domain:"");
   try{const url=new URL(value);return ["https:","http:"].includes(url.protocol)?url.href:""}catch(_){return ""}
 }
+// What a row says and offers, by its watch state. Words only: the registry's
+// statuses, routes and tokens stay out of sight.
+function companyLine(row){
+  const link=companyLink(row),busy=COMPANY_BUSY===row.name;
+  const careers=link?`<a class="open" href="${esc(link)}" target="_blank" rel="noopener">${row.watch_state==="watching"?"job board":"careers"} ↗</a>`:"";
+  const tried=row.resolve_attempts?`tried ${row.resolve_attempts}×`:"not tried yet";
+  switch(row.watch_state){
+    case "watching":{
+      const count=boardCount(row);
+      const check=busy?"checking…":row.fetch_status==="failed"?`<span class="warn">! last check failed · retries next fetch</span>`
+        :row.last_success_at?`<span class="ok-dot"></span>checked ${esc(ago(row.last_success_at))}`:"first check on the next fetch";
+      return {what:`<span class="vendor">${esc(VENDOR_LABEL[row.vendor]||row.vendor||"")}</span><button class="linkish company-count" data-company-board="${esc(row.name)}" title="Show this company's jobs on the Board">${count} on Board →</button>`,
+        state:check,actions:careers};
+    }
+    case "finding":
+      return {what:`<span class="dim">Looking for its job board</span>`,
+        state:busy?"looking…":`${tried} · ${row.next_resolve_at?"next try "+esc(shortDay(row.next_resolve_at)):"next fetch"}`,actions:careers};
+    case "needs_you":{
+      if(row.status==="ambiguous"){
+        // A candidate whose board answered "not found" is dead: shown, never offered.
+        const options=(row.candidates||[]).map(c=>/not_found|no longer/.test(c.note||"")
+          ?`<span class="candidate dead" title="This job board no longer exists">${esc(VENDOR_LABEL[c.vendor]||c.vendor)} · ${esc(c.token)} — no longer active</span>`
+          :`<span class="candidate"><a class="open" href="${esc(companyLink(c)||"#")}" target="_blank" rel="noopener">${esc(VENDOR_LABEL[c.vendor]||c.vendor)} · ${esc(c.token)} ↗</a><button class="secondary" data-company-confirm="${esc(row.name)}|${esc(c.vendor)}|${esc(c.token)}" title="Yes - this board belongs to ${esc(row.name)}; watch it">This one</button></span>`).join("");
+        return {what:`<span>Is this their job board?</span>${options}`,state:"",
+          actions:`<button class="secondary" data-company-relook="${esc(row.name)}" title="Read the careers page again">${busy?"Looking…":"Look again"}</button><button class="secondary" data-company-neither="${esc(row.name)}" title="None of these belongs to ${esc(row.name)} - you will paste its board link instead">None of these</button>`};
+      }
+      const rejected=/you said none/.test(row.resolve_detail||"");
+      return {what:`<span title="${esc(row.resolve_detail||"")}">${rejected?"None of the suggested boards is theirs":"We couldn't find its job board"}</span>`,
+        state:row.resolve_attempts?`tried ${esc(row.resolve_attempts)}×`:"",
+        actions:`<button class="primary" data-company-row="${esc(row.name)}" data-company-focus="link" title="Open the company's jobs page in your browser, copy its address, and paste it here">Paste board link</button><button class="secondary" data-company-check="${esc(row.name)}">${busy?"Looking…":"Try again"}</button>`};
+    }
+    case "cant_watch":
+      return {what:`<span class="dim" title="${esc(row.resolve_detail||row.monitoring_reason||"")}">${esc(row.resolve_detail&&/uses (\S+)/.test(row.resolve_detail)?"Uses "+row.resolve_detail.match(/uses (\S+)/)[1]+" — no reader for it yet":"Its job board can't be read automatically")}</span>`,state:"",actions:careers};
+    case "not_watched":
+      return {what:`<span class="dim">Kept for reference</span>`,state:"",
+        actions:`${careers}<button class="secondary" data-company-watch="${esc(row.name)}">Find its board</button>`};
+    default:
+      return {what:`<span class="dim">Paused</span>`,state:"",
+        actions:`<button class="secondary" data-company-action-row="${esc(row.name)}|resume">Resume</button>`};
+  }
+}
+function companyEditor(row,disabled){
+  const markets=[["","Your usual locations"],["CH","Switzerland"],["DE","Germany"],["CH,DE","Switzerland + Germany"]];
+  const market=row.countries?.length?row.countries.join(","):"";
+  const canCheck=["watching","finding","needs_you"].includes(row.watch_state)&&row.status!=="ambiguous";
+  return `<form id="company-settings" class="company-editor"><label>Name<input id="company-name-value" required value="${esc(row.name)}"></label><label class="wide">Careers page or job-board link<input id="company-careers-value" inputmode="url" value="${esc(row.careers_url||(row.domain?"https://"+row.domain:""))}" placeholder="https://company.com/careers"></label><label>Locations<select id="company-market-value">${markets.map(([key,label])=>`<option value="${key}" ${market===key?"selected":""}>${label}</option>`).join("")}</select></label>
+    <div class="company-editor-actions"><button class="primary" ${disabled}>Save</button>${canCheck?`<button type="button" class="secondary" ${disabled} data-company-check="${esc(row.name)}">Check now</button>`:""}<button type="button" class="secondary" ${disabled} data-company-action="${row.status==="paused"?"resume":"pause"}">${row.status==="paused"?"Resume":"Pause"}</button><span class="spacer"></span><button type="button" class="linkish company-remove" ${disabled} data-company-action="remove">Remove</button></div></form>`;
+}
 async function renderCompanies(reload=true,scrollTop=null){
   if(reload||!COMPANIES){try{const response=await fetch("/api/companies?t="+T);if(!response.ok)throw new Error();COMPANIES=await response.json()}catch(error){toast("Could not load companies. Please try again.",{warn:true});return}}
   const schemaReady=COMPANIES.schema_version===2&&COMPANIES.company_controls===true;
-  const all=COMPANIES.companies||[];
-  if(!["all","following","paused"].includes(COMPANY_FILTER))COMPANY_FILTER="all";
-  const following=all.filter(row=>row.status!=="paused").length;
-  const rows=all.filter(row=>(COMPANY_FILTER==="all"||(row.status==="paused"?"paused":"following")===COMPANY_FILTER)&&[row.name,row.domain,row.careers_url].join(" ").toLowerCase().includes(COMPANY_QUERY.toLowerCase()));
-  const selected=rows.find(row=>row.name===COMPANY_SELECTED);
-  const shortTime=value=>{if(!value)return "Never";const date=new Date(value);return Number.isNaN(date.getTime())?String(value).slice(0,16):date.toLocaleString("en-GB",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})};
-  const marketValue=row=>row?.countries?.length?row.countries.join(","):"";
-  const marketOptions=value=>[["","Use search defaults"],["CH","Switzerland"],["DE","Germany"],["CH,DE","Switzerland + Germany"]].map(([key,label])=>`<option value="${key}" ${value===key?"selected":""}>${label}</option>`).join("");
+  const all=COMPANIES.companies||[],query=COMPANY_QUERY.toLowerCase();
+  const rows=all.filter(row=>[row.name,row.domain,row.careers_url].join(" ").toLowerCase().includes(query));
   const disabled=COMPANY_BUSY||!schemaReady?"disabled":"";
-  const details=row=>{
-    const summary=companySummary(row),link=companyLink(row);
-    const canCheck=row.status!=="paused"&&((row.route||"ats")==="ats")&&(!["unsupported_vendor","no_public_board","ambiguous"].includes(row.status))&&row.monitoring_status!=="policy_disabled";
-    const candidates=row.status==="ambiguous"?(row.candidates||[]).map(candidate=>`<div class="company-candidate"><a class="open" href="${esc(companyLink(candidate)||"#")}" target="_blank" rel="noopener">Open possible jobs page ↗</a><button class="secondary" ${disabled} data-company-confirm="${esc(candidate.vendor)}|${esc(candidate.token)}">This is the right company</button></div>`).join(""):"";
-    return `<tr class="company-detail-row"><td colspan="5"><div class="company-detail"><div class="company-detail-summary"><strong>${esc(row.name)}</strong><p>${esc(summary.detail)}</p>${candidates}<div class="company-actions">${canCheck?`<button class="primary" ${disabled} data-company-check="${esc(row.name)}">${COMPANY_BUSY===row.name?"Checking…":"Check jobs"}</button>`:""}${link?`<a class="secondary" href="${esc(link)}" target="_blank" rel="noopener">Open website ↗</a>`:""}<button class="secondary" ${disabled} data-company-action="${row.status==="paused"?"resume":"pause"}">${row.status==="paused"?"Resume following":"Pause following"}</button><button class="linkish company-remove" ${disabled} data-company-action="remove">Remove company</button></div></div><form id="company-settings" class="company-settings"><label>Company name<input id="company-name-value" required value="${esc(row.name)}"></label><label>Website or careers link<input id="company-careers-value" inputmode="url" value="${esc(row.careers_url||(row.domain?"https://"+row.domain:""))}" placeholder="https://company.com/careers"></label><label>Job locations<select id="company-market-value">${marketOptions(marketValue(row))}</select></label><button class="secondary" ${disabled}>Save changes</button></form></div></td></tr>`;
-  };
-  const table=rows.map(row=>{
-    const summary=companySummary(row),link=companyLink(row),count=row.last_success_at?row.stats?.last_eligible_jobs:null;
-    return `<tr class="${row===selected?"sel":""}"><td><strong>${esc(row.name)}</strong></td><td class="company-updated">${esc(shortTime(row.last_success_at))}</td><td>${link?`<a class="open" href="${esc(link)}" target="_blank" rel="noopener">${row.will_be_searched||row.last_success_at?"View jobs":"Open website"} ↗</a>`:'<span class="dim">No link yet</span>'}${count!=null?`<div class="company-match-count">${esc(count)} matching at last update</div>`:""}</td><td><span class="company-state ${summary.tone}" title="${esc(summary.detail)}">${summary.label}</span></td><td class="company-manage-cell"><button class="secondary" data-company-row="${esc(row.name)}" aria-expanded="${row===selected}" aria-label="${row===selected?"Close":"Manage"} ${esc(row.name)}">${row===selected?"Close":"Manage"}</button></td></tr>${row===selected?details(row):""}`;
+  const perFetch=COMPANIES.defaults?.resolve_per_fetch||5;
+  const groups=WATCH_GROUPS.map(([key,label])=>{
+    const members=rows.filter(row=>(row.watch_state||"finding")===key);if(!members.length)return "";
+    const folded=FOLDED_GROUPS.includes(key)&&!COMPANY_OPEN_GROUPS.has(key)&&!query&&!members.some(row=>row.name===COMPANY_SELECTED);
+    const extra=key==="finding"?`<span class="company-group-note">the next fetch looks at up to ${perFetch} of these</span><button class="linkish" ${disabled} data-company-look-now>${COMPANY_BUSY==="__all__"?"Looking…":"Look now"}</button>`:"";
+    const head=`<div class="company-group-head ${key}">${FOLDED_GROUPS.includes(key)?`<button class="linkish" data-company-group="${key}">${label} <span class="n">${members.length}</span> ${folded?"▸":"▾"}</button>`:`<span>${label} <span class="n">${members.length}</span></span>`}${extra}</div>`;
+    const body=folded?"":members.map(row=>{
+      const line=companyLine(row),open=row.name===COMPANY_SELECTED;
+      return `<div class="company-row ${key}${open?" open":""}"><strong class="company-name">${esc(row.name)}</strong><div class="company-what">${line.what}</div><div class="company-state">${line.state}</div><div class="company-actions">${line.actions}<button class="linkish company-more" data-company-row="${esc(row.name)}" aria-expanded="${open}" aria-label="${open?"Close":"Edit"} ${esc(row.name)}" title="Edit, check, pause or remove">⋯</button></div></div>${open?companyEditor(row,disabled):""}`;
+    }).join("");
+    return `<section class="company-group">${head}${body}</section>`;
   }).join("");
-  const chips=[["all","All",all.length],["following","Following",following],["paused","Paused",all.length-following]].map(([key,label,count])=>`<button class="chip ${COMPANY_FILTER===key?"on":""}" data-company-filter="${key}">${label}<span class="n">${count}</span></button>`).join("");
-  el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main"><div class="companies-head"><h1>Target companies</h1><p>Keep your company list here. Add a link to find and check its jobs page.</p></div>${!schemaReady?'<div class="company-notice" role="status">Restart JobFlow to enable company editing.</div>':""}${COMPANY_ERROR?`<div class="company-notice" role="alert">${esc(COMPANY_ERROR)}</div>`:""}<form id="company-add" class="company-add"><label class="company-url-label">Website or careers link<input id="company-careers" inputmode="url" required value="${esc(COMPANY_ADD_DRAFT.url)}" placeholder="Paste a company or careers URL"></label><label>Company name <span class="dim">(optional)</span><input id="company-name" value="${esc(COMPANY_ADD_DRAFT.name)}" placeholder="Use the name from the link"></label><button class="primary" ${disabled}>${COMPANY_BUSY==="__add__"?"Adding…":"Add company"}</button><span class="hint">We’ll find a supported jobs page and check it when available. You can edit the name and job locations later.</span></form><div class="company-toolbar"><div class="chips">${chips}</div><input id="company-search" type="search" aria-label="Search companies" placeholder="Search companies" value="${esc(COMPANY_QUERY)}"></div><div class="tablewrap"><table class="company-table"><thead><tr><th>Company</th><th>Last updated</th><th>Jobs</th><th>Status</th><th><span class="sr-only">Manage company</span></th></tr></thead><tbody>${table||`<tr><td colspan="5" class="panel-empty">${all.length?"No companies match this view.":"Add your first company using the link field above."}</td></tr>`}</tbody></table></div><div class="companies-foot">Last updated means the last successful check. Matching jobs use your location and language preferences. Use Check jobs to refresh a company.</div></section></div>`;
-  if(scrollTop!==null)el("tailor-view").querySelector(".tablewrap").scrollTop=scrollTop;
-  openView("companies",null,"/companies?f="+encodeURIComponent(COMPANY_FILTER)+(COMPANY_SELECTED?"&c="+encodeURIComponent(COMPANY_SELECTED):""));
+  el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main"><div class="companies-head"><div><h1>Companies</h1><p>Paste a company's careers page — JobFlow finds its job board and checks it on every fetch.</p></div><label class="search"><span>⌕</span><input id="company-search" type="search" aria-label="Search companies" placeholder="search companies" value="${esc(COMPANY_QUERY)}"></label></div>${!schemaReady?'<div class="company-notice" role="status">Restart JobFlow to enable company editing.</div>':""}${COMPANY_ERROR?`<div class="company-notice" role="alert">${esc(COMPANY_ERROR)}</div>`:""}<form id="company-add" class="company-add"><input id="company-careers" inputmode="url" required aria-label="Careers page or job-board link" value="${esc(COMPANY_ADD_DRAFT.url)}" placeholder="https://… a careers page or job-board link"><button class="primary" ${disabled}>${COMPANY_BUSY==="__add__"?"Looking…":"Watch"}</button></form><div class="companies-scroll">${groups||`<div class="panel-empty">${all.length?"No company matches.":"Paste your first company's careers page above."}</div>`}</div></section></div>`;
+  if(scrollTop!==null)el("tailor-view").querySelector(".companies-scroll").scrollTop=scrollTop;
+  openView("companies",null,"/companies"+(COMPANY_SELECTED?"?c="+encodeURIComponent(COMPANY_SELECTED):""));
+}
+// "N on Board →": the Board, searched to that company.
+function showCompanyOnBoard(name){
+  filter="all";q=name;el("q").value=name;sel=0;restoreWorkspace();render();
 }
 
 // The app bar carries two classes of thing and keeps them apart: identity and
@@ -809,7 +857,7 @@ function dispatchRoute(){
     if(index<0)return false;
     sel=index;renderReader();return true;
   }
-  if(head==="companies"){COMPANY_FILTER=params.get("f")||"all";COMPANY_SELECTED=params.get("c")||null;renderCompanies();return true}
+  if(head==="companies"){COMPANY_SELECTED=params.get("c")||null;renderCompanies();return true}
   if(head==="run"){
     const run=RUNS.find(item=>item.id===first);if(!run)return false;
     if(second==="preview")renderPreview(run);else if(second==="revise")renderRevise(run);else renderTailor(run);
@@ -897,9 +945,11 @@ async function reloadJobs(){const response=await fetch("/api/jobs?t="+T);checkAu
 function fetchSummary(status){
   if(status.running)return {message:"Checking for new jobs…",running:true};
   const sources=status.sources||[],added=sources.reduce((n,s)=>n+(s.added||0),0);
-  const labels={"ats-search":"Target companies","linkedin-search":"LinkedIn","freehire-search":"freehire"};
+  const labels={"ats-search":"Your companies","linkedin-search":"LinkedIn","freehire-search":"freehire"};
   const failed=sources.filter(s=>s.degraded||s.error||s.failed?.length||s.retry_later).map(s=>labels[s.source]||s.source);
-  const result=added?`${added} new job${added===1?"":"s"} added`:"No new jobs found";
+  // Boards the fetch found for companies you saved (COMPANIES_PLAN §3.1).
+  const boards=sources.flatMap(s=>s.boards_found||[]);
+  const result=(added?`${added} new job${added===1?"":"s"} added`:"No new jobs found")+(boards.length?` · found job boards for ${boards.slice(0,3).join(", ")}${boards.length>3?` and ${boards.length-3} more`:""}`:"");
   if(status.error)return {message:added?`${result} · Fetch stopped early. See Activity.`:"Could not finish fetching. Try again or see Activity.",error:true};
   if(failed.length)return {message:`${result} · ${failed.join(", ")} could not be fully checked. See Activity.`,error:true};
   if(!status.finished_at)return {message:"Ready to fetch"};
@@ -989,11 +1039,21 @@ async function checkCompany(name){
     await postCompany(companyPath(name)+"/resolve",{mtime:COMPANIES.mtime});
     row=COMPANIES.companies.find(row=>row.name===name);
   }
-  if(row?.will_be_searched)await postCompany(companyPath(name)+"/test-fetch",{mtime:COMPANIES.mtime});
+  if(row?.will_be_searched)return postCompany(companyPath(name)+"/test-fetch",{mtime:COMPANIES.mtime});
+  return null;
+}
+// What a check found, in one line: the board and how many of its jobs fit you.
+function reportCheck(name,result){
+  const row=COMPANIES.companies.find(r=>r.name===name);if(!row)return;
+  const test=result?.test_fetch;
+  if(row.watch_state==="watching")toast(test?`${name}: ${VENDOR_LABEL[row.vendor]||row.vendor} board · ${test.eligible_jobs} matching job${test.eligible_jobs===1?"":"s"} — Fetch new jobs adds them to the Board`:`${name}: watching its ${VENDOR_LABEL[row.vendor]||row.vendor} board`,{ms:6000});
+  else if(row.watch_state==="needs_you")toast(`${name}: ${row.status==="ambiguous"?"pick which job board is theirs":"no job board found — paste its board link"}`,{ms:6000,warn:true});
+  else if(row.watch_state==="finding")toast(`${name}: no job board found yet — the next fetch tries again`,{ms:6000});
+  else if(row.watch_state==="cant_watch")toast(`${name}: its job board can't be read automatically yet`,{ms:6000,warn:true});
 }
 function selectCompanyRow(row){
-  const scrollTop=row.closest(".tablewrap")?.scrollTop||0;
-  COMPANY_SELECTED=COMPANY_SELECTED===row.dataset.companyRow?null:row.dataset.companyRow;
+  const scrollTop=row.closest(".companies-scroll")?.scrollTop||0;
+  COMPANY_SELECTED=COMPANY_SELECTED===row.dataset.companyRow&&!row.dataset.companyFocus?null:row.dataset.companyRow;
   renderCompanies(false,scrollTop);
 }
 
@@ -1024,11 +1084,17 @@ document.addEventListener("click",event=>{
   const note=event.target.closest("[data-note]");if(note)return void editNote(JOBS.find(j=>j.url===note.dataset.note));
   const tailor=event.target.closest("[data-tailor]");if(tailor)return void startTailor(tailor.dataset.tailor);
   const readerRow=event.target.closest("[data-reader-row]");if(readerRow){sel=+readerRow.dataset.readerRow;renderReader();return}
-  const companyFilter=event.target.closest("[data-company-filter]");if(companyFilter){COMPANY_FILTER=companyFilter.dataset.companyFilter;renderCompanies(false);return}
-  const companyRow=event.target.closest("[data-company-row]");if(companyRow)return void selectCompanyRow(companyRow);
-  const companyCheck=event.target.closest("[data-company-check]");if(companyCheck){const name=companyCheck.dataset.companyCheck;void companyWork(name,()=>checkCompany(name));return}
+  const companyRow=event.target.closest("[data-company-row]");if(companyRow){selectCompanyRow(companyRow);if(companyRow.dataset.companyFocus)el("company-careers-value")?.select();return}
+  const companyBoard=event.target.closest("[data-company-board]");if(companyBoard)return void showCompanyOnBoard(companyBoard.dataset.companyBoard);
+  const companyGroup=event.target.closest("[data-company-group]");if(companyGroup){const key=companyGroup.dataset.companyGroup;COMPANY_OPEN_GROUPS.has(key)?COMPANY_OPEN_GROUPS.delete(key):COMPANY_OPEN_GROUPS.add(key);renderCompanies(false,el("tailor-view").querySelector(".companies-scroll")?.scrollTop||0);return}
+  if(event.target.closest("[data-company-look-now]")){void companyWork("__all__",async()=>{const data=await postCompany("/api/companies/resolve-all",{mtime:COMPANIES.mtime});const counts=data.result?.meta?.status_counts||{};toast(`Looked for ${data.result?.meta?.resolved||0} job boards: ${counts.verified||0} found${counts.ambiguous?`, ${counts.ambiguous} need you`:""}`,{ms:6000})});return}
+  const companyCheck=event.target.closest("[data-company-check]");if(companyCheck){const name=companyCheck.dataset.companyCheck;void companyWork(name,async()=>reportCheck(name,await checkCompany(name)));return}
+  const companyWatch=event.target.closest("[data-company-watch]");if(companyWatch){const name=companyWatch.dataset.companyWatch;void companyWork(name,async()=>{await postCompany(companyPath(name)+"/manage",{mtime:COMPANIES.mtime,action:"watch"});reportCheck(name,await checkCompany(name))});return}
+  const companyNeither=event.target.closest("[data-company-neither]");if(companyNeither){const name=companyNeither.dataset.companyNeither;void companyWork(name,async()=>{await postCompany(companyPath(name)+"/identity",{mtime:COMPANIES.mtime,decision:"neither"});toast(`${name}: paste its job board link to watch it`,{ms:5000})});return}
+  const companyRelook=event.target.closest("[data-company-relook]");if(companyRelook){const name=companyRelook.dataset.companyRelook;void companyWork(name,async()=>{await postCompany(companyPath(name)+"/resolve",{mtime:COMPANIES.mtime});reportCheck(name,await checkCompany(name))});return}
+  const companyRowAction=event.target.closest("[data-company-action-row]");if(companyRowAction){const [name,action]=companyRowAction.dataset.companyActionRow.split("|");void companyWork(name,()=>postCompany(companyPath(name)+"/manage",{mtime:COMPANIES.mtime,action}));return}
   const companyAction=event.target.closest("[data-company-action]");if(companyAction){const name=COMPANY_SELECTED,action=companyAction.dataset.companyAction;if(action==="remove"&&!confirm("Remove "+name+" from your company list? Saved jobs will stay on the Board."))return;void companyWork(name,async()=>{await postCompany(companyPath(name)+"/manage",{mtime:COMPANIES.mtime,action});if(action==="remove")COMPANY_SELECTED=null});return}
-  const companyConfirm=event.target.closest("[data-company-confirm]");if(companyConfirm){const name=COMPANY_SELECTED,[vendor,token]=companyConfirm.dataset.companyConfirm.split("|");void companyWork(name,async()=>{await postCompany(companyPath(name)+"/identity",{mtime:COMPANIES.mtime,decision:"confirm",candidate:{vendor,token}});await checkCompany(name)});return}
+  const companyConfirm=event.target.closest("[data-company-confirm]");if(companyConfirm){const [name,vendor,token]=companyConfirm.dataset.companyConfirm.split("|");void companyWork(name,async()=>{await postCompany(companyPath(name)+"/identity",{mtime:COMPANIES.mtime,decision:"confirm",candidate:{vendor,token}});reportCheck(name,await checkCompany(name))});return}
   const preview=event.target.closest("[data-preview]");if(preview){const run=RUNS.find(r=>r.id===preview.dataset.preview);if(run)renderPreview(run);return}
   const revise=event.target.closest("[data-revise]");if(revise){const run=RUNS.find(r=>r.id===revise.dataset.revise);if(run)renderRevise(run);return}
   const restoreVersion=event.target.closest("[data-restore-version]");if(restoreVersion){restoreVersion.disabled=true;postRun("/api/runs/"+restoreVersion.dataset.restoreVersion+"/restore").then(({ok})=>{const run=RUNS.find(r=>r.id===REVISE_RUN);if(ok&&run)renderRevise(run)});return}
@@ -1068,9 +1134,10 @@ document.addEventListener("input",event=>{
 });
 document.addEventListener("submit",event=>{
   if(event.target.id==="company-add"){
-    event.preventDefault();const name=el("company-name").value,careers_url=el("company-careers").value,known=new Set(COMPANIES.companies.map(row=>row.name));
-    COMPANY_ADD_DRAFT={name,url:careers_url};
-    void companyWork("__add__",async()=>{await postCompany("/api/companies",{mtime:COMPANIES.mtime,name,careers_url});COMPANY_ADD_DRAFT={name:"",url:""};const added=COMPANIES.companies.find(row=>!known.has(row.name));if(added){COMPANY_FILTER="all";COMPANY_QUERY="";COMPANY_SELECTED=added.name;COMPANY_BUSY=added.name;if(VIEW==="companies")renderCompanies(false);if(added.will_be_searched)await checkCompany(added.name)}});return;
+    // One field: the name comes from the link and can be changed under ⋯.
+    event.preventDefault();const careers_url=el("company-careers").value,known=new Set(COMPANIES.companies.map(row=>row.name));
+    COMPANY_ADD_DRAFT={name:"",url:careers_url};
+    void companyWork("__add__",async()=>{await postCompany("/api/companies",{mtime:COMPANIES.mtime,name:"",careers_url});COMPANY_ADD_DRAFT={name:"",url:""};const added=COMPANIES.companies.find(row=>!known.has(row.name));if(added){COMPANY_QUERY="";COMPANY_BUSY=added.name;if(VIEW==="companies")renderCompanies(false);reportCheck(added.name,added.will_be_searched?await checkCompany(added.name):null)}});return;
   }
   if(event.target.id==="company-settings"){
     event.preventDefault();const oldName=COMPANY_SELECTED,name=el("company-name-value").value.trim(),careers_url=el("company-careers-value").value.trim(),market=el("company-market-value").value;

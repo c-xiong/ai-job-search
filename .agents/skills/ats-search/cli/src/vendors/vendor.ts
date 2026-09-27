@@ -5,6 +5,12 @@
 import type { BoardResult, LocationHint, RawPosting, VendorName } from "../types.ts"
 import type { Transport } from "../helpers.ts"
 
+/** What the caller already knows it wants, for vendors that can narrow a board. */
+export interface BoardHint {
+  /** ISO-3166 alpha-2 codes the owner accepts, uppercase. */
+  countries?: string[]
+}
+
 export interface Vendor {
   name: VendorName
   /** The board page a human opens. */
@@ -17,8 +23,12 @@ export interface Vendor {
   inlineDescriptions: boolean
   /** Find this vendor's board token in a careers page's markup. */
   detectToken(html: string): string | null
-  /** Fetch (and paginate) one board. Never throws: failures come back as a status. */
-  fetchBoard(token: string, get: Transport): Promise<BoardResult>
+  /** False when a token cannot be derived from a company name, so `resolve`
+   *  must never slug-guess this vendor (Workday: tenant, pod and site). */
+  guessable?: boolean
+  /** Fetch (and paginate) one board. Never throws: failures come back as a status.
+   *  `hint` lets a vendor that can filter server-side (Workday) fetch less. */
+  fetchBoard(token: string, get: Transport, hint?: BoardHint): Promise<BoardResult>
   /** One posting's full detail. Null when the posting is gone. */
   fetchDetail(token: string, postingId: string, get: Transport): Promise<RawPosting | null>
 }

@@ -13,6 +13,8 @@ import type { Transport } from "../helpers.ts"
 import { ADAPTERS, adapterFor } from "../vendors/index.ts"
 import {
   loadRegistry,
+  resolveBookkeeping,
+  selectResolveDue,
   vendorAccess,
   writeResolution,
   type Company,
@@ -23,7 +25,6 @@ import { VENDORS, type VendorName } from "../types.ts"
 
 /** ATS platforms we can recognize on a careers page but have no adapter for. */
 const UNSUPPORTED_ATS: Array<[string, RegExp]> = [
-  ["workday", /myworkdayjobs\.com|workday\.com\/[a-z-]+\/jobs/i],
   ["successfactors", /successfactors\.(?:eu|com)|jobs\.sap\.com/i],
   ["recruitee", /([a-z0-9-]+)\.recruitee\.com/i],
   ["join.com", /join\.com\/companies\//i],
@@ -38,6 +39,9 @@ const UNSUPPORTED_ATS: Array<[string, RegExp]> = [
 export interface ResolveOpts {
   only: string[]
   allUnresolved: boolean
+  /** The retry queue: unresolved rows whose backoff has elapsed, plus verified
+   *  rows whose board keeps answering not_found (COMPANIES_PLAN §3). */
+  due: boolean
   maxCompanies: number
   /** Slug-fallback probes per company, after the careers page found nothing. */
   maxProbes: number
@@ -150,6 +154,7 @@ async function resolveOne(
   //      then probe only that vendor.
   const { html, pages, requests } = await careersHtml(company, get)
   report.requests += requests
+  let dead = ""
   for (const vendor of VENDORS) {
     const token = ADAPTERS[vendor].detectToken(html)
     if (!token) continue
@@ -187,6 +192,14 @@ async function resolveOne(
       }
       return report
     }
+    // A board that does not exist is not a candidate anyone can confirm; keep
+    // looking (other vendors, the slug fallback) and say why if nothing turns up.
+    if (board.status === "not_found") {
+      report.vendor = null
+      report.token = null
+      dead = `careers page names ${vendor}:${token}, but that board no longer exists; `
+      continue
+    }
     report.status = "ambiguous"
     report.detail = `careers page names ${vendor}:${token} but the board answered ${board.status}`
     report.candidates.push({ vendor, token, note: board.status })
@@ -211,6 +224,7 @@ async function resolveOne(
   for (const token of candidates) {
     for (const vendor of VENDORS) {
       if (probes >= opts.maxProbes) break
+      if (ADAPTERS[vendor].guessable === false) continue
       if (!vendorAccess(defaults, vendor).enabled) continue
       const host = new URL(ADAPTERS[vendor].endpoint(token)).host
       if (blockedHosts.has(host)) continue
@@ -251,7 +265,7 @@ async function resolveOne(
   // uncovered ATS, a non-derivable token, an empty board and a JS-rendered
   // careers page all look identical from out here (§8).
   report.status = "unresolved"
-  report.detail = `no board found on the careers page and ${probes} slug probes; a human still has to look before this is no_public_board`
+  report.detail = `${dead}no board found on the careers page and ${probes} slug probes; a human still has to look before this is no_public_board`
   return report
 }
 
@@ -293,10 +307,12 @@ export async function runResolve(opts: ResolveOpts, get: Transport = transport()
       return 1
     }
     targets = [...picked.values()]
+  } else if (opts.due) {
+    targets = selectResolveDue(registry, now().toISOString().slice(0, 10), opts.maxCompanies)
   } else if (opts.allUnresolved) {
     targets = registry.companies.filter((c) => c.status === "unresolved" && c.route !== "manual")
   } else {
-    writeError("resolve needs --company <name> (repeatable) or --all-unresolved", "BAD_ARGS")
+    writeError("resolve needs --company <name> (repeatable), --due or --all-unresolved", "BAD_ARGS")
     return 1
   }
   targets = targets.slice(0, Math.max(0, opts.maxCompanies))
@@ -309,10 +325,16 @@ export async function runResolve(opts: ResolveOpts, get: Transport = transport()
 
   if (!opts.dryRun) {
     const stamp = now().toISOString().slice(0, 10)
+    const byName = new Map(targets.map((c) => [c.name, c]))
     writeResolution(
       reports.map((r) => ({
         name: r.name,
         patch: {
+          // Every attempt is recorded, so the next fetch knows whether and when
+          // to try this company again.
+          ...resolveBookkeeping(byName.get(r.name)!, r.status, stamp),
+          // Why it is not watched yet, in words the Companies page can show.
+          resolve_detail: r.status === "verified" ? undefined : r.detail,
           status: r.status,
           ...(r.vendor ? { vendor: r.vendor } : {}),
           ...(r.token ? { token: r.token } : {}),

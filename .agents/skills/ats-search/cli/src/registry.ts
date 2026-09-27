@@ -94,6 +94,15 @@ export interface Company {
   title_exclude?: string[]
   /** Candidate boards recorded by `resolve` when identity was insufficient. */
   candidates?: Array<{ vendor: string; token: string; note?: string }>
+  /** Detection retry state, written by `resolve` (COMPANIES_PLAN §3.2). */
+  resolve_attempts?: number
+  last_resolve_at?: string | null
+  /** When `resolve --due` may try again; null means stop and ask the owner. */
+  next_resolve_at?: string | null
+  /** The last detection's explanation while the row is not verified. */
+  resolve_detail?: string
+  /** Consecutive `not_found` board fetches; 3 sends a verified row back to `resolve`. */
+  missing_streak?: number
 }
 
 /**
@@ -352,6 +361,50 @@ export function selectDue(
   }
 }
 
+/** A verified board that answered `not_found` this many times in a row is re-detected. */
+export const MISSING_STREAK_LIMIT = 3
+/** Days to wait after the 1st, 2nd and 3rd failed detection; after the 4th, ask. */
+export const RESOLVE_BACKOFF_DAYS = [1, 3, 7]
+/** An ATS with no adapter is looked at again monthly, in case one was added. */
+export const UNSUPPORTED_RETRY_DAYS = 30
+
+/**
+ * The companies `resolve --due` works on, most deserving first: never-tried
+ * rows, then the longest-waiting. Detection is retried with backoff and then
+ * handed to the owner (`next_resolve_at: null`); `ambiguous` always waits for
+ * the owner, because a wrong board means another company's jobs.
+ */
+export function selectResolveDue(registry: Registry, today: string, max: number): Company[] {
+  const due = registry.companies.filter((c) => {
+    if ((c.route ?? "ats") !== "ats") return false
+    if (c.status === "verified") return (c.missing_streak ?? 0) >= MISSING_STREAK_LIMIT
+    if (c.status !== "unresolved" && c.status !== "unsupported_vendor") return false
+    if (c.next_resolve_at === null) return false
+    return !c.next_resolve_at || c.next_resolve_at <= today
+  })
+  due.sort((a, b) => (a.last_resolve_at ?? "").localeCompare(b.last_resolve_at ?? "") || a.name.localeCompare(b.name))
+  return due.slice(0, Math.max(0, max))
+}
+
+function addDays(today: string, days: number): string {
+  const d = new Date(`${today}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+/** The retry fields one detection outcome leaves behind (COMPANIES_PLAN §3.2). */
+export function resolveBookkeeping(company: Company, status: ResolutionStatus, today: string): Partial<Company> {
+  if (status === "verified") {
+    return { resolve_attempts: 0, last_resolve_at: today, next_resolve_at: undefined, missing_streak: 0 }
+  }
+  const attempts = (company.resolve_attempts ?? 0) + 1
+  let next: string | null
+  if (status === "unsupported_vendor") next = addDays(today, UNSUPPORTED_RETRY_DAYS)
+  else if (status === "unresolved" && attempts <= RESOLVE_BACKOFF_DAYS.length) next = addDays(today, RESOLVE_BACKOFF_DAYS[attempts - 1])
+  else next = null
+  return { resolve_attempts: attempts, last_resolve_at: today, next_resolve_at: next }
+}
+
 export function emptyStats(): CompanyStats {
   return {
     jobs_seen: 0, german_gated: 0, eligible_jobs: 0, last_eligible_at: null,
@@ -386,6 +439,10 @@ export function writeBookkeeping(entries: Bookkeeping[], path = registryPath()):
     company.last_attempt_at = entry.attempted_at
     company.last_status = entry.status
     if (entry.success) company.last_success_at = entry.attempted_at
+    // Only a board that is *gone* counts towards re-detection; a rate limit or a
+    // 5xx says nothing about whether the token is still right.
+    if (entry.success) company.missing_streak = 0
+    else if (entry.status === "not_found") company.missing_streak = (company.missing_streak ?? 0) + 1
     const stats: CompanyStats = { ...emptyStats(), ...(company.stats ?? {}) }
     stats.jobs_seen += entry.jobs_seen
     stats.eligible_jobs += entry.eligible
@@ -423,6 +480,11 @@ export function writeResolution(
     const patch = byName.get(company.name)
     if (!patch) continue
     Object.assign(company, patch)
+    // `undefined` in a patch means "remove the field", which JSON would
+    // otherwise keep as a stale value from the previous state.
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) delete (company as unknown as Record<string, unknown>)[key]
+    }
     if (company.status === "verified") {
       delete company.candidates
       // Phase 0 is only "done" when every route:ats company carries an explicit

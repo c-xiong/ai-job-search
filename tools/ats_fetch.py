@@ -568,6 +568,29 @@ def known_ids_from(seen):
     return ids
 
 
+def detect(log, per_fetch=5, runner=None):
+    """Retry ATS detection for the companies whose turn it is (COMPANIES_PLAN §3.1).
+
+    Runs before `collect`, so a company verified here - never fetched, hence the
+    stalest - is searched in the same fetch. The CLI owns the queue and the
+    backoff (`resolve --due`); this only bounds it and reports what changed.
+    Returns {"checked": n, "found": [names], "ask": [names]}.
+    """
+    if per_fetch <= 0:
+        return {"checked": 0, "found": [], "ask": []}
+    args = [collectors.ATS, "resolve", "--due", "--max-companies", str(per_fetch),
+            "--max-probes", "6", "--format", "json"]
+    run = runner or (lambda a: collectors.bun(a, log, timeout=max(120, per_fetch * 30)))
+    payload = run(args)
+    results = (payload or {}).get("results") or [] if isinstance(payload, dict) else []
+    found = [r.get("name") for r in results if r.get("status") == "verified"]
+    ask = [r.get("name") for r in results if r.get("status") == "ambiguous"]
+    if results:
+        log("  detect    %d companies checked: %d boards found%s"
+            % (len(results), len(found), ", %d need you" % len(ask) if ask else ""))
+    return {"checked": len(results), "found": found, "ask": ask}
+
+
 def collect(log, max_companies=8, max_new_jobs=40, runner=None, dry_run=False, known_ids=None):
     """Run the ATS CLI exactly once. Returns (rows, meta)."""
     args = [collectors.ATS, "search",
@@ -633,6 +656,8 @@ def summarize(stats, meta, found, log, dry_run=False):
         "degraded": bool(meta.get("degraded")),
         "failed": [c["name"] for c in meta.get("companies", []) if c.get("status") not in ("ok", "empty")],
         "found": found,
+        # Boards the detection step found this run (COMPANIES_PLAN §3.1).
+        "boards_found": list((meta.get("detected") or {}).get("found") or []),
     }
     summary.update(stats)
     return summary

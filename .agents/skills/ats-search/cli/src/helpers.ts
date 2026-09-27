@@ -44,6 +44,10 @@ export interface FetchOpts {
    *  non-customer subdomain with a 307, and following it would turn a missing
    *  board into a confusing 200. Careers pages, which redirect constantly, do. */
   follow?: boolean
+  /** GET unless said otherwise. Workday's listing is a JSON POST. */
+  method?: "GET" | "POST"
+  /** A JSON request body, sent as-is with Content-Type application/json. */
+  body?: string
 }
 
 export type Transport = (url: string, opts?: FetchOpts) => Promise<HttpResponse>
@@ -152,7 +156,13 @@ export function httpTransport(timeoutMs = 20000, maxRetries = 4): Transport {
         let res: Response
         try {
           res = await fetch(url, {
-            headers: { "User-Agent": UA, Accept: accept },
+            method: opts.method ?? "GET",
+            headers: {
+              "User-Agent": UA,
+              Accept: accept,
+              ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+            },
+            ...(opts.body !== undefined ? { body: opts.body } : {}),
             redirect: opts.follow ? "follow" : "manual",
             signal: AbortSignal.timeout(timeoutMs),
           })
@@ -182,16 +192,18 @@ export function httpTransport(timeoutMs = 20000, maxRetries = 4): Transport {
  * A transport that answers from a fixture map instead of the network, selected by
  * the ATS_FIXTURES env var. This is how the offline tests exercise the whole CLI -
  * exit codes, partial failure, pagination - without a single request. The map is
- * `{ "<exact url>": { "file": "...", "status": 200 } }` next to the fixtures.
+ * `{ "<exact url>": { "file": "...", "status": 200 } }` next to the fixtures. A
+ * request with a body is looked up as `"<url> <body>"` first, so paginated POSTs
+ * can answer differently per page, then by the bare URL.
  */
 export function fixtureTransport(dir: string): Transport {
   const map = JSON.parse(readFileSync(join(dir, "map.json"), "utf-8")) as Record<
     string,
     { file?: string; status?: number; body?: string }
   >
-  return async (url) => {
+  return async (url, opts = {}) => {
     logRequest(url)
-    const hit = map[url]
+    const hit = (opts.body !== undefined ? map[`${url} ${opts.body}`] : undefined) ?? map[url]
     if (!hit) return { status: 404, body: "", url }
     const body = hit.body ?? (hit.file ? readFileSync(join(dir, hit.file), "utf-8") : "")
     return { status: hit.status ?? 200, body, url }

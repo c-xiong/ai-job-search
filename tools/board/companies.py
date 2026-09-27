@@ -7,7 +7,7 @@ import threading
 import sys
 from datetime import date
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import collectors  # noqa: E402
@@ -23,12 +23,19 @@ LOCK = ROOT / "job_scraper" / ".companies.lock"
 EDITABLE = {"name", "careers_url", "domain", "countries"}
 ROUTES = {"ats", "linkedin", "manual"}
 COUNTRIES = {"CH", "DE"}
-SUPPORTED_VENDORS = {"greenhouse", "ashby", "personio", "lever", "smartrecruiters"}
+SUPPORTED_VENDORS = {"greenhouse", "ashby", "personio", "lever", "smartrecruiters", "workday"}
+# Rows added from the Companies page are checked daily: the point of saving a
+# company is hearing about its jobs first (COMPANIES_PLAN §3.5).
+ADDED_CADENCE_DAYS = 1
 RESOLVE_LOCK = threading.Lock()
 FETCH_TEST_LOCK = threading.Lock()
 
 
 def _board_url(vendor, token):
+    if vendor == "workday":
+        # "<tenant>.<pod>/<site>" - the one token with a slash in it.
+        match = re.fullmatch(r"([a-z0-9-]+)\.(wd\d+)/([A-Za-z0-9_-]+)", str(token or "").strip())
+        return ("https://%s.%s.myworkdayjobs.com/%s" % match.groups()) if match else None
     token = quote(str(token or "").strip(), safe="-._~")
     if not token:
         return None
@@ -135,6 +142,10 @@ def _ats_identity(careers_url):
     parts = [part for part in parsed.path.split("/") if part]
     if host in ("job-boards.greenhouse.io", "job-boards.eu.greenhouse.io",
                 "boards.greenhouse.io") and parts:
+        if parts[0] == "embed":
+            # .../embed/job_board?for=<board>: the board is in the query.
+            board = parse_qs(parsed.query).get("for", [""])[0]
+            return ("greenhouse", board) if re.fullmatch(r"[A-Za-z0-9_-]+", board) else None
         return "greenhouse", parts[0]
     if host == "jobs.ashbyhq.com" and parts:
         return "ashby", parts[0]
@@ -145,6 +156,16 @@ def _ats_identity(careers_url):
         return "lever", parts[0]
     if host in ("careers.smartrecruiters.com", "jobs.smartrecruiters.com") and parts:
         return "smartrecruiters", parts[0]
+    match = re.fullmatch(r"([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com", host)
+    if match:
+        site = [part for part in parts if not re.fullmatch(r"[a-z]{2}-[A-Z]{2}", part)]
+        if site and site[0] not in ("wday", "job"):
+            return "workday", "%s.%s/%s" % (match.group(1), match.group(2), site[0])
+    match = re.fullmatch(r"(wd\d+)\.myworkdaysite\.com", host)
+    if match and len(parts) >= 3 and "recruiting" in parts:
+        at = parts.index("recruiting")
+        if len(parts) > at + 2:
+            return "workday", "%s.%s/%s" % (parts[at + 1].casefold(), match.group(1), parts[at + 2])
     return None
 
 
@@ -208,9 +229,28 @@ def _monitoring_fields(row, defaults):
     else:
         fetch_status = "failed"
     return {"monitoring_status": monitoring_status,
+            "watch_state": _watch_state(row, status, route, monitoring_status),
             "will_be_searched": will_be_searched,
             "monitoring_reason": reason,
             "fetch_status": fetch_status}
+
+
+def _watch_state(row, status, route, monitoring_status):
+    """The one question the Companies page answers per row (COMPANIES_PLAN §4)."""
+    if status == "paused":
+        return "paused"
+    if route != "ats":
+        return "not_watched"
+    if status == "ambiguous":
+        return "needs_you"
+    if status == "unresolved":
+        # `next_resolve_at: null` is the retry queue giving up and asking you;
+        # a missing key is a row that has simply not been tried yet.
+        return "needs_you" if "next_resolve_at" in row and row["next_resolve_at"] is None \
+            else "finding"
+    if monitoring_status == "monitoring":
+        return "watching"
+    return "cant_watch"
 
 
 def _public(data):
@@ -276,14 +316,13 @@ def add(payload):
         if slug(name) in names or (domain and domain in domains) or careers_url.casefold() in urls:
             raise CompanyError("company name or careers page already exists", 409)
         row = {"name": name, "careers_url": careers_url, "tier": 3,
-               "countries": countries, "status": "unresolved", "route": "ats"}
+               "countries": countries, "status": "unresolved", "route": "ats",
+               "cadence_days": ADDED_CADENCE_DAYS}
         if domain:
             row["domain"] = domain
         if direct_ats:
             vendor, token = direct_ats
             row.update({"vendor": vendor, "token": token, "status": "verified",
-                        "cadence_days": int(data.get("defaults", {}).get(
-                            "cadence_days", {}).get("3", 3)),
                         "identity": {"method": "human_confirmed",
                                      "evidence_kind": "human_confirmed",
                                      "evidence": "careers board URL entered in the board UI",
@@ -329,7 +368,9 @@ def patch_company(company_slug, payload):
             row["route"] = "ats"
             direct_ats = _ats_identity(row["careers_url"])
             for key in ("vendor", "token", "identity", "candidates", "last_attempt_at",
-                        "last_success_at", "last_status"):
+                        "last_success_at", "last_status", "resolve_attempts",
+                        "last_resolve_at", "next_resolve_at", "resolve_detail",
+                        "missing_streak"):
                 row.pop(key, None)
             row["stats"] = {"jobs_seen": 0, "german_gated": 0,
                             "eligible_jobs": 0, "last_eligible_at": None,
@@ -366,7 +407,7 @@ def patch_company(company_slug, payload):
 def manage(company_slug, payload):
     """User-owned follow controls; keep discovery evidence when pausing."""
     action = payload.get("action")
-    if action not in ("pause", "resume", "remove"):
+    if action not in ("pause", "resume", "remove", "watch"):
         raise CompanyError("Unknown company action.")
     with company_lock():
         data = _load(); _fresh(payload.get("mtime")); row = _find(data, company_slug)
@@ -380,6 +421,14 @@ def manage(company_slug, payload):
             row["status"] = "paused"
         elif action == "resume" and row.get("status") == "paused":
             row["status"] = row.pop("status_before_pause", "unresolved")
+        elif action == "watch" and row.get("route", "ats") != "ats":
+            # A company kept for reference (route linkedin/manual) joins the
+            # retry queue as if it were new; the caller detects right away.
+            row["route"] = "ats"
+            if row.get("status") not in ("verified", "paused"):
+                row["status"] = "unresolved"
+                for key in ("resolve_attempts", "next_resolve_at", "last_resolve_at"):
+                    row.pop(key, None)
         _write(data)
     activity.emit("registry", "%s: %s" % (name, action))
     return listing()
@@ -494,8 +543,8 @@ def _resolve_all(payload):
     with company_lock():
         data = _load(); _fresh(payload.get("mtime"))
         targets = [row["name"] for row in data["companies"]
-                   if row.get("status", "unresolved") == "unresolved" and
-                   row.get("route", "ats") == "ats"]
+                   if _watch_state(row, row.get("status", "unresolved"),
+                                   row.get("route", "ats"), "") == "finding"]
         total = len(targets)
     if not total:
         return {"result": {"meta": {"resolved": 0, "status_counts": {}}}, **listing()}
@@ -545,7 +594,13 @@ def identity(company_slug, payload):
             row.pop("candidates", None)
             row.setdefault("cadence_days", int(data.get("defaults", {}).get("cadence_days", {}).get(str(row.get("tier", 3)), 3)))
         elif decision in ("neither", "reject"):
-            row["status"] = "paused"
+            # "None of these is theirs" is not "stop watching": the company still
+            # matters, only the guesses were wrong. It waits for its board link
+            # (Needs you) instead of being paused or guessed at again.
+            row["status"] = "unresolved"
+            row.pop("candidates", None)
+            row["next_resolve_at"] = None
+            row["resolve_detail"] = "you said none of the suggested job boards is theirs"
         else:
             raise CompanyError("decision must be confirm or neither")
         _write(data)

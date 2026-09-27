@@ -102,7 +102,7 @@ class ShellMarkupTest(unittest.TestCase):
         # Each parked artboard writes its own address...
         for route in ('"/run/"+encodeURIComponent(run.id)',
                       '"/job/"+encodeURIComponent(j.url)',
-                      '+"/preview"', '+"/revise"', '"/companies?f="'):
+                      '+"/preview"', '+"/revise"', '"/companies"+'):
             self.assertIn(route, self.js)
         # ...and every one of them is reachable coming back the other way.
         for head in ('head==="board"', 'head==="job"',
@@ -222,15 +222,19 @@ class ShellMarkupTest(unittest.TestCase):
     def test_revise_and_companies_artboards_are_on_the_runtime_surface(self):
         self.assertIn('data-nav="companies"', self.html)
         for marker in ("revise-shell", "grid-template-columns:268px", "428px",
-                       "companies-shell", "360px", "company-table"):
+                       "companies-shell", ".company-row{", ".company-editor{"):
             self.assertIn(marker, self.css)
+        self.assertNotIn("company-table", self.css)
+        # COMPANIES_PLAN §4: one field to add, groups by what the owner has to do.
         for marker in ("renderRevise", "/api/prefs", "data-restore-version",
-                       "renderCompanies", "/api/companies", "Add company",
+                       "renderCompanies", "/api/companies", ">${COMPANY_BUSY===\"__add__\"?\"Looking…\":\"Watch\"}<",
                        "company-careers", "data-company-confirm", "company-settings",
-                       "data-company-check", "Last updated", "Target companies"):
+                       "data-company-check", "data-company-look-now", "data-company-board",
+                       '["needs_you","Needs you"]', '["finding","Finding"]', '["watching","Watching"]'):
             self.assertIn(marker, self.js)
         for removed in ("Check monitoring health", "Save & inspect", "Adapter missing",
-                        "<th>monitoring_status</th>", "will_be_searched</span>"):
+                        "<th>monitoring_status</th>", "will_be_searched</span>",
+                        'id="company-name"', "Last updated", "data-company-filter"):
             self.assertNotIn(removed, self.js)
 
     def test_source_column_custom_text_modal_and_no_price_chrome(self):
@@ -446,7 +450,7 @@ if(start<0||end<marker.length)throw new Error("routing block not found in app.js
 
 const build=new Function("ctx","location","history","addEventListener",`
   let JOBS=ctx.JOBS,RUNS=ctx.RUNS;
-  let filter="active",q="",sel=0,COMPANY_FILTER="all",COMPANY_SELECTED=null,facetsReset=0;
+  let filter="active",q="",sel=0,COMPANY_SELECTED=null,facetsReset=0;
   const resetFacets=()=>{facetsReset++};
   const shown=()=>JOBS.filter(job=>filter==="all"||job.status==="new");
   const el=()=>({value:"seeded"});
@@ -454,14 +458,14 @@ const build=new Function("ctx","location","history","addEventListener",`
   const restoreWorkspace=()=>{ctx.opened.push("workspace");setRoute("/")};
   const openView=(kind,title,route)=>{ctx.opened.push(kind);setRoute(route||"/"+kind)};
   const renderReader=()=>openView("reader",null,"/job/"+encodeURIComponent(shown()[sel].url));
-  const renderCompanies=()=>openView("companies","","/companies?f="+encodeURIComponent(COMPANY_FILTER)+(COMPANY_SELECTED?"&c="+encodeURIComponent(COMPANY_SELECTED):""));
+  const renderCompanies=()=>openView("companies","","/companies"+(COMPANY_SELECTED?"?c="+encodeURIComponent(COMPANY_SELECTED):""));
   const renderTailor=run=>openView("tailor",null,"/run/"+encodeURIComponent(run.id));
   const renderPreview=run=>openView("preview",null,"/run/"+encodeURIComponent(run.id)+"/preview");
   const renderRevise=run=>openView("revise",null,"/run/"+encodeURIComponent(run.id)+"/revise");
   ${src.slice(start,end)}
   return {applyRoute,renderReader,renderCompanies,renderTailor,renderPreview,
-          state:()=>({filter,sel,COMPANY_FILTER,COMPANY_SELECTED,facetsReset}),
-          set:(k,v)=>{if(k==="filter")filter=v;if(k==="sel")sel=v;if(k==="COMPANY_FILTER")COMPANY_FILTER=v;if(k==="COMPANY_SELECTED")COMPANY_SELECTED=v}};
+          state:()=>({filter,sel,COMPANY_SELECTED,facetsReset}),
+          set:(k,v)=>{if(k==="filter")filter=v;if(k==="sel")sel=v;if(k==="COMPANY_SELECTED")COMPANY_SELECTED=v}};
 `);
 
 let stack,log,fire=null;
@@ -485,8 +489,8 @@ t("that route comes back to the reader", ctx.opened[0]==="reader"&&R.state().sel
 // Paging within a view rewrites its entry; changing view stacks a new one.
 at(jobRoute); R.set("filter","all"); R.set("sel",1); R.renderReader();
 t("j/k in the reader replaces, never stacks", log.length===1&&log[0].startsWith("replace")&&stack.length===1);
-at("#/companies?f=all"); R.set("COMPANY_FILTER","review"); R.set("COMPANY_SELECTED","Acme & Co"); R.renderCompanies();
-t("filtering companies replaces", log.length===1&&log[0].startsWith("replace"));
+at("#/companies"); R.set("COMPANY_SELECTED","Acme & Co"); R.renderCompanies();
+t("opening a company's editor replaces", log.length===1&&log[0].startsWith("replace"));
 const companyRoute=location.hash;
 at("#/board"); R.renderTailor(ctx.RUNS[0]);
 t("board -> tailor pushes", log[0]==="push #/run/run-7");
@@ -495,8 +499,8 @@ t("tailor -> preview pushes, so back returns to the pipeline", log[0]==="push #/
 
 // A name needing escaping round-trips through the query string.
 at(companyRoute); R.applyRoute();
-t("companies filter and selection come back",
-  R.state().COMPANY_FILTER==="review"&&R.state().COMPANY_SELECTED==="Acme & Co"&&ctx.opened[0]==="companies");
+t("the open company comes back",
+  R.state().COMPANY_SELECTED==="Acme & Co"&&ctx.opened[0]==="companies");
 
 // Rendering *from* a route must not write back, or the router feeds itself.
 at("#/run/run-7"); R.applyRoute();
@@ -647,7 +651,7 @@ const build=new Function("ctx",`
   return {selectCompanyRow,selected:()=>COMPANY_SELECTED};
 `);
 const R=build(ctx),table={scrollTop:847};
-const row={dataset:{companyRow:"Company Near The Bottom"},closest:selector=>selector===".tablewrap"?table:null};
+const row={dataset:{companyRow:"Company Near The Bottom"},closest:selector=>selector===".companies-scroll"?table:null};
 R.selectCompanyRow(row);
 let bad=0;
 const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
@@ -677,38 +681,53 @@ class CompanyRowClickTest(unittest.TestCase):
 
 COMPANIES_HARNESS = r"""
 const fs=require("fs"),src=fs.readFileSync(process.argv[2],"utf8");
-const start=src.indexOf("function companySummary("),end=src.indexOf("// The app bar",start);
+const start=src.indexOf("const WATCH_GROUPS="),end=src.indexOf("// The app bar",start);
+if(start<0||end<start)throw new Error("the companies block was not found in app.js");
 (async()=>{
-  const ctx={nodes:{},tablewrap:{scrollTop:0},companies:{schema_version:2,company_controls:true,mtime:"1",companies:[
-    {name:"Ready Co",route:"ats",status:"verified",will_be_searched:true,fetch_status:"never",board_url:"https://jobs.example.com"},
-    {name:"LinkedIn Co",route:"linkedin",status:"unresolved"},
-    {name:"Manual Co",route:"manual",status:"paused"},
-    {name:"Failed Co",status:"verified",will_be_searched:true,fetch_status:"failed",last_success_at:"2026-09-01T10:00:00Z",stats:{last_eligible_jobs:12}},
-    {name:"Empty Co",status:"verified",will_be_searched:true,fetch_status:"success",last_success_at:"2026-09-01T10:00:00Z",stats:{last_eligible_jobs:0}}
+  const recent=new Date(Date.now()-2*3600e3).toISOString();
+  const ctx={nodes:{},scroll:{scrollTop:0},companies:{schema_version:2,company_controls:true,mtime:"1",companies:[
+    {name:"Ready Co",route:"ats",status:"verified",vendor:"greenhouse",watch_state:"watching",will_be_searched:true,fetch_status:"never",board_url:"https://jobs.example.com"},
+    {name:"Failed Co",status:"verified",vendor:"ashby",watch_state:"watching",will_be_searched:true,fetch_status:"failed",last_success_at:recent},
+    {name:"Fine Co",status:"verified",vendor:"workday",watch_state:"watching",will_be_searched:true,fetch_status:"success",last_success_at:recent},
+    {name:"Seeking Co",status:"unresolved",watch_state:"finding",resolve_attempts:2,next_resolve_at:"2026-10-01",domain:"seeking.test"},
+    {name:"Pick Co",status:"ambiguous",watch_state:"needs_you",candidates:[{vendor:"personio",token:"pick",board_url:"https://pick.jobs.personio.de"},{vendor:"dead",token:"gone",note:"not_found"}]},
+    {name:"Lost Co",status:"unresolved",watch_state:"needs_you",resolve_attempts:4,next_resolve_at:null},
+    {name:"LinkedIn Co",route:"linkedin",status:"unresolved",watch_state:"not_watched"},
+    {name:"Manual Co",route:"manual",status:"paused",watch_state:"paused"}
   ]}};
   const R=new Function("ctx",`
-    const el=id=>ctx.nodes[id]||(ctx.nodes[id]={innerHTML:"",querySelector:()=>ctx.tablewrap});
-    const esc=value=>String(value??""),openView=()=>{},toast=()=>{};
-    let COMPANIES=ctx.companies,COMPANY_FILTER="all",COMPANY_SELECTED=null,T="token",COMPANY_BUSY=null,COMPANY_ERROR="",COMPANY_QUERY="",COMPANY_ADD_DRAFT={name:"",url:""};
+    const el=id=>ctx.nodes[id]||(ctx.nodes[id]={innerHTML:"",value:"",querySelector:()=>ctx.scroll});
+    const esc=value=>String(value??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+    const openView=(...a)=>ctx.opened=a,toast=()=>{},restoreWorkspace=()=>ctx.home=true,render=()=>{};
+    let JOBS=[{company:"Fine Co"},{company:"fine co"},{company:"Other"}],filter="active",q="",sel=4;
+    let COMPANIES=ctx.companies,COMPANY_SELECTED=null,T="token",COMPANY_BUSY=null,COMPANY_ERROR="",COMPANY_QUERY="",COMPANY_ADD_DRAFT={name:"",url:""};
     ${src.slice(start,end)}
-    return {renderCompanies,companySummary,companyLink,select:name=>COMPANY_SELECTED=name};
+    return {renderCompanies,companyLink,showCompanyOnBoard,select:name=>COMPANY_SELECTED=name,board:()=>({filter,q,sel})};
   `)(ctx);
   await R.renderCompanies(false,612);
   let html=ctx.nodes["tailor-view"].innerHTML,bad=0;
   const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL "+name)}};
-  t("all company sources remain visible",html.includes("LinkedIn Co")&&html.includes("Manual Co"));
-  t("no details are forced open",!html.includes('id="company-settings"'));
-  t("unfetched is not called monitoring or updated",R.companySummary(ctx.companies.companies[0]).label==="Not checked");
-  t("a failed check keeps prior counts",html.includes("12 matching at last update"));
-  t("confirmed empty results are zero",html.includes("0 matching at last update"));
-  t("failure is visible despite a previous success",R.companySummary(ctx.companies.companies[3]).label==="Update failed");
-  t("paused non-ATS company is paused",R.companySummary(ctx.companies.companies[2]).label==="Paused");
-  t("all five companies are counted",html.includes('All<span class="n">5</span>'));
-  t("table scroll survives",ctx.tablewrap.scrollTop===612);
+  const order=["Needs you","Finding","Watching"].map(label=>html.indexOf(label));
+  t("the groups run from what needs you to what is handled",order.every((at,i)=>at>0&&(i===0||at>order[i-1])));
+  t("reference and paused companies are folded but counted",html.includes("Not watched <span")&&!html.includes("LinkedIn Co")&&!html.includes("Manual Co"));
+  t("a watched company links to its jobs on the Board",html.includes("2 on Board →"));
+  t("never checked is not called checked",html.includes("first check on the next fetch"));
+  t("a failed check says what happens next",html.includes("last check failed · retries next fetch"));
+  t("a healthy check says when",html.includes("checked 2 h ago"));
+  t("a company still being looked for says when the next try is",html.includes("tried 2× · next try 1 Oct"));
+  t("an ambiguous board is one click to confirm",html.includes('data-company-confirm="Pick Co|personio|pick"'));
+  t("an ambiguous row can be looked at again or answered with none of these",html.includes('data-company-relook="Pick Co"')&&html.includes(">None of these<"));
+  t("a dead candidate is shown but never offered",html.includes("dead · gone — no longer active")&&!html.includes('data-company-confirm="Pick Co|greenhouse|gone"'));
+  t("a company the retries gave up on asks for its link",html.includes("We couldn't find its job board")&&html.includes("tried 4×")&&html.includes("Paste board link"));
+  t("adding needs one field",html.includes('id="company-careers"')&&!html.includes('id="company-name"'));
+  t("no editor is forced open",!html.includes('id="company-settings"'));
+  t("scroll survives",ctx.scroll.scrollTop===612);
   t("unsafe website links are not clickable",R.companyLink({careers_url:"javascript:alert(1)"})==="");
-  t("technical terminology is absent",!html.includes("monitoring_status")&&!html.includes("token")&&!html.includes("adapter"));
+  t("technical terminology is absent",!/monitoring_status|will_be_searched|adapter|unresolved|verified/.test(html));
   R.select("Ready Co");await R.renderCompanies(false);
-  t("manage opens editing on demand",ctx.nodes["tailor-view"].innerHTML.includes('id="company-settings"'));
+  t("⋯ opens editing on demand",ctx.nodes["tailor-view"].innerHTML.includes('id="company-settings"'));
+  R.showCompanyOnBoard("Fine Co");
+  t("N on Board searches the Board for the company",ctx.home&&R.board().q==="Fine Co"&&R.board().filter==="all"&&R.board().sel===0);
   process.exit(bad?1:0);
 })().catch(error=>{console.error(error);process.exit(1)});
 """

@@ -75,5 +75,14 @@
   "https://boards-api.greenhouse.io/v1/boards/throttled/jobs?content=true": {
     "status": 429,
     "body": ""
+  },
+  "https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/External/jobs {\"appliedFacets\":{},\"limit\":20,\"offset\":0,\"searchText\":\"\"}": {
+    "file": "workday-acme-20260928.json"
+  },
+  "https://resolve-teamtailor.test/careers": {
+    "file": "careers-teamtailor.html"
+  },
+  "https://resolve-dead.test/careers": {
+    "file": "careers-dead.html"
   }
 }

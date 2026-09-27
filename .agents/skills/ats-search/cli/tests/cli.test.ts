@@ -440,3 +440,29 @@ describe("a 429 stops the host", () => {
     expect(company.last_status).toBe("rate_limited")
   })
 })
+
+describe("large output", () => {
+  test("a payload over 64 KiB reaches the pipe whole", async () => {
+    // Bun drops unflushed pipe output on process.exit(); the board then saw the
+    // first 65,536 bytes of a search result and discarded the whole run.
+    const session = newSession()
+    const registry = JSON.parse(readFileSync(session.registryPath, "utf-8"))
+    const template = registry.companies[0]
+    for (let i = 0; i < 900; i++) {
+      registry.companies.push({ ...template, name: `Bulk Company ${i}`, token: `bulk${i}`, aliases: [] })
+    }
+    writeFileSync(session.registryPath, JSON.stringify(registry), "utf-8")
+    // Through an OS pipe, as Python's subprocess reads it: Bun.spawn's own pipe
+    // drains before exit and would hide the bug.
+    const cli = join(import.meta.dir, "../src/cli.ts")
+    const proc = Bun.spawn(["sh", "-c", `bun run "${cli}" companies --format json | cat`], {
+      stdout: "pipe",
+      env: { ...process.env, ATS_FIXTURES: join(import.meta.dir, "fixtures"), ATS_REGISTRY: session.registryPath,
+             ATS_CACHE_DIR: join(session.dir, "cache"), ATS_NOW: "2026-08-18T09:00:00.000Z" },
+    })
+    const stdout = await new Response(proc.stdout).text()
+    await proc.exited
+    expect(stdout.length).toBeGreaterThan(70000)
+    expect(() => JSON.parse(stdout)).not.toThrow()
+  })
+})

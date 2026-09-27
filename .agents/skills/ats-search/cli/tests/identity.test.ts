@@ -63,3 +63,14 @@ describe("the registry refuses to hold an unevidenced `verified`", () => {
     expect(promoting).not.toContain("http_200")
   })
 })
+
+describe("greenhouse embed pages", () => {
+  test("the board comes from ?for=, never the word embed", async () => {
+    const { greenhouse } = await import("../src/vendors/greenhouse.ts")
+    const n26 = '<script src="https://job-boards.greenhouse.io/embed/job_board/js?for=n26"></script>'
+    expect(greenhouse.detectToken(n26)).toBe("n26")
+    expect(greenhouse.detectToken('<iframe src="https://boards.greenhouse.io/embed/job_board?for=acme&b=x">')).toBe("acme")
+    expect(greenhouse.detectToken("https://job-boards.greenhouse.io/parloa/jobs/1")).toBe("parloa")
+    expect(greenhouse.detectToken('<a href="https://job-boards.greenhouse.io/embed/job_app">apply</a>')).toBeNull()
+  })
+})

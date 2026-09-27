@@ -2,7 +2,7 @@
 // layer and the Python side all have to agree on them, and a drifting field name
 // is exactly the failure the fixture tests exist to catch.
 
-export const VENDORS = ["greenhouse", "ashby", "personio", "lever", "smartrecruiters"] as const
+export const VENDORS = ["greenhouse", "ashby", "personio", "lever", "smartrecruiters", "workday"] as const
 export type VendorName = (typeof VENDORS)[number]
 
 /**

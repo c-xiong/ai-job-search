@@ -305,6 +305,12 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
         ats_rows, ats_meta = [], {}
         if "ats" in sources:
             ats_cfg = cfg.get("ats", {}) or {}
+            # Companies you saved whose board is not known yet get another try
+            # first; a board found here is fetched in this same run.
+            detected = {"checked": 0, "found": [], "ask": []}
+            if not dry_run:
+                detected = ats_fetch.detect(log, per_fetch=_bound(
+                    None, ats_cfg, "resolve_per_fetch", 5, 0, 20))
             ats_rows, ats_meta = ats_fetch.collect(
                 log,
                 max_companies=_bound(max_companies, ats_cfg, "max_companies",
@@ -314,6 +320,7 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
                 dry_run=dry_run,
                 known_ids=ats_fetch.known_ids_from(load_seen()),
             )
+            ats_meta = dict(ats_meta or {}, detected=detected)
             write_status(True, lines, summaries, started_at=stamp)
 
         budget = _detail_budget(cfg, detail_budget)

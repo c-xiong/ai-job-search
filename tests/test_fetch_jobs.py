@@ -24,6 +24,20 @@ def silent(_message):
     pass
 
 
+# Every fetch in this module stubs `collect`; the detection step that runs before
+# it must be stubbed too, or a test would run `resolve --due` against the real
+# registry and the network. Tests that are about detection install their own.
+_REAL_DETECT = fetch_jobs.ats_fetch.detect
+
+
+def setUpModule():
+    fetch_jobs.ats_fetch.detect = lambda _log, **_kw: {"checked": 0, "found": [], "ask": []}
+
+
+def tearDownModule():
+    fetch_jobs.ats_fetch.detect = _REAL_DETECT
+
+
 class RunLockTest(unittest.TestCase):
     """Plan §2: a second click while a run is in flight is refused, not doubled."""
 
@@ -609,6 +623,50 @@ class LostUpdateTest(unittest.TestCase):
         finally:
             fetch_jobs.ats_fetch.collect = real_collect
         self.assertFalse(fetch_jobs.LOCK.exists())
+
+
+class DetectionStepTest(unittest.TestCase):
+    """COMPANIES_PLAN §3.1: detection is retried before the ATS search, bounded,
+    skipped by a dry run, and its finds are reported."""
+
+    # A fetch writes the board state, its status file and its log: every one of
+    # them must point into a temporary directory, never at the real board.
+    setUp = LostUpdateTest.setUp
+
+    def test_the_cli_call_is_the_bounded_retry_queue(self):
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            return {"results": [{"name": "Acme", "status": "verified"},
+                                {"name": "Beta", "status": "ambiguous"},
+                                {"name": "Gamma", "status": "unresolved"}]}
+
+        result = _REAL_DETECT(silent, per_fetch=5, runner=runner)
+        self.assertEqual(result, {"checked": 3, "found": ["Acme"], "ask": ["Beta"]})
+        args = calls[0]
+        self.assertIn("--due", args)
+        self.assertEqual(args[args.index("--max-companies") + 1], "5")
+        self.assertEqual(_REAL_DETECT(silent, per_fetch=0, runner=runner)["checked"], 0)
+        self.assertEqual(len(calls), 1, "per_fetch 0 makes no call at all")
+
+    def test_a_fetch_detects_first_and_a_dry_run_does_not(self):
+        order = []
+        real_collect = fetch_jobs.ats_fetch.collect
+        fetch_jobs.ats_fetch.detect = lambda _log, **_kw: (
+            order.append("detect") or {"checked": 1, "found": ["Acme"], "ask": []})
+        fetch_jobs.ats_fetch.collect = lambda _log, **_kw: (
+            order.append("collect") or ([], {"companies": [], "requests": 0}))
+        try:
+            summaries, _ = fetch_jobs.fetch(["ats"], dry_run=True)
+            self.assertEqual(order, ["collect"])
+            order.clear()
+            summaries, _ = fetch_jobs.fetch(["ats"])
+            self.assertEqual(order, ["detect", "collect"])
+            self.assertEqual(summaries[0]["boards_found"], ["Acme"])
+        finally:
+            fetch_jobs.ats_fetch.collect = real_collect
+            setUpModule()
 
 
 class ArrivalStampTest(unittest.TestCase):

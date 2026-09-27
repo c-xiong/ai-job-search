@@ -87,10 +87,13 @@ export const greenhouse: Vendor = {
   endpoint: (token) => `${API}/${token}/jobs?content=true`,
   detectToken: (html) =>
     firstMatch(html, [
-      /job-boards(?:\.eu)?\.greenhouse\.io\/(?:embed\/job_board\?for=)?([A-Za-z0-9_-]+)/i,
-      /boards\.greenhouse\.io\/(?:embed\/job_board\?for=)?([A-Za-z0-9_-]+)/i,
+      // The embed script names the board in `?for=` - checked first, because the
+      // path patterns below would otherwise read "embed" as the board (N26's
+      // careers page: .../embed/job_board/js?for=n26).
+      /greenhouse\.io\/embed\/job_board(?:\/js)?\?for=([A-Za-z0-9_-]+)/i,
+      /job-boards(?:\.eu)?\.greenhouse\.io\/(?!embed\b)([A-Za-z0-9_-]+)/i,
+      /boards\.greenhouse\.io\/(?!embed\b)([A-Za-z0-9_-]+)/i,
       /boards-api\.greenhouse\.io\/v1\/boards\/([A-Za-z0-9_-]+)/i,
-      /greenhouse\.io\/embed\/job_board\/js\?for=([A-Za-z0-9_-]+)/i,
     ]),
 
   async fetchBoard(token, get) {
