@@ -13,6 +13,17 @@ per-file diff commands.
 
 ## [Unreleased]
 
+Entries under this heading are changes made in this fork
+([c-xiong/ai-job-search](https://github.com/c-xiong/ai-job-search)) on top of upstream
+(forked after v1.5.0). The numbered releases below are upstream's.
+
+### Documentation
+
+- README rewritten for this fork: it credits upstream, lists what the fork adds, and gives
+  a DACH quick start. New `BOARD.md` covers the local job board. `SETUP.md`,
+  `CONTRIBUTING.md`, `SECURITY.md` and the PR template are updated for the public-fork
+  privacy split.
+
 ### Changed
 
 - **`/apply` is a staged, checkpointed pipeline with no scoring or approval gate.** Posting
@@ -44,6 +55,9 @@ per-file diff commands.
 
 ### Removed
 
+- **The four Danish portal skills** (`jobindex-search`, `jobnet-search`, `jobbank-search`,
+  `jobdanmark-search`). This fork targets the DACH market, and they had shipped disabled.
+  `/add-portal` now points at `linkedin-search` as its reference implementation.
 - `cv/main_example.tex` and `cover_letters/cover_example.tex` as candidate templates.
   CI now compiles anonymous fixtures in `tests/fixtures/latex/` with the real engines.
 

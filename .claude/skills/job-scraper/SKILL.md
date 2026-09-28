@@ -32,7 +32,7 @@ The user triggers this skill by saying things like:
 Optional arguments:
 - A focus area, e.g. "/scrape data science" or "/scrape geophysics"
 - "broad" to run all search categories, e.g. "/scrape broad"
-- "health" to run the portal health check only (Step 4.75), without searching, deduplicating, or presenting jobs - e.g. "/scrape health", or "/scrape health jobnet" to probe one portal even if disabled
+- "health" to run the portal health check only (Step 4.75), without searching, deduplicating, or presenting jobs - e.g. "/scrape health", or "/scrape health linkedin" to probe one portal even if disabled
 
 ---
 
@@ -202,7 +202,7 @@ Your job in this step is therefore to *report*, not to score:
       "deadline": "YYYY-MM-DD" | null,
       "fit": "high/medium/low",
       "status": "new/skipped/ranked/expired",
-      "portal": "<source portal skill, e.g. jobindex-search>"
+      "portal": "<source portal skill, e.g. linkedin-search>"
     }
   }
 }
@@ -287,7 +287,7 @@ Scraper-based portal CLIs rot silently: when a portal changes its markup, the pa
 
 **Verdicts.** Healthy portals get silence - no table, no line. Anything else surfaces in the Step 5 summary as a health line.
 
-**Probe-only mode (`/scrape health`).** Skip Steps 1-4 and this step's free pass (there is no fresh run to scan); instead probe every installed portal directly - enabled ones by default, a disabled one only when named explicitly (e.g. `/scrape health jobnet`). Each portal gets the sentinel probe above, the degraded criteria applied to whatever it returns, and - since the user explicitly asked for diagnosis - one `detail` fetch on the first result of each healthy portal (description must be readable decoded text; a failure downgrades to degraded). Report all statuses in this mode, including healthy. Volume stays bounded: one search, at most one retry, at most one detail per portal.
+**Probe-only mode (`/scrape health`).** Skip Steps 1-4 and this step's free pass (there is no fresh run to scan); instead probe every installed portal directly - enabled ones by default, a disabled one only when named explicitly (e.g. `/scrape health freehire`). Each portal gets the sentinel probe above, the degraded criteria applied to whatever it returns, and - since the user explicitly asked for diagnosis - one `detail` fetch on the first result of each healthy portal (description must be readable decoded text; a failure downgrades to degraded). Report all statuses in this mode, including healthy. Volume stays bounded: one search, at most one retry, at most one detail per portal.
 
 ### Step 5: Present Results
 

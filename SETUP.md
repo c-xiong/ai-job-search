@@ -1,6 +1,8 @@
 # Setup Guide
 
-Step-by-step instructions for getting the AI Job Search framework running.
+Step-by-step instructions for getting this DACH fork of AI Job Search running. The
+short version is in the [README](README.md#quick-start); the board itself is described in
+[BOARD.md](BOARD.md).
 
 ## 1. Prerequisites
 
@@ -26,7 +28,7 @@ On Windows, `py --version` is often the most reliable check. If your system expo
 
 ### Bun (for job search tools)
 
-The job portal CLIs (four Danish portals plus the country-agnostic `linkedin-search` and `freehire-search` tools) are written in TypeScript and run with Bun.
+The job portal CLIs (`ats-search`, `linkedin-search` and `freehire-search`) are written in TypeScript and run with Bun.
 
 - macOS/Linux:
 
@@ -151,39 +153,56 @@ Push-Location $SmokeDir; xelatex -interaction=nonstopmode -halt-on-error cover_s
 
 If `pdftotext` is missing, `/apply` skips the mechanical check with a warning and falls back to a visual keyword review — everything else works normally.
 
-## 2. Fork and clone
+## 2. Clone and create your private copies
 
 ```bash
-gh repo fork MadsLorentzen/ai-job-search --clone
+git clone https://github.com/c-xiong/ai-job-search.git
 cd ai-job-search
 ```
 
-Or manually: fork on GitHub, then clone your fork.
+Every file `/setup` personalizes is gitignored; the repository only tracks a `*.example`
+twin of each. Create your working copies (`-n` never overwrites an existing file):
 
-## 3. Install job search CLI dependencies
-Run these from the repository root.
+```bash
+cp -n CLAUDE.example.md CLAUDE.md
+for f in .claude/skills/*/*.example.md; do cp -n "$f" "${f%.example.md}.md"; done
+for f in job_scraper/*.example.json; do cp -n "$f" "${f%.example.json}.json"; done
+```
 
-- PowerShell:
+PowerShell:
 
 ```powershell
-$tools = @("jobbank-search", "jobdanmark-search", "jobindex-search", "jobnet-search", "linkedin-search", "freehire-search")
-foreach ($tool in $tools) {
-  Push-Location ".agents/skills/$tool/cli"
-  bun install
-  Pop-Location
+if (-not (Test-Path CLAUDE.md)) { Copy-Item CLAUDE.example.md CLAUDE.md }
+Get-ChildItem .claude/skills/*/*.example.md, job_scraper/*.example.json | ForEach-Object {
+  $dest = $_.FullName -replace '\.example\.(md|json)$', '.$1'
+  if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest }
 }
 ```
 
-- Bash / zsh / Git Bash:
+A GitHub fork of a public repository is itself public. If you want your filled-in profile
+in a remote, push it to a separate **private** repository and add this one as `upstream`.
+If you fork publicly, keep the gitignore rules intact: CI's `placeholder-integrity` job
+fails if a personal file is ever staged.
+
+## 3. Install job search CLI dependencies
+
+Run from the repository root:
+
 ```bash
-for tool in jobbank-search jobdanmark-search jobindex-search jobnet-search linkedin-search freehire-search; do
+for tool in ats-search linkedin-search freehire-search; do
   (cd .agents/skills/$tool/cli && bun install)
 done
 ```
 
-For `linkedin-search` and `freehire-search` the install is optional: both have zero runtime dependencies and run with plain `bun`; `bun install` only pulls TypeScript dev types.
+```powershell
+foreach ($tool in @("ats-search", "linkedin-search", "freehire-search")) {
+  Push-Location ".agents/skills/$tool/cli"; bun install; Pop-Location
+}
+```
 
-If you're outside Denmark, you can generate an equivalent search skill for your local job board with `/add-portal` — it scaffolds the same CLI structure for any public portal and test-runs a live query before registering. See the "Job search tools" section in the README.
+All three have zero runtime dependencies; `bun install` only pulls TypeScript dev types.
+For a job board that is not covered (jobs.ch, StepStone, Arbeitsagentur, …), generate a
+skill with `/add-portal`.
 
 ## 4. Run the setup interview
 
@@ -245,26 +264,31 @@ If you have salary data (from a union, salary survey, Glassdoor, or personal res
 
 This creates `salary_data.json` which the `/apply` workflow uses for salary benchmarking. If you skip this step, salary lookup is simply omitted.
 
-## 6. Test the workflow
+## 6. Place your CV master and cover-letter base
 
-Find a job posting you're interested in, then:
+The pipeline reads these and never edits them. `/setup` does not create them.
 
+- `cv/my_cv.tex`: your one-page LaTeX CV (a file or a symlink to your CV repository).
+  `tests/fixtures/latex/cv_fixture.tex` shows the expected shape. `\cvrole{sde}` /
+  `\cvrole{ai}` switches let `/apply` pick a variant.
+- `cover_letters/my_cover.tex`: your cover-letter base on `cover.cls`. Optional
+  `my_cover_sde.tex` and `my_cover_ai.tex` take precedence for the matching CV variant. The
+  structure and tailoring rules are in `.claude/skills/job-application-assistant/06-cover-letter-templates.md`.
+
+Then configure the collection side:
+
+- `job_scraper/companies.json`: the companies `ats-search` watches (you can also add
+  them from the board's Companies view);
+- `job_scraper/fit_profile.json` and `company_affinity.json`: inputs to the fit score;
+- `job_scraper/scrape_config.json`: portal queries and locations.
+
+Test with a posting:
+
+```bash
+python3 tools/jobs_board.py      # Fetch new jobs, mark one `yes`, start a draft
 ```
-/apply https://jobindex.dk/job/1234567
-```
 
-Or paste the job description directly:
-
-```
-/apply [paste job posting text here]
-```
-
-Claude will:
-1. Evaluate the fit against your profile
-2. Ask if you want to proceed
-3. Draft a tailored CV and cover letter
-4. Have a reviewer agent critique the drafts
-5. Revise and present the final output
+or from Claude Code: `/apply <posting URL or pasted text>`.
 
 ## 7. Compile your documents
 
@@ -282,11 +306,20 @@ Set-Location cv; pdflatex -output-directory=build main_<company>_<role>.tex; Set
 Set-Location cover_letters; xelatex -output-directory=build cover_<company>_<role>.tex; Set-Location ..
 ```
 
-The board runs these for you; these commands apply to the stock toolchain (pdfLaTeX `article` CV, `cover.cls` letter), and both documents must be exactly one page. If you'd rather use your own LaTeX template, run `/add-template` — it captures the template's compile engine, fonts, style rules, and page limit, test-compiles it, and wires it into `/apply`. See the "LaTeX templates" section in the README.
+The board runs these for you. These commands apply to the stock toolchain (pdfLaTeX `article` CV, `cover.cls` letter), and both documents must be exactly one page. If you'd rather use your own LaTeX template, run `/add-template` — it captures the template's compile engine, fonts, style rules, and page limit, test-compiles it, and wires it into `/apply`. See `/add-template --list` for registered templates.
 
 ## 8. Pulling upstream updates into your fork
 
-Upstream keeps improving the methodology files your fork has personalized, so plan for updates from day one:
+Two upstreams matter here: this fork (`c-xiong/ai-job-search`) and the original framework
+(`MadsLorentzen/ai-job-search`). This fork merges upstream releases by hand. Upstream
+improvements to files this fork keeps private land in their `*.example` twins, so after a
+merge, compare each twin against your own copy
+(`git diff --no-index CLAUDE.example.md CLAUDE.md`). **Never check out an upstream commit or
+tag directly in a working copy that holds your profile.** Upstream still tracks those
+files, so the checkout overwrites your personal copies with templates, and switching back
+deletes them.
+
+The general upstream workflow follows:
 
 **Prefer releases over raw `master`.** Tagged [releases](../../releases) are vetted checkpoints, each described in [CHANGELOG.md](CHANGELOG.md). Updating to a tag pulls a stable, documented state instead of whatever `master` happens to be mid-review. Fetch tags with `git fetch upstream --tags` and merge a release (for example `git merge v1.0.0`) when you want stability; pull `master` directly only when you specifically want the latest unreleased changes. The steps below apply either way - substitute the release tag for `upstream/master` where you see it.
 
