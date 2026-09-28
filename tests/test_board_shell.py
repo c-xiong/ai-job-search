@@ -1132,7 +1132,7 @@ const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
   t("and says nothing on top of the button",ctx.toasts.length===0);
   t("the one-off instruction still reaches the request",ctx.posted[0][1].kind==="apply");
   t("with no picker on screen the defaults are sent",
-    ctx.posted[0][1].scope==="both"&&ctx.posted[0][1].base_cv==="auto"&&ctx.posted[0][1].cv_country==="default");
+    ctx.posted[0][1].scope==="both"&&ctx.posted[0][1].base_cv==="auto"&&ctx.posted[0][1].cv_country==="ch");
 
   // The documents, base and country are chosen before Generate - there is no
   // evaluation to wait for - and all three reach the request.

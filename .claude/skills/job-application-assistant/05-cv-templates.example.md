@@ -24,7 +24,7 @@ file; this file says how the tailored CV is laid out and edited.
 
   ```latex
   \newcommand{\cvrole}{ai}      % the selected base
-  \newcommand{\cvcountry}{ch}   % only when you chose a country
+  \newcommand{\cvcountry}{ch}   % ch by default, or de
   ```
 
   Declare the switches in your master with `\providecommand`, so the pins win

@@ -146,8 +146,8 @@ class ScopeTest(SupervisorCase):
 
     def test_the_country_is_never_inferred_from_the_posting(self):
         run_id, _phase = self.run_to_end()
-        self.assertIsNone(run_registry.get(run_id)["cv_country"])
-        self.assertEqual(self.manifest(run_id)["inputs"]["variant"]["country"], None)
+        self.assertEqual(run_registry.get(run_id)["cv_country"], "ch")
+        self.assertEqual(self.manifest(run_id)["inputs"]["variant"]["country"], "ch")
         code, body = self.start(url="https://example.com/jobs/2", cv_country="berlin")
         self.assertEqual(code, 400)
 

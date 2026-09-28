@@ -224,7 +224,7 @@ const selectedJob=()=>shown()[sel]||null;
 // The fit evaluation is the first honest moment to make that choice, so it lives
 // only on the approval card instead of being asked once before and once after.
 const SCOPES=[["both","CV + cover letter"],["cv","CV only"],["cover","Cover letter only"]];
-const COUNTRIES=[["default","Country: master default"],["ch","Country: CH"],["de","Country: DE"]];
+const COUNTRIES=[["ch","Country: CH"],["de","Country: DE"]];
 // Chosen before the run starts: there is no evaluation to wait for any more.
 // The CV is one of the two master variants, chosen here; the default follows
 // the title the same way the supervisor's `auto` would.
@@ -522,7 +522,7 @@ async function startTailor(url){
   const j=JOBS.find(x=>x.url===url);if(!j)return;
   const existing=applicationFor(j);if(existing){openApp(existing);return}
   const pick=name=>document.querySelector(`[data-gen-${name}]`)?.value;
-  const scope=pick("scope")||"both",base_cv=pick("base")||"auto",cv_country=pick("country")||"default";
+  const scope=pick("scope")||"both",base_cv=pick("base")||"auto",cv_country=pick("country")||"ch";
   const note=await openTextModal({eyebrow:"Generate "+(DRAFT_LABEL[scope]||"").replace(/^Draft /,""),title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Generate"});
   if(note===null)return;
   const started=await postRun("/api/runs",{job_url:url,kind:"apply",note,scope,base_cv,cv_country});
@@ -711,7 +711,7 @@ function renderSend(run){
     <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Check the PDFs</strong><div class="dim">${review.total?`${review.done} of ${review.total} checks ticked`:"No checks recorded yet"}${checked?"":` · <button class="linkish" data-app-step="review">finish them in Review</button>`}</div></div></div>
     <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${reveals}</div></div></div>
     <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Moves the Notion Stage to Applied, the tracker row, and this job’s board status.</div><div class="title-actions">${record}</div></div></div>
-    <div class="writing"><div class="label">Published files</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc(run.cv_country||"master default")}</div></div>
+    <div class="writing"><div class="label">Published files</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc((run.cv_country||"ch").toUpperCase())}</div></div>
   </section></div>`);
   openView("send",[crumbRun(run),{label:"Send"}],"/app/"+encodeURIComponent(run.id)+"/send");
 }
