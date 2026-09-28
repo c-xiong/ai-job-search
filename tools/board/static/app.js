@@ -239,7 +239,7 @@ const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and au
 const DOC_TITLE={cv:"CV",cover:"cover letter"};
 const docKinds=scope=>(scope||"both")==="both"?["cv","cover"]:[scope];
 const scopeOptions=(selected="both")=>SCOPES.map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
-const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","ats-search":"Your companies","company-careers":"Company careers","freehire-search":"freehire"};
+const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","manual":"Added by you","ats-search":"Your companies","company-careers":"Company careers","freehire-search":"freehire"};
 const sourceLabel=value=>SOURCE_LABELS[value]||String(value||"Other website").replace(/-search$/,"").replaceAll("-"," ");
 const sourceTitle=job=>[...new Set([job.primary_source,...(job.sources||[])].filter(Boolean))].map(sourceLabel).join(" · ");
 
@@ -1126,6 +1126,90 @@ function applyFetchSettings(value){
 try{applyFetchSettings(JSON.parse(localStorage.getItem(FETCH_SETTINGS_KEY))||FETCH_DEFAULTS)}catch(_){applyFetchSettings(FETCH_DEFAULTS)}
 el("fetch-options").addEventListener("change",()=>{applyFetchSettings(fetchSettings());try{localStorage.setItem(FETCH_SETTINGS_KEY,JSON.stringify(fetchSettings()))}catch(_){}});
 el("fetch-reset").addEventListener("click",()=>{applyFetchSettings(FETCH_DEFAULTS);try{localStorage.removeItem(FETCH_SETTINGS_KEY)}catch(_){}});
+// Add job (DESIGN.md §17): a posting you found yourself, resolved by the
+// server without a model. The token is remembered for static/add.html, the
+// bookmarklet's hand-off page - which is what keeps the bookmarklet itself free
+// of any secret a page's scripts could read.
+const TOKEN_KEY="jobflow.token",PENDING_ADD_KEY="jobflow.pendingAdd";
+try{localStorage.setItem(TOKEN_KEY,T)}catch(_){}
+const ADD_FIELDS={job_url:"add-job-url",apply_url:"add-apply-url",title:"add-title-input",company:"add-company",location:"add-location",description:"add-description"};
+let ADD_OPEN=false;
+function addStatus(text,warn=false){const node=el("add-status");node.textContent=text||"";node.classList.toggle("warn",warn)}
+function openAddJob(prefill={}){
+  Object.entries(ADD_FIELDS).forEach(([key,id])=>el(id).value=typeof prefill[key]==="string"?prefill[key]:"");
+  el("add-details").open=false;el("add-anyway").hidden=true;addStatus("");el("add-form").classList.remove("busy");
+  el("add-modal").hidden=false;document.body.classList.add("modal-open");ADD_OPEN=true;
+  requestAnimationFrame(()=>el(prefill.job_url?"add-apply-url":"add-job-url").focus());
+}
+function closeAddJob(){el("add-modal").hidden=true;document.body.classList.remove("modal-open");ADD_OPEN=false;if(ADD_QUEUE.length)openAddJob(ADD_QUEUE.shift())}
+// The bookmarklet's hand-off page asks an already open board to take the job,
+// so each click does not leave another board tab behind. A page cannot switch
+// tabs, so a board in the background says so in its title instead. With two
+// boards open, a Web Lock lets exactly one of them answer.
+const ADD_QUEUE=[],BASE_TITLE=document.title;
+function receiveAdd(data){
+  if(!data||typeof data!=="object")return;
+  if(ADD_OPEN){ADD_QUEUE.push(data);addStatus(ADD_QUEUE.length+" more job"+(ADD_QUEUE.length>1?"s":"")+" waiting after this one")}else openAddJob(data);
+  if(document.hidden)document.title="● Add job — "+BASE_TITLE;try{window.focus()}catch(_){}
+}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)document.title=BASE_TITLE});
+try{
+  const channel=new BroadcastChannel("jobflow");
+  channel.onmessage=event=>{
+    const message=event.data;if(message?.type!=="add"||typeof message.id!=="string")return;
+    const take=()=>{channel.postMessage({type:"add-taken",id:message.id});let data=null;try{data=JSON.parse(message.payload)}catch(_){}receiveAdd(data)};
+    if(navigator.locks)navigator.locks.request("jobflow-add-"+message.id,{ifAvailable:true},lock=>{if(!lock)return;take();return new Promise(done=>setTimeout(done,10000))});
+    else take();
+  };
+}catch(_){}
+function selectJobByUrl(url){const i=shown().findIndex(j=>j.url===url);if(i<0)return false;sel=i;render();return true}
+async function submitAddJob(allowNoDescription=false){
+  const form=el("add-form");if(form.classList.contains("busy"))return;
+  const body={allow_no_description:allowNoDescription};Object.entries(ADD_FIELDS).forEach(([key,id])=>body[key]=el(id).value.trim());
+  if(!body.job_url){addStatus("Paste the job link first.",true);el("add-job-url").focus();return}
+  form.classList.add("busy");addStatus("Reading the posting…");
+  let response=null,data={};
+  try{response=await fetch("/api/jobs/add?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});checkAuth(response);data=await response.json()}catch(_){data={error:"The board did not answer. Is it still running?"}}
+  form.classList.remove("busy");
+  if(response?.ok){
+    closeAddJob();try{await reloadJobs()}catch(_){}
+    const who=(data.company||"")+" — "+(data.title||"");
+    const notes=[data.outcome==="added"?"Added: "+who:"Already on the board: "+who+" · "+data.status];
+    if(data.gated)notes.push("excluded by the language gate");
+    if(!data.has_description)notes.push("no description");
+    if(!selectJobByUrl(data.url))notes.push("hidden by the current filters");
+    toast(notes.join(" · "),{ms:7000,warn:data.gated});void pollActivity();return;
+  }
+  if(response?.status===422){
+    const found=data.found||{};
+    for(const key of ["title","company","location","description"])if(found[key]&&!el(ADD_FIELDS[key]).value.trim())el(ADD_FIELDS[key]).value=found[key];
+    el("add-details").open=true;
+    const need=data.need||[];el("add-anyway").hidden=!(need.length===1&&need[0]==="description");
+    addStatus(data.error||"Some details are missing.",true);
+    const first=need.find(key=>!el(ADD_FIELDS[key]).value.trim())||need[0];if(first)el(ADD_FIELDS[first]).focus();
+    return;
+  }
+  addStatus(data.error||("Could not add this job ("+(response?.status||"no answer")+")."),true);
+}
+// The bookmarklet reads the page you are on - LinkedIn's detail pane, an <h1>
+// anywhere else, or your text selection - and hands it to static/add.html.
+function bookmarkletHref(){
+  const code=`(()=>{const q=s=>{for(const x of s.split("|")){const n=document.querySelector(x);if(n&&n.innerText.trim())return n.innerText.trim()}return ""};const sel=String(getSelection()).trim();const d={job_url:location.href,title:q(".job-details-jobs-unified-top-card__job-title|.jobs-unified-top-card__job-title|.top-card-layout__title|h1"),company:q(".job-details-jobs-unified-top-card__company-name|.jobs-unified-top-card__company-name|.topcard__org-name-link"),description:(sel||q(".jobs-description__content|#job-details|.jobs-box__html-content|.description__text")).slice(0,20000)};window.open(${JSON.stringify(location.origin+"/static/add.html#")}+encodeURIComponent(JSON.stringify(d)),"_blank")})()`;
+  return "javascript:"+code;
+}
+el("add-bookmarklet").href=bookmarkletHref();
+el("add-bookmarklet").addEventListener("click",event=>{event.preventDefault();toast("Drag it to the bookmarks bar, then click it on a job page",{ms:4000})});
+el("add-job").addEventListener("click",()=>openAddJob());
+el("add-form").addEventListener("submit",event=>{event.preventDefault();void submitAddJob(false)});
+el("add-anyway").addEventListener("click",()=>void submitAddJob(true));
+el("add-cancel").addEventListener("click",closeAddJob);el("add-close").addEventListener("click",closeAddJob);
+el("add-modal").addEventListener("click",event=>{if(event.target===el("add-modal"))closeAddJob()});
+el("add-modal").addEventListener("keydown",event=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();closeAddJob()}});
+function takePendingAdd(){
+  let raw=null;try{raw=sessionStorage.getItem(PENDING_ADD_KEY);sessionStorage.removeItem(PENDING_ADD_KEY)}catch(_){}
+  if(!raw)return;let data={};try{data=JSON.parse(raw)}catch(_){return}
+  receiveAdd(data);
+}
 async function reloadJobs(){const response=await fetch("/api/jobs?t="+T);checkAuth(response);if(!response.ok)throw new Error("Could not reload the job list.");const data=await response.json();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();renderStatusKeys();render()}
 function fetchSummary(status){
   if(status.running)return {message:"Checking for new jobs…",running:true};
@@ -1371,6 +1455,7 @@ document.addEventListener("change",event=>{
   if(event.target.matches("[data-note-input]"))update(event.target.dataset.noteInput,{note:event.target.value}).then(ok=>ok&&toast("note saved"));
 });
 document.addEventListener("keydown",event=>{
+  if(ADD_OPEN)return;
   if(MODAL_RESOLVE){if(event.key==="Escape"){event.preventDefault();closeTextModal(false)}else if((event.metaKey||event.ctrlKey)&&event.key==="Enter"){event.preventDefault();closeTextModal(true)}return}
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
   if(event.key==="/"&&!typing){event.preventDefault();el(VIEW==="companies"?"company-search":APP_VIEWS.includes(VIEW)&&el("apps-q")?"apps-q":"q").focus();return}
@@ -1406,4 +1491,5 @@ setInterval(pollActivity,3000);setInterval(pollRuns,6000);
 Promise.all([reloadJobs(),pollActivity(),pollRuns()]).then(()=>{
   applyRoute();
   void pollFetch();
+  takePendingAdd();
 });

@@ -167,11 +167,13 @@ def _entry_for_source(seen, url):
     return matches[0] if len(matches) == 1 else None
 
 
-def import_rows(seen, rows, today, log=lambda _message: None, pending=None):
+def import_rows(seen, rows, today, log=lambda _message: None, pending=None, portal=PORTAL):
     """Merge browser rows, preferring final company URLs while retaining LinkedIn provenance.
 
     `pending` collects the posting bodies whose sidecars still need writing, so
     a `--dry-run` merges in memory and leaves the filesystem untouched.
+    `portal` names the LinkedIn side: the board's Add job uses `manual`, so a
+    posting the owner added by hand says so.
     """
     total = {"added": 0, "gated": 0, "already_known": 0, "collapsed": 0,
              "possible_duplicates": 0, "german_gated_by_company": {}}
@@ -181,7 +183,7 @@ def import_rows(seen, rows, today, log=lambda _message: None, pending=None):
     for row in rows:
         linkedin_url = row["linkedin_url"]
         if row["url"] == linkedin_url:
-            _add_stats(total, ats_fetch.merge(seen, [row], today, log, portal=PORTAL,
+            _add_stats(total, ats_fetch.merge(seen, [row], today, log, portal=portal,
                                               pending=pending, stamp=stamp))
             continue
 
@@ -195,7 +197,7 @@ def import_rows(seen, rows, today, log=lambda _message: None, pending=None):
             raise InputError("could not resolve imported company URL after merge: %s" % row["url"])
 
         linkedin_source = {
-            "portal": PORTAL,
+            "portal": portal,
             "url": linkedin_url,
             "id": row["id"],
             "first_seen": today,
@@ -228,12 +230,84 @@ def _load_seen():
     return seen
 
 
+def _known_linkedin_ids(seen):
+    """Every LinkedIn job id the board already holds, under any key or source."""
+    ids = set()
+    for key, entry in seen.items():
+        urls = [key, entry.get("url")]
+        for source in entry.get("sources") or []:
+            urls.append(source.get("url"))
+            if source.get("portal") == PORTAL and source.get("id"):
+                ids.add(str(source["id"]))
+        for url in urls:
+            match = LINKEDIN_JOB_URL.fullmatch(jobs_md.canonical_url(url or "") or "")
+            if match:
+                ids.add(match.group(1))
+    return ids
+
+
+def check_cards(seen, payload, aliases=None):
+    """Triage list-page cards before any detail page is opened.
+
+    Detail pages are the expensive part of a browser import, so the browser
+    side sends only what a results list shows (title, company, LinkedIn URL)
+    and opens the pages this returns as `new`. `known` is an exact LinkedIn id
+    hit. `likely_known` is the same company and title already on the board
+    from another source; it is reported rather than hidden, because two
+    requisitions can share a title.
+    """
+    if isinstance(payload, dict):
+        payload = payload.get("jobs")
+    if not isinstance(payload, list):
+        raise InputError("input must be a JSON array or an object with a 'jobs' array")
+    if aliases is None:
+        aliases = ats_fetch.alias_map(ats_fetch.load_registry())
+    known_ids = _known_linkedin_ids(seen)
+    result = {"new": [], "known": [], "likely_known": []}
+    batch = set()
+    for index, raw in enumerate(payload, 1):
+        if not isinstance(raw, dict):
+            raise InputError("job %d: expected an object" % index)
+        raw_url = raw.get("linkedin_url") or raw.get("url")
+        if not isinstance(raw_url, str) or not raw_url.strip():
+            raise InputError("job %d: linkedin_url is required" % index)
+        linkedin_url, job_id = _canonical_linkedin_url(raw_url, index)
+        if job_id in batch:
+            continue
+        batch.add(job_id)
+        card = {"linkedin_url": linkedin_url, "title": (raw.get("title") or "").strip(),
+                "company": (raw.get("company") or "").strip()}
+        if job_id in known_ids:
+            result["known"].append(card)
+            continue
+        match = next((key for key, entry in seen.items()
+                      if card["title"] and ats_fetch._norm(entry.get("title")) == ats_fetch._norm(card["title"])
+                      and ats_fetch.same_company(entry.get("company"), card["company"], aliases)), None)
+        if match:
+            result["likely_known"].append(dict(card, matches=match))
+        else:
+            result["new"].append(card)
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("input", help="browser-export JSON file, or - for stdin")
     parser.add_argument("--dry-run", action="store_true", help="validate and merge in memory only")
+    parser.add_argument("--check", action="store_true",
+                        help="triage list-page cards against the board; writes nothing")
     parser.add_argument("--date", default=date.today().isoformat(), help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+
+    if args.check:
+        try:
+            result = check_cards(_load_seen(), load_payload(args.input))
+        except (InputError, OSError, json.JSONDecodeError) as exc:
+            print("check failed: %s" % exc, file=sys.stderr)
+            return 2
+        result["counts"] = {k: len(v) for k, v in result.items()}
+        print(json.dumps(result, ensure_ascii=False, indent=1))
+        return 0
 
     try:
         rows, duplicates_in_input = normalize_rows(load_payload(args.input))

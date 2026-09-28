@@ -52,6 +52,7 @@
               </div>
             </details>
           </div>
+          <button class="secondary" id="add-job" title="Add a job you found yourself">Add job</button>
           <div class="fetch-feedback" role="status" aria-live="polite"><span id="collectlog">Ready to fetch</span><span id="collectlast" class="dim"></span></div>
           <button class="linkish" id="show-new" hidden>Show them</button>
         </div>
@@ -121,6 +122,28 @@
       <div class="modal-hint" id="text-modal-hint"></div>
       <div class="modal-actions"><button class="secondary" id="text-modal-cancel">Cancel</button><button class="primary" id="text-modal-submit">Save</button></div>
     </section>
+  </div>
+  <div class="modal-backdrop" id="add-modal" hidden>
+    <form class="text-modal add-modal" id="add-form" role="dialog" aria-modal="true" aria-labelledby="add-title" novalidate>
+      <div class="modal-head"><div><span class="label">Add job</span><h2 id="add-title">Add a job you found</h2></div><button class="modal-close" type="button" id="add-close" aria-label="Close">×</button></div>
+      <label class="modal-label" for="add-job-url">Job link</label>
+      <input type="url" id="add-job-url" required placeholder="Paste the LinkedIn address bar, or any job page" autocomplete="off">
+      <label class="modal-label" for="add-apply-url">Company apply link <span class="dim">optional</span></label>
+      <input type="url" id="add-apply-url" placeholder="Where Apply takes you" autocomplete="off">
+      <div class="modal-hint">Where Apply takes you. Leave it empty for Easy Apply.</div>
+      <details class="add-details" id="add-details">
+        <summary>Details</summary>
+        <div class="add-details-body">
+          <label class="modal-label" for="add-title-input">Title</label><input type="text" id="add-title-input" autocomplete="off">
+          <label class="modal-label" for="add-company">Company</label><input type="text" id="add-company" autocomplete="off">
+          <label class="modal-label" for="add-location">Location</label><input type="text" id="add-location" autocomplete="off">
+          <label class="modal-label" for="add-description">Job description</label><textarea id="add-description" rows="6" placeholder="Only needed when the link cannot be read"></textarea>
+        </div>
+      </details>
+      <div class="add-status" id="add-status" role="status" aria-live="polite"></div>
+      <div class="modal-actions"><button class="secondary" type="button" id="add-cancel">Cancel</button><button class="secondary" type="button" id="add-anyway" hidden>Add without description</button><button class="primary" type="submit" id="add-submit">Add</button></div>
+      <div class="add-bookmarklet">Drag <a id="add-bookmarklet" href="#" title="Drag me to the bookmarks bar">+ JobFlow</a> to your bookmarks bar, then click it on any job page to open this dialog already filled in.</div>
+    </form>
   </div>
   <div id="toast"><span id="toastmsg"></span><button id="toastundo" hidden>Undo <span id="toastsec"></span></button></div>
 </div>

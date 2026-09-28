@@ -40,8 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_jobs  # noqa: E402
 import jobs_md  # noqa: E402
 
-from . import (activity, companies, docs, notion, review, run_registry, runs, state,  # noqa: E402
-               trash)
+from . import (activity, add_job, companies, docs, notion, review, run_registry, runs,  # noqa: E402
+               state, trash)
 
 TOKEN_FILE = jobs_md.ROOT / "job_scraper" / ".board-token"
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
@@ -374,7 +374,8 @@ class Handler(BaseHTTPRequestHandler):
         parts = urlparse(self.path)
         run_id, action = run_route(parts.path)
         company_match = COMPANY_PATH.fullmatch(parts.path)
-        known = parts.path in ("/api/update", "/api/fetch", "/api/runs", "/api/runs/undelete",
+        known = parts.path in ("/api/update", "/api/jobs/add", "/api/fetch", "/api/runs",
+                               "/api/runs/undelete",
                                "/api/companies", "/api/companies/resolve-all",
                                "/api/companies/health-check") or \
             (run_id and action in ("approve", "cancel", "kill", "compile", "restore", "retry",
@@ -412,6 +413,15 @@ class Handler(BaseHTTPRequestHandler):
             except trash.TrashError as exc:
                 return self._send(exc.status, json.dumps({"error": str(exc)}))
             return self._send(200, json.dumps({"deleted": deleted}))
+
+        if parts.path == "/api/jobs/add":
+            with activity.Timer() as timer:
+                code, body = add_job.add(payload)
+            activity.emit("board", "add job: %s" % (
+                "%s - %s (%s)" % (body.get("company"), body.get("title"), body.get("outcome"))
+                if code == 200 else body.get("error")),
+                level="info" if code == 200 else "warn", ms=timer.ms)
+            return self._send(code, json.dumps(body, ensure_ascii=False))
 
         if parts.path == "/api/fetch":
             code, body = start_fetch(payload)

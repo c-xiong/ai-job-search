@@ -163,6 +163,33 @@ class LinkedInBrowserImportTest(unittest.TestCase):
         with self.assertRaises(linkedin_import.InputError):
             linkedin_import.normalize_rows(payload)
 
+    def test_check_triages_cards_without_writing(self):
+        seen = {
+            # Seen through public linkedin-search under a slugged locale URL.
+            "https://www.linkedin.com/jobs/view/4451224579": {
+                "title": "Machine Learning Engineer", "company": "Example AG",
+                "url": "https://ch.linkedin.com/jobs/view/ml-engineer-at-example-4451224579"},
+            "https://job-boards.greenhouse.io/other/jobs/1": {
+                "title": "Data Scientist", "company": "Other", "sources": []},
+        }
+        cards = {"jobs": [
+            {"title": "Machine Learning Engineer", "company": "Example AG",
+             "linkedin_url": "https://www.linkedin.com/jobs/view/4451224579/?trk=x"},
+            {"title": "Data Scientist", "company": "Other",
+             "linkedin_url": "https://www.linkedin.com/jobs/view/5000000001"},
+            {"title": "NLP Engineer", "company": "New Co",
+             "linkedin_url": "https://www.linkedin.com/jobs/view/5000000002"},
+            {"title": "NLP Engineer", "company": "New Co",
+             "linkedin_url": "https://ch.linkedin.com/jobs/view/nlp-engineer-5000000002"},
+        ]}
+        result = linkedin_import.check_cards(seen, cards, aliases={})
+        self.assertEqual([c["title"] for c in result["known"]], ["Machine Learning Engineer"])
+        self.assertEqual(result["likely_known"][0]["matches"],
+                         "https://job-boards.greenhouse.io/other/jobs/1")
+        self.assertEqual([c["linkedin_url"] for c in result["new"]],
+                         ["https://www.linkedin.com/jobs/view/5000000002"])
+        self.assertFalse(jobs_md.SEEN.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

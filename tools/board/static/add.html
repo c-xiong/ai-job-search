@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JobFlow - Add job</title>
+<style>body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:40px 16px;background:#f8f8f8;color:#222}@media (prefers-color-scheme:dark){body{background:#15161a;color:#e6e6e6}}</style>
+</head><body>
+<p id="m">Opening JobFlow…</p>
+<script>
+// The bookmarklet's hand-off (DESIGN.md §17). This page is static and carries
+// no data of its own. It first offers the job to a board already open in this
+// browser (BroadcastChannel, same origin); if one takes it, this tab closes and
+// the dialog opens there. Otherwise it moves the payload into this tab's
+// sessionStorage and opens the board with the token the board remembered in
+// localStorage. Nothing is added until you press Add in the dialog, so a page
+// that opens this address with a made-up payload can only pre-fill a form.
+(() => {
+  const say = text => { document.getElementById("m").textContent = text; };
+  let raw = "";
+  try { raw = decodeURIComponent(location.hash.slice(1)); } catch (_) {}
+  history.replaceState(null, "", location.pathname);
+
+  const openHere = () => {
+    let token = null;
+    try { token = localStorage.getItem("jobflow.token"); } catch (_) {}
+    if (!token) {
+      say("Open the board once from the address printed in the terminal, then click the bookmark again.");
+      return;
+    }
+    try { if (raw) sessionStorage.setItem("jobflow.pendingAdd", raw); } catch (_) {}
+    location.replace("/?t=" + encodeURIComponent(token));
+  };
+
+  if (!raw || typeof BroadcastChannel !== "function") return openHere();
+  const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const channel = new BroadcastChannel("jobflow");
+  let taken = false;
+  channel.onmessage = event => {
+    if (taken || event.data?.type !== "add-taken" || event.data.id !== id) return;
+    taken = true;
+    channel.close();
+    say("Sent to your open JobFlow tab. You can close this one.");
+    window.close();
+  };
+  channel.postMessage({ type: "add", id, payload: raw });
+  setTimeout(() => { if (!taken) { channel.close(); openHere(); } }, 600);
+})();
+</script>
+</body></html>
