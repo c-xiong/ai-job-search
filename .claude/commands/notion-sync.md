@@ -17,6 +17,7 @@ The sync is deterministic code, not model work: `tools/board/notion.py` (logic) 
 | Furthest Stage | pull | raised to the current Stage; `Screened Out` for a rejection with none set |
 | Outcome Reason | owner (pull fills `Withdrew by me` for Withdrawn when empty) | |
 | Days to Response | Notion formula | |
+| Application Portal, My Notes | **owner** | on the board's Send step (writes Notion, then the tracker's `portal_url` / `my_notes`) or by hand in Notion. Pull copies a non-empty value into the tracker and fills an empty one from it; clear a value on the board, not in Notion |
 
 Every automatic write fills an **empty** field only, so correcting a date by hand is permanent.
 

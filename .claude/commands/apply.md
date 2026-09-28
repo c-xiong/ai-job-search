@@ -302,9 +302,9 @@ Do this before the optional offer below, and before ending the turn for any othe
 
 1. Read `job_search_tracker.csv`. If it does not exist, create it with the standard header (identical to `/outcome` Step 1.1, so the two commands never diverge):
    ```
-   date,company,sector,role,role_type,channel,status,contact_person,fit_rating,notes,cv_file,cover_letter_file,source,deadline
+   date,company,sector,role,role_type,channel,status,contact_person,fit_rating,notes,cv_file,cover_letter_file,source,deadline,portal_url,my_notes
    ```
-   **If the file exists and its header does not end in `,deadline`, append `,deadline` to the header line only** - no data row is touched. Legacy rows then read as an empty deadline.
+   **If the file exists and its header is missing any of the trailing columns above, append the missing trailing columns to the header line only**, in the order shown and ending with `,my_notes` (a tracker that predates `deadline` gains `,deadline,portal_url,my_notes`) - no data row is touched. Legacy rows then read as an empty deadline and empty owner columns. `portal_url` (the employer's candidate portal) and `my_notes` belong to the owner, who edits them on JobFlow's Send step or in Notion: leave them empty on a new row and never change them.
 2. Match existing rows case-insensitively on company and role. **On no match, or when every match holds a final status, append a new row. On a match that is still open, update it.** "Final" and "open" are defined by the **Tracker status vocabulary** in `/outcome` — the legacy space spellings `no response` / `offer declined` count as final, so a closed application never gets its row overwritten. When you append alongside a final row, say so — the earlier application to that role keeps its own row and its own outcome.
 3. Values for a new row:
 

@@ -21,6 +21,15 @@ writer, so the two sides never conflict:
                             name carries the PDF's short hash, so a rebuilt PDF
                             replaces the stale copy and an unchanged one is
                             never re-sent.
+    owner fields (both ways) "Application Portal" (the employer's candidate
+                            portal) and "My Notes" are typed by the owner, on
+                            the board's Send step or in Notion. A board save
+                            writes Notion first, then the tracker's `portal_url`
+                            and `my_notes`; a pull copies a non-empty Notion
+                            value into the tracker, and fills an empty Notion
+                            value from the tracker (a board save made while
+                            sync was off). Both properties are created on
+                            first use.
 
 Silently optional: with no token or data source configured every entry point is
 a no-op. Configuration lives in the gitignored `job_scraper/notion_sync.json`
@@ -48,6 +57,9 @@ FOLLOW_UP_DAYS = 10
 PULL_EVERY = 600            # seconds between background pulls while the board runs
 AUTO_PREFIX = "Apply - drafted"
 DOC_PROPS = {"cv": "CV", "cover": "Cover Letter"}   # tracker target -> files property
+# tracker column -> (Notion property, property schema)
+OWNER_PROPS = {"portal_url": ("Application Portal", {"url": {}}),
+               "my_notes": ("My Notes", {"rich_text": {}})}
 
 # Notion Stage -> tracker status (the /outcome vocabulary). Interested and an
 # empty Stage map to nothing: the repo already records drafts itself.
@@ -243,18 +255,35 @@ def source_for(portal, url):
 
 # -- documents -----------------------------------------------------------------
 
-_schema_ready = set()     # data sources whose CV/Cover Letter properties exist
+_schema_ready = set()     # (data source, group) pairs whose properties exist
+
+
+def _ensure_properties(cfg, group, wanted):
+    """Create the properties in `wanted` ({name: schema}) the data source lacks."""
+    key = (cfg["data_source_id"], group)
+    if key in _schema_ready:
+        return
+    path = "/data_sources/%s" % cfg["data_source_id"]
+    have = _call(cfg, "GET", path).get("properties") or {}
+    missing = {name: schema for name, schema in wanted.items() if name not in have}
+    if missing:
+        _call(cfg, "PATCH", path, {"properties": missing})
+    _schema_ready.add(key)
 
 
 def _ensure_doc_properties(cfg):
-    source = cfg["data_source_id"]
-    if source in _schema_ready:
-        return
-    have = _call(cfg, "GET", "/data_sources/%s" % source).get("properties") or {}
-    missing = {name: {"files": {}} for name in DOC_PROPS.values() if name not in have}
-    if missing:
-        _call(cfg, "PATCH", "/data_sources/%s" % source, {"properties": missing})
-    _schema_ready.add(source)
+    _ensure_properties(cfg, "documents", {name: {"files": {}} for name in DOC_PROPS.values()})
+
+
+def _ensure_owner_properties(cfg):
+    _ensure_properties(cfg, "owner", dict(OWNER_PROPS.values()))
+
+
+def _owner_value(column, value):
+    """The Notion property value for an owner column; empty clears it."""
+    if column == "portal_url":
+        return {"url": value or None}
+    return _text(value) if value else {"rich_text": []}
 
 
 def _pdf_for(tex):
@@ -300,6 +329,10 @@ def _sync_documents(cfg, pages):
         if page is None:
             continue    # push creates rows; pull only decorates existing ones
         props = _doc_props(cfg, page, targets)
+        for column, (name, _schema) in OWNER_PROPS.items():
+            if (row.get(column) or "").strip() and not read(page, name):
+                _ensure_owner_properties(cfg)
+                props[name] = _owner_value(column, row[column].strip())
         if props:
             _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
             changed += 1
@@ -388,14 +421,7 @@ def mark_applied(record):
     cfg = load_config()
     if cfg is None:
         return None
-    page = find_page(query_all(cfg), record["job_url"], record["company"], record["role"])
-    if page is None:
-        push(record)
-        page = find_page(query_all(cfg), record["job_url"], record["company"],
-                         record["role"])
-        if page is None:
-            raise NotionError("the Notion row for %s - %s could not be created"
-                              % (record["company"], record["role"]))
+    page = _page_for(cfg, record)
     stage = read(page, "Stage")
     if stage not in (None, "Interested"):
         return stage
@@ -410,6 +436,37 @@ def mark_applied(record):
     props.update(_derive(view, today))
     _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
     return "Applied"
+
+
+def _page_for(cfg, record):
+    """This application's Notion row, created through push when it is missing."""
+    page = find_page(query_all(cfg), record["job_url"], record["company"], record["role"])
+    if page is None:
+        push(record)
+        page = find_page(query_all(cfg), record["job_url"], record["company"],
+                         record["role"])
+        if page is None:
+            raise NotionError("the Notion row for %s - %s could not be created"
+                              % (record["company"], record["role"]))
+    return page
+
+
+def save_owner_fields(record, values):
+    """The owner saved the portal link and/or notes on the Send step.
+
+    `values` maps tracker columns (`portal_url`, `my_notes`) to their new text;
+    an empty string clears the property. Returns "updated", or None when not
+    configured.
+    """
+    cfg = load_config()
+    if cfg is None:
+        return None
+    page = _page_for(cfg, record)
+    _ensure_owner_properties(cfg)
+    props = {OWNER_PROPS[column][0]: _owner_value(column, value)
+             for column, value in values.items() if column in OWNER_PROPS}
+    _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
+    return "updated"
 
 
 # -- pull ----------------------------------------------------------------------
@@ -461,14 +518,12 @@ def _merge_tracker(pages):
                 raw = list(csv.reader(handle))
             if raw:
                 header, rows = raw[0], raw[1:]
+        width = len(header)
+        header, rows = docs._upgrade_header(header, rows)
+        upgraded = len(header) != width and bool(rows)   # older tracker gains columns
         ix = {name: i for i, name in enumerate(header)}
-        if any(name not in ix for name in docs.CANONICAL_HEADER):
-            raise NotionError("tracker header is missing canonical columns")
-        rows = [row + [""] * (len(header) - len(row)) for row in rows]
         for page in pages:
             status = _tracker_status(page)
-            if not status:
-                continue
             url, company = read(page, "Job Posting URL"), read(page, "Company") or ""
             role = read(page, "Position Title") or ""
             applied = (read(page, "Application Date") or "")[:10]
@@ -480,6 +535,16 @@ def _merge_tracker(pages):
                             and _fold(row[ix["role"]]) == _fold(role))):
                     match = row
                     break
+            if match is not None:
+                # A non-empty Notion value wins; an empty one never blanks the
+                # tracker (the documents pass fills Notion from it instead).
+                for column, (name, _schema) in OWNER_PROPS.items():
+                    value = (read(page, name) or "").strip()
+                    if value and match[ix[column]] != value:
+                        match[ix[column]] = value
+                        changed += 1
+            if not status:
+                continue
             if match is None:
                 row = [""] * len(header)
                 row[ix["date"]] = applied or date.today().isoformat()
@@ -487,6 +552,8 @@ def _merge_tracker(pages):
                 row[ix["status"]], row[ix["source"]] = status, url or ""
                 row[ix["channel"]] = read(page, "Source") or ""
                 row[ix["notes"]] = "from Notion"
+                for column, (name, _schema) in OWNER_PROPS.items():
+                    row[ix[column]] = (read(page, name) or "").strip()
                 rows.append(row)
                 changed += 1
             elif match[ix["status"]] != status:
@@ -494,7 +561,7 @@ def _merge_tracker(pages):
                     match[ix["date"]] = applied   # tracker date = date applied
                 match[ix["status"]] = status
                 changed += 1
-        if changed:
+        if changed or upgraded:
             tmp = docs.TRACKER.with_suffix(".csv.tmp")
             with open(tmp, "w", newline="", encoding="utf-8") as handle:
                 csv.writer(handle).writerows([header] + rows)

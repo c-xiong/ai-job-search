@@ -20,7 +20,8 @@ from board import docs, notion, run_registry  # noqa: E402
 def page(pid, edited="2026-09-20T10:00:00.000Z", **props):
     kinds = {"Position Title": "title", "Company": "rich_text", "Next Action": "rich_text",
              "Job Posting URL": "url", "Application Date": "date",
-             "First Response Date": "date", "Follow-up Date": "date"}
+             "First Response Date": "date", "Follow-up Date": "date",
+             "Application Portal": "url", "My Notes": "rich_text"}
     out = {}
     for name, value in props.items():
         name = name.replace("_", " ")
@@ -219,6 +220,82 @@ class NotionSyncTest(unittest.TestCase):
                          ("applied", notion.date.today().isoformat()))
         self.assertEqual(rows["Beta"]["status"], "interview")
         self.assertEqual(docs.tracker_statuses()[("acme", "ml engineer")][0], "applied")
+
+
+    def test_save_owner_fields_writes_notion_then_tracker(self):
+        row = page("p1", Position_Title="ML Engineer", Company="Acme", Stage="Applied",
+                   Job_Posting_URL="https://jobs.lever.co/acme/1")
+        fake = self.fake([row])
+        self.write_tracker({"date": "2026-09-19", "company": "Acme", "role": "ML Engineer",
+                            "status": "applied"})
+        record = {"job_url": "https://jobs.lever.co/acme/1", "company": "Acme",
+                  "role": "ML Engineer", "targets": {}}
+        values = {"portal_url": "https://acme.wd3.myworkdayjobs.com/", "my_notes": "login: me"}
+        with mock.patch.object(notion, "_schema_ready", set()):
+            self.assertEqual(notion.save_owner_fields(record, values), "updated")
+        schema = [b for m, p, b in fake.calls if m == "PATCH" and "data_sources" in p]
+        self.assertEqual(schema, [{"properties": {"Application Portal": {"url": {}},
+                                                  "My Notes": {"rich_text": {}}}}])
+        props = fake.calls[-1][2]["properties"]
+        self.assertEqual(props["Application Portal"],
+                         {"url": "https://acme.wd3.myworkdayjobs.com/"})
+        self.assertEqual(props["My Notes"], {"rich_text": [{"text": {"content": "login: me"}}]})
+        self.assertEqual(docs.save_owner_fields(record, values), "updated")
+        self.assertEqual(docs.save_owner_fields(record, values), "unchanged")
+        self.assertEqual(self.read_tracker()[0]["portal_url"],
+                         "https://acme.wd3.myworkdayjobs.com/")
+        with mock.patch.object(notion, "_schema_ready", {("ds", "owner")}):
+            notion.save_owner_fields(record, {"portal_url": "", "my_notes": ""})
+        props = fake.calls[-1][2]["properties"]
+        self.assertEqual(props, {"Application Portal": {"url": None},
+                                 "My Notes": {"rich_text": []}})
+
+    def test_pull_mirrors_owner_fields_and_upgrades_old_header(self):
+        legacy = docs.CANONICAL_HEADER[:14]
+        with open(self.tracker, "w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(legacy)
+            writer.writerow(["2026-09-19", "Acme", "", "ML Engineer", "", "", "drafted"]
+                            + [""] * 7)
+            writer.writerow(["2026-09-19", "Beta", "", "SWE", "", "", "drafted"] + [""] * 7)
+        acme = page("p1", Position_Title="ML Engineer", Company="Acme", Stage="Interested",
+                    Application_Portal="https://acme.example/portal", My_Notes="ref 42")
+        beta = page("p2", Position_Title="SWE", Company="Beta", Stage="Interested")
+        self.fake([acme, beta])
+        self.assertEqual(notion.pull()["tracker"], 2)
+        rows = {r["company"]: r for r in self.read_tracker()}
+        self.assertEqual(list(rows["Acme"])[-2:], ["portal_url", "my_notes"])
+        self.assertEqual((rows["Acme"]["portal_url"], rows["Acme"]["my_notes"]),
+                         ("https://acme.example/portal", "ref 42"))
+        self.assertEqual(rows["Beta"]["portal_url"], "")
+        self.assertEqual(notion.pull()["tracker"], 0)
+
+    def test_pull_fills_empty_notion_owner_fields_from_tracker(self):
+        row = page("p1", Position_Title="ML Engineer", Company="Acme", Stage="Interested")
+        fake = self.fake([row])
+        self.write_tracker({"date": "2026-09-19", "company": "Acme", "role": "ML Engineer",
+                            "status": "drafted", "cv_file": "cv/never_built.tex",
+                            "portal_url": "https://acme.example/portal"})
+        with mock.patch.object(notion, "_schema_ready", {("ds", "owner")}):
+            self.assertEqual(notion.pull()["documents"], 1)
+        props = [b for m, p, b in fake.calls if p == "/pages/p1"][-1]["properties"]
+        self.assertEqual(props, {"Application Portal": {"url": "https://acme.example/portal"}})
+        self.assertEqual(self.read_tracker()[0]["portal_url"], "https://acme.example/portal")
+
+    def test_owner_values_accepts_web_links_only(self):
+        from board import server
+        self.assertEqual(server.run_route("/api/runs/r-20260928-101010-acme-abc123/owner"),
+                         ("r-20260928-101010-acme-abc123", "owner"))
+        self.assertIn("owner", server.RUN_POST_ACTIONS)   # else the POST is a 403
+        self.assertEqual(server.owner_values({"portal_url": " https://x.com/a ",
+                                              "my_notes": "hi  "}),
+                         ({"portal_url": "https://x.com/a", "my_notes": "hi"}, None))
+        self.assertEqual(server.owner_values({"portal_url": ""}), ({"portal_url": ""}, None))
+        for bad in ({"portal_url": "javascript:alert(1)"}, {"my_notes": 3}, {},
+                    {"my_notes": "x" * 2001}):
+            values, error = server.owner_values(bad)
+            self.assertIsNone(values)
+            self.assertTrue(error)
 
 
 if __name__ == "__main__":

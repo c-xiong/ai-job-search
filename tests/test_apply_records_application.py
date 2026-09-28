@@ -35,6 +35,12 @@ SCRAPER = REPO / ".claude" / "skills" / "job-scraper" / "SKILL.md"
 
 TRACKER_HEADER = (
     "date,company,sector,role,role_type,channel,status,contact_person,"
+    "fit_rating,notes,cv_file,cover_letter_file,source,deadline,portal_url,my_notes"
+)
+# The columns every tracker had before the owner columns; new ones only ever
+# follow them.
+LEGACY_HEADER = (
+    "date,company,sector,role,role_type,channel,status,contact_person,"
     "fit_rating,notes,cv_file,cover_letter_file,source,deadline"
 )
 
@@ -99,13 +105,13 @@ class ApplyRecordsApplication(unittest.TestCase):
                 "shorter header as a substring, which assertIn alone cannot catch",
             )
 
-    def test_tracker_header_ends_with_deadline(self):
+    def test_tracker_header_only_grows_at_the_end(self):
         """/apply appends rows with one field per header column, so inserting
-        `deadline` anywhere but the end shifts every value in every existing
+        a column anywhere but the end shifts every value in every existing
         row by one position."""
         self.assertTrue(
-            TRACKER_HEADER.endswith(",deadline"),
-            "deadline must be the last column - a mid-header insert shifts every "
+            TRACKER_HEADER.startswith(LEGACY_HEADER + ","),
+            "new columns must follow deadline - a mid-header insert shifts every "
             "existing row's values by one position",
         )
 
@@ -127,7 +133,7 @@ class ApplyRecordsApplication(unittest.TestCase):
             ("outcome.md Step 1", outcome_step_1),
         ):
             self.assertIn(
-                f"append `,{last_column}` to the header line",
+                f"ending with `,{last_column}`",
                 text,
                 f"{name}'s migration does not append the header's own last column "
                 f"({last_column!r}) - a tracker migrated by this command would not "
@@ -318,10 +324,10 @@ class DeadlineSurvivesEveryWrite(unittest.TestCase):
     """
 
     CASES = [
-        (APPLY, "### Step 6b: Record the Application", "append `,deadline` to the header line only",
+        (APPLY, "### Step 6b: Record the Application", "append the missing trailing columns to the header line only",
          "a mid-header insert shifts every existing row's values by one position"),
         (OUTCOME, "## Step 1: Load State and Identify the Application",
-         "append `,deadline` to the header line only",
+         "append the missing trailing columns to the header line only",
          "the two commands must migrate identically, or whichever runs first sets the schema"),
         (APPLY, "## Step 0: Parse Input", "application deadline",
          "Step 6b's value is supposed to come from Step 0's extraction, so the extraction "

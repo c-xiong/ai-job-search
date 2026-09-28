@@ -36,8 +36,13 @@ APPLICATIONS = ROOT / "documents" / "applications"
 PROFILE = ROOT / ".claude" / "skills" / "job-application-assistant" / "01-candidate-profile.md"
 CANONICAL_HEADER = (
     "date,company,sector,role,role_type,channel,status,contact_person,"
-    "fit_rating,notes,cv_file,cover_letter_file,source,deadline"
+    "fit_rating,notes,cv_file,cover_letter_file,source,deadline,portal_url,my_notes"
 ).split(",")
+# The owner's own columns, edited on the Send step and mirrored to Notion:
+# where the employer's candidate portal lives, and free-text notes. They are
+# kept apart from `notes`, which /outcome and /gmail-sync read as a dated log of
+# contact with the employer.
+OWNER_COLUMNS = {"portal_url": "Application Portal", "my_notes": "My Notes"}
 FINAL_STATUSES = {
     "hired", "rejected", "no_response", "offer_declined", "withdrawn",
     "no response", "offer declined",
@@ -895,9 +900,7 @@ def merge_tracker(record, brief=None):
             if raw:
                 header = raw[0]
                 rows = raw[1:]
-                if not header or header[-1] != "deadline":
-                    header = header + ["deadline"]
-                    rows = [row + [""] for row in rows]
+                header, rows = _upgrade_header(header, rows)
         indexes = {name: index for index, name in enumerate(header)}
         missing = [name for name in CANONICAL_HEADER if name not in indexes]
         if missing:
@@ -934,6 +937,16 @@ def merge_tracker(record, brief=None):
     return action
 
 
+def _upgrade_header(header, rows):
+    """Append any canonical column an older tracker lacks, and pad every row.
+
+    Columns are only ever added at the end, so a tracker written before
+    `deadline` or the owner columns existed keeps every value where it was.
+    """
+    header = list(header) + [name for name in CANONICAL_HEADER if name not in header]
+    return header, [row + [""] * (len(header) - len(row)) for row in rows]
+
+
 def _write_tracker(header, rows):
     """Atomically replace the tracker. Callers hold `_tracker_lock()`."""
     TRACKER.parent.mkdir(parents=True, exist_ok=True)
@@ -958,15 +971,50 @@ def _tracker_key(company, role):
     return ((company or "").casefold().strip(), (role or "").casefold().strip())
 
 
-def tracker_statuses():
-    """{(company, role) folded: (status, date)} from the tracker; last row wins."""
+def tracker_rows():
+    """{(company, role) folded: row dict} from the tracker; last row wins."""
     try:
         with open(TRACKER, newline="", encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
     except OSError:
         return {}
-    return {_tracker_key(r.get("company"), r.get("role")):
-            ((r.get("status") or "").strip(), (r.get("date") or "").strip()) for r in rows}
+    return {_tracker_key(r.get("company"), r.get("role")): r for r in rows}
+
+
+def tracker_statuses():
+    """{(company, role) folded: (status, date)} from the tracker; last row wins."""
+    return {key: ((r.get("status") or "").strip(), (r.get("date") or "").strip())
+            for key, r in tracker_rows().items()}
+
+
+def save_owner_fields(record, values):
+    """Write the owner columns (`portal_url`, `my_notes`) on this application's row.
+
+    `values` holds only the columns to change. Returns "updated", "unchanged"
+    or "missing" (no tracker row for this company and role yet).
+    """
+    with _tracker_lock():
+        if not TRACKER.exists():
+            return "missing"
+        with open(TRACKER, newline="", encoding="utf-8") as handle:
+            raw = list(csv.reader(handle))
+        if not raw:
+            return "missing"
+        header, rows = _upgrade_header(raw[0], raw[1:])
+        ix = {name: index for index, name in enumerate(header)}
+        key = _tracker_key(record["company"], record["role"])
+        match = next((row for row in reversed(rows)
+                      if _tracker_key(row[ix["company"]], row[ix["role"]]) == key), None)
+        if match is None:
+            return "missing"
+        changed = False
+        for name, value in values.items():
+            if name in OWNER_COLUMNS and match[ix[name]] != value:
+                match[ix[name]], changed = value, True
+        if not changed:
+            return "unchanged"
+        _write_tracker(header, rows)
+    return "updated"
 
 
 def mark_applied(record):

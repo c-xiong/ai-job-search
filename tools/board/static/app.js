@@ -704,13 +704,18 @@ function renderSend(run){
   const review=run.review||{},checked=review.total&&review.done>=review.total,kinds=docKinds(run.scope);
   const state=appState(run),when=(run.tracker_date||"").slice(5).replace("-","/");
   const open=run.job_url?`<a class="secondary" href="${esc(run.job_url)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
+  const portal=/^https?:\/\//i.test(run.portal_url||"")?`<a class="secondary" href="${esc(run.portal_url)}" target="_blank" rel="noopener">Open portal ↗</a>`:"";
   const reveals=kinds.map(kind=>`<button class="secondary" data-reveal="${kind}">Reveal ${kind==="cv"?"CV":"letter"} in Finder</button>`).join("");
   const record=state==="applied"?`<span class="applied-badge">${run.tracker_status==="applied"?"Applied ✓":esc((run.tracker_status||"").replaceAll("_"," "))}${when?" "+esc(when):""}</span>`
     :`<button class="primary" data-applied="${esc(run.id)}">Mark applied</button>`;
   mountApp(run,"send",`<div class="send-shell"><section class="send-main">
     <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Check the PDFs</strong><div class="dim">${review.total?`${review.done} of ${review.total} checks ticked`:"No checks recorded yet"}${checked?"":` · <button class="linkish" data-app-step="review">finish them in Review</button>`}</div></div></div>
-    <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${reveals}</div></div></div>
+    <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${portal}${reveals}</div></div></div>
     <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Moves the Notion Stage to Applied, the tracker row, and this job’s board status.</div><div class="title-actions">${record}</div></div></div>
+    <form class="send-step owner-form" id="owner-form" data-run-id="${esc(run.id)}"><span class="stepdot">✎</span><div><strong>Portal link &amp; notes</strong><div class="dim">Where you applied, so you can log in again later. Saved to the tracker and Notion.</div>
+      <label class="modal-label" for="owner-portal">Application portal</label><input type="url" id="owner-portal" placeholder="https://…" value="${esc(run.portal_url||"")}">
+      <label class="modal-label" for="owner-notes">My notes <span class="dim">(optional)</span></label><textarea id="owner-notes" rows="3" placeholder="Login email, reference number, anything to remember…">${esc(run.my_notes||"")}</textarea>
+      <div class="title-actions"><button class="secondary" type="submit">Save</button></div></div></form>
     <div class="writing"><div class="label">Published files</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc((run.cv_country||"ch").toUpperCase())}</div></div>
   </section></div>`);
   openView("send",[crumbRun(run),{label:"Send"}],"/app/"+encodeURIComponent(run.id)+"/send");
@@ -1415,6 +1420,14 @@ document.addEventListener("input",event=>{
   renderCompanies(false);const search=el("company-search");search.focus();try{search.setSelectionRange(position,position)}catch(_){}
 });
 document.addEventListener("submit",event=>{
+  if(event.target.id==="owner-form"){
+    event.preventDefault();const form=event.target,runId=form.dataset.runId,button=form.querySelector("button[type=submit]");
+    button.disabled=true;
+    postRun("/api/runs/"+encodeURIComponent(runId)+"/owner",{portal_url:el("owner-portal").value,my_notes:el("owner-notes").value}).then(({ok,notion})=>{
+      button.disabled=false;if(!ok)return;
+      toast(notion?"Saved · tracker and Notion":"Saved in the tracker (Notion sync is off)",{ms:3000});
+      const fresh=RUNS.find(r=>r.id===runId);if(fresh&&VIEW==="send"&&ACTIVE_RUN===runId)openApp(fresh,"send")});return;
+  }
   if(event.target.id==="company-add"){
     // One field: the name comes from the link and can be changed under ⋯.
     event.preventDefault();const careers_url=el("company-careers").value,known=new Set(COMPANIES.companies.map(row=>row.name));

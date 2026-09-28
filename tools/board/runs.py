@@ -705,12 +705,15 @@ class Supervisor:
         shown = sorted((r for r in data["runs"] if not r.get("deleted_at")),
                        key=lambda r: r.get("started_at") or "", reverse=True)[:50]
         runs = []
-        tracker = docs.tracker_statuses()
+        tracker = docs.tracker_rows()
         for record in shown:
             record = dict(record)
-            status, since = tracker.get(docs._tracker_key(record.get("company"),
-                                                          record.get("role")), ("", ""))
-            record["tracker_status"], record["tracker_date"] = status, since
+            row = tracker.get(docs._tracker_key(record.get("company"),
+                                                record.get("role"))) or {}
+            record["tracker_status"] = (row.get("status") or "").strip()
+            record["tracker_date"] = (row.get("date") or "").strip()
+            for column in docs.OWNER_COLUMNS:
+                record[column] = row.get(column) or ""
             if record.get("pipeline") == 2:
                 record["progress"] = self._progress(record, settings)
             if record.get("phase") == "done":

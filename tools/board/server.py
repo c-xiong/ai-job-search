@@ -34,7 +34,7 @@ import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_jobs  # noqa: E402
@@ -198,11 +198,16 @@ def fetch_status():
 # id never reaches the supervisor.
 RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore|retry|continue"
-                      r"|marks|reveal|applied|delete))?$")
+                      r"|marks|reveal|applied|owner|delete))?$")
 PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"/(?P<kind>cv|cover)$")
 COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
                           r"(?:/(?P<action>resolve|identity|test-fetch|manage))?$")
+
+
+# Run actions a POST may reach; anything else is refused before the body is read.
+RUN_POST_ACTIONS = ("approve", "cancel", "kill", "compile", "restore", "retry", "continue",
+                    "marks", "reveal", "applied", "owner", "delete")
 
 
 def run_route(path):
@@ -211,6 +216,30 @@ def run_route(path):
     if not match:
         return None, None
     return match.group("id"), match.group("action")
+
+
+OWNER_LIMITS = {"portal_url": 2000, "my_notes": 2000}   # Notion's text-object cap
+
+
+def owner_values(payload):
+    """({column: text}, error) for the Send step's portal link and notes."""
+    values = {}
+    for column, limit in OWNER_LIMITS.items():
+        if column not in payload:
+            continue
+        value = payload[column]
+        if not isinstance(value, str):
+            return None, "%s must be a string" % column
+        value = value.strip() if column == "portal_url" else value.rstrip()
+        if len(value) > limit:
+            return None, "%s is longer than %d characters" % (column, limit)
+        if (column == "portal_url" and value
+                and urlsplit(value).scheme not in ("http", "https")):
+            return None, "the portal link must start with http:// or https://"
+        values[column] = value
+    if not values:
+        return None, "nothing to save"
+    return values, None
 
 
 def mark_board_applied(job_url):
@@ -378,8 +407,7 @@ class Handler(BaseHTTPRequestHandler):
                                "/api/runs/undelete",
                                "/api/companies", "/api/companies/resolve-all",
                                "/api/companies/health-check") or \
-            (run_id and action in ("approve", "cancel", "kill", "compile", "restore", "retry",
-                                   "continue", "marks", "reveal", "applied", "delete"))
+            (run_id and action in RUN_POST_ACTIONS)
         known = known or bool(company_match and company_match.group("action") in
                               ("resolve", "identity", "test-fetch", "manage"))
         if not known or not self._authed(parse_qs(parts.query)):
@@ -481,6 +509,25 @@ class Handler(BaseHTTPRequestHandler):
                     "board": mark_board_applied(record.get("job_url"))}
             activity.emit("board", "marked applied: %s - %s (Notion %s, tracker %s)"
                           % (record["company"], record["role"], stage or "off",
+                             body["tracker"]), run_id=run_id)
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+
+        if run_id and action == "owner":
+            record = runs.get(run_id)
+            if record is None:
+                return self._send(404, json.dumps({"error": "unknown run"}))
+            values, error = owner_values(payload)
+            if error:
+                return self._send(400, json.dumps({"error": error}))
+            # Notion first, as for Mark applied: the tracker is its cache.
+            try:
+                synced = notion.save_owner_fields(record, values)
+            except notion.NotionError as exc:
+                return self._send(502, json.dumps({"error": "Notion: %s" % exc}))
+            body = {"notion": synced, "tracker": docs.save_owner_fields(record, values),
+                    **values}
+            activity.emit("board", "saved portal/notes: %s - %s (Notion %s, tracker %s)"
+                          % (record["company"], record["role"], synced or "off",
                              body["tracker"]), run_id=run_id)
             return self._send(200, json.dumps(body, ensure_ascii=False))
 
