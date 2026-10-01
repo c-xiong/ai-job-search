@@ -68,7 +68,7 @@ APPENDABLE = ("sources", "also_seen", "possible_duplicate_of", "last_seen_at",
 # enrich_existing() now proves it on every call: it snapshots these before it
 # starts and refuses to return if any of them moved. A dozen dict lookups per
 # row is a cheap price for the only copy of every status and note you have set.
-PROTECTED = ("user_status", "user_note", "note", "first_seen", "first_seen_at",
+PROTECTED = ("user_status", "user_note", "user_posting_url", "note", "first_seen", "first_seen_at",
              "url", "title", "company", "posted", "rank_score", "rank_verdict",
              "rank_date", "strengths", "gaps", "language_gate", "language_note")
 
@@ -402,12 +402,13 @@ def merge(seen, rows, today, log, portal=PORTAL, pending=None, stamp=None):
 
         row_fingerprint = postings.fingerprint(row.get("description") or "")
 
-        existing = seen.get(key)
+        existing_key = jobs_md.entry_key(seen, key)
+        existing = seen.get(existing_key) if existing_key is not None else None
         if existing is not None:
             # Already in the board under this exact key: record that we saw it
             # again, take any posting body it is still missing, and move on.
             # Nothing else about the row is ours to change.
-            enrich_existing(existing, row, key, today, portal, pending, ctx)
+            enrich_existing(existing, row, existing_key, today, portal, pending, ctx)
             stats["already_known"] += 1
             continue
 
@@ -550,21 +551,17 @@ def known_ids_from(seen):
     """
     ids = set()
     for key, entry in seen.items():
-        candidates = [key, entry.get("url")]
+        candidates = jobs_md.known_urls(entry, key)
         for source in entry.get("sources") or []:
             if source.get("portal") != PORTAL:
                 continue
             recorded = source.get("id") or ""
             if recorded.count(":") >= 2:
                 ids.add(recorded)
-            candidates.append(source.get("url"))
-        if entry.get("portal") == PORTAL or any(
-            (s.get("portal") == PORTAL) for s in entry.get("sources") or []
-        ):
-            for url in candidates:
-                derived = jobs_md.composite_id_for_url(url)
-                if derived:
-                    ids.add(derived)
+        for url in candidates:
+            derived = jobs_md.composite_id_for_url(url)
+            if derived:
+                ids.add(derived)
     return ids
 
 

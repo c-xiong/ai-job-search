@@ -33,6 +33,7 @@ const RUN_LOG_SCROLL=new Map();
 const HISTORY=[];
 let toastTimer=null,undoTimer=null,POLL=null;
 let MODAL_RESOLVE=null;
+let POSTING_URL_JOB=null,POSTING_URL_BUSY=false,POSTING_URL_FOCUS=null,POSTING_URL_REVISION=0;
 
 // Theme: Auto -> Light -> Dark -> Auto. Auto is the old behaviour (follow the
 // OS) and stays the default; only an explicit choice is persisted. Kept out of
@@ -219,6 +220,9 @@ function shown(){
   return sorter?rows.sort(sorter):rows;
 }
 const selectedJob=()=>shown()[sel]||null;
+const jobUrls=j=>[j.url,j.open_url,...(j.known_urls||[])].filter(Boolean);
+const matchesJobUrl=(j,url)=>jobUrls(j).includes(url);
+function postingLinkLabel(url){try{return new URL(url).hostname}catch(_){return url}}
 // Not every posting deserves both documents: a speculative application may want
 // the letter alone, and a portal that only takes a CV has nowhere to put one.
 // The fit evaluation is the first honest moment to make that choice, so it lives
@@ -239,9 +243,9 @@ const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and au
 const DOC_TITLE={cv:"CV",cover:"cover letter"};
 const docKinds=scope=>(scope||"both")==="both"?["cv","cover"]:[scope];
 const scopeOptions=(selected="both")=>SCOPES.map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
-const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","manual":"Added by you","ats-search":"Your companies","company-careers":"Company careers","freehire-search":"freehire"};
+const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","manual":"Added by you","ats-search":"Your companies","company-careers":"Company careers","freehire-search":"freehire","freehire":"freehire"};
 const sourceLabel=value=>SOURCE_LABELS[value]||String(value||"Other website").replace(/-search$/,"").replaceAll("-"," ");
-const sourceTitle=job=>[...new Set([job.primary_source,...(job.sources||[])].filter(Boolean))].map(sourceLabel).join(" · ");
+const sourceTitle=job=>[...new Set([job.portal,job.primary_source,...(job.sources||[])].filter(Boolean))].map(sourceLabel).join(" · ");
 
 function renderChips(){
   const counts={all:JOBS.length,active:JOBS.filter(j=>ACTIVE.includes(j.status)).length};
@@ -283,7 +287,7 @@ function render(){
   const rows=shown(),apps=appsByJob();if(sel>=rows.length)sel=Math.max(0,rows.length-1);
   el("tb").innerHTML=rows.map((j,i)=>`<tr class="${i===sel?"sel":""}${isNewArrival(j)?" fresh":""}" data-row="${i}">
     <td><span class="fitword ${esc(j.fit)}">${esc(j.fit||"—")}</span></td>
-    <td class="role" title="${esc(j.title)} · ${esc(sourceTitle(j)||sourceLabel(j.primary_source||j.portal))}">${esc(displayTitle(j.title))}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td><td class="co">${esc(j.company)}</td><td class="draftcell">${draftCell(applicationFor(j,apps))}</td>
+    <td class="role" title="${esc(j.title)} · ${esc(sourceTitle(j)||sourceLabel(j.primary_source||j.portal))}">${esc(displayTitle(j.title))}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td><td class="co">${esc(j.company)}</td><td class="co sourcecell" title="${esc(sourceTitle(j))}">${esc(sourceLabel(j.portal||j.primary_source))}</td><td class="draftcell">${draftCell(applicationFor(j,apps))}</td>
     <td class="co">${esc(j.location)}</td><td class="co" title="${esc(j.posted)}">${esc(postedLabel(j))}</td>
     <td class="co foundcell" title="${esc(foundTitle(j))}">${isNewArrival(j)?'<span class="newdot" aria-label="new in the latest fetch"></span>':""}${esc(foundAt(j).slice(5,10))}</td>
     <td><select data-url="${esc(j.url)}">${statusChoices(j).map(s=>`<option value="${esc(s)}" ${s===j.status?"selected":""}>${esc(s)}</option>`).join("")}</select></td></tr>`).join("");
@@ -386,7 +390,8 @@ function renderJob(){
   const fitLabel=j.fit||"unranked",score=j.score?Math.round(j.score):null,why=whyItems(j.why),posted=postedText(j);
   el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitle" title="${esc(j.title)}">${esc(displayTitle(j.title))}</div>
     <div class="jobmeta"><strong>${esc(j.company)}</strong>${j.location?`<span class="sep">·</span><span>${esc(j.location)}</span>`:""}${posted?`<span class="sep">·</span><span>Posted ${esc(posted)}</span>`:""}</div>
-    <div class="badges"><span class="fitpill ${esc(j.fit||"none")}" title="${esc(scoreTitle(j))}"><span class="fitdot"></span>${esc(fitLabel)}${score!=null?`<span class="fitscore">${esc(score)}</span>`:""}</span><span class="badge">${esc(sourceLabel(j.primary_source||j.portal)||"Source unknown")}</span>${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">Title only</span>':""}</div></div>
+    <div class="badges"><span class="fitpill ${esc(j.fit||"none")}" title="${esc(scoreTitle(j))}"><span class="fitdot"></span>${esc(fitLabel)}${score!=null?`<span class="fitscore">${esc(score)}</span>`:""}</span><span class="badge">${esc(sourceLabel(j.primary_source||j.portal)||"Source unknown")}</span>${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">Title only</span>':""}</div>
+    <div class="posting-link"><a href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener" title="${esc(j.open_url||j.url)}">${esc(postingLinkLabel(j.open_url||j.url))} ↗</a><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button></div></div>
     <div class="whybox"><div class="sectionhead">Why it's here</div>${why.length?`<ul class="whylist">${why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:'<div class="dim">No reason was stored.</div>'}</div>
     <div class="posting"><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
     <div class="jobactions"><div class="statusbuttons">${markButtons(j)}</div>
@@ -426,6 +431,53 @@ async function editNote(j=selectedJob()){
   if(value!==null)update(j.url,{note:value}).then(ok=>ok&&toast("note saved"));
 }
 
+function openPostingUrl(j){
+  if(!j||POSTING_URL_BUSY)return;
+  POSTING_URL_JOB=j.url;POSTING_URL_FOCUS=document.activeElement;
+  el("posting-url-title").textContent=j.company+" — "+displayTitle(j.title);
+  el("posting-url-input").value=j.open_url||j.url;
+  el("posting-url-reset").hidden=!j.posting_url;
+  el("posting-url-reset").title=j.default_open_url||j.url;
+  postingUrlStatus("");el("posting-url-modal").hidden=false;document.body.classList.add("modal-open");
+  requestAnimationFrame(()=>{el("posting-url-input").focus();el("posting-url-input").select()});
+}
+function closePostingUrl(){
+  if(POSTING_URL_BUSY)return;
+  POSTING_URL_JOB=null;el("posting-url-modal").hidden=true;document.body.classList.remove("modal-open");
+  if(POSTING_URL_FOCUS?.isConnected)POSTING_URL_FOCUS.focus();
+  else document.querySelector("[data-posting-url]")?.focus();
+}
+function postingUrlStatus(message,warn=false){const box=el("posting-url-status");box.textContent=message;box.classList.toggle("warn",warn)}
+async function savePostingUrl(reset=false){
+  if(!POSTING_URL_JOB||POSTING_URL_BUSY)return;
+  const j=JOBS.find(job=>job.url===POSTING_URL_JOB);if(!j)return;
+  const value=reset?"":el("posting-url-input").value.trim();
+  if(!reset){
+    let valid=false;try{const url=new URL(value);valid=/^https?:$/.test(url.protocol)&&!!url.hostname&&!url.username&&!url.password&&!/\s/.test(value)}catch(_){}
+    if(!valid){postingUrlStatus("Enter a complete http:// or https:// job link.",true);el("posting-url-input").focus();return}
+  }
+  POSTING_URL_BUSY=true;postingUrlStatus("Saving…");
+  const controls=el("posting-url-form").querySelectorAll("input,button");controls.forEach(control=>control.disabled=true);
+  let saved=false;
+  try{
+    const response=await fetch("/api/update?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:j.url,posting_url:value})});
+    checkAuth(response);const data=await response.json();
+    if(!response.ok)throw new Error(data.error||"Could not save the posting URL.");
+    if(!data.open_url)throw new Error("Restart the job board to enable URL changes, then try again.");
+    const current=JOBS.find(job=>job.url===j.url);
+    if(current){
+      const aliases=[...jobUrls(j),...jobUrls(current),value];
+      current.posting_url=data.posting_url||"";current.open_url=data.open_url;
+      current.known_urls=[...new Set(aliases.filter(Boolean))];
+    }
+    POSTING_URL_REVISION++;
+    render();const run=RUNS.find(r=>r.id===ACTIVE_RUN);if(VIEW==="send"&&run)renderSend(run);
+    pollActivity();saved=true;
+  }catch(error){postingUrlStatus(error.message||"The board did not answer. Try again.",true)}
+  finally{POSTING_URL_BUSY=false;controls.forEach(control=>control.disabled=false)}
+  if(saved){closePostingUrl();toast(reset?"original posting link restored":"posting URL saved")}
+}
+
 function elapsed(run){
   if(!run.started_at)return "";const end=run.ended_at?new Date(run.ended_at):new Date();
   const seconds=Math.max(0,Math.round((end-new Date(run.started_at))/1000));
@@ -451,7 +503,7 @@ function appState(r){
 }
 const APP_GROUPS=[["generating","Generating"],["failed","Failed"],["review","To review"],["ready","Ready to send"],["applied","Applied"]];
 function appsByJob(){const map=new Map();latestApplications().forEach(r=>{if(r.job_url&&!map.has(r.job_url))map.set(r.job_url,r)});return map}
-const applicationFor=(j,map=appsByJob())=>j?map.get(j.url)||(j.open_url&&map.get(j.open_url))||null:null;
+const applicationFor=(j,map=appsByJob())=>j?jobUrls(j).map(url=>map.get(url)).find(Boolean)||null:null;
 // The Draft cell: empty until a job has documents; applied clears it again,
 // because the Status column already says so.
 function draftCell(r){
@@ -611,7 +663,7 @@ function attemptTabs(run){
 }
 // The board row an application was generated from: its own URL, or the
 // first-party posting the row links to.
-const jobOfRun=run=>run&&run.job_url?JOBS.find(j=>j.url===run.job_url||j.open_url===run.job_url)||null:null;
+const jobOfRun=run=>run&&run.job_url?JOBS.find(j=>matchesJobUrl(j,run.job_url))||null:null;
 function appHeader(run,step){
   const state=appState(run),done=run.phase==="done",review=run.review||{};
   const reviewState=!done?"todo":review.total&&review.done>=review.total?"done":step==="review"?"live":"todo";
@@ -703,14 +755,16 @@ function renderSend(run){
   if(!run)return;ACTIVE_RUN=run.id;PREVIEW_RUN=run.id;
   const review=run.review||{},checked=review.total&&review.done>=review.total,kinds=docKinds(run.scope);
   const state=appState(run),when=(run.tracker_date||"").slice(5).replace("-","/");
-  const open=run.job_url?`<a class="secondary" href="${esc(run.job_url)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
+  const job=jobOfRun(run),postingUrl=job?.open_url||run.job_url;
+  const open=postingUrl?`<a class="secondary" href="${esc(postingUrl)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
+  const changeUrl=job?`<button class="linkish" data-posting-url="${esc(job.url)}">Change URL</button>`:"";
   const portal=/^https?:\/\//i.test(run.portal_url||"")?`<a class="secondary" href="${esc(run.portal_url)}" target="_blank" rel="noopener">Open portal ↗</a>`:"";
   const reveals=kinds.map(kind=>`<button class="secondary" data-reveal="${kind}">Reveal ${kind==="cv"?"CV":"letter"} in Finder</button>`).join("");
   const record=state==="applied"?`<span class="applied-badge">${run.tracker_status==="applied"?"Applied ✓":esc((run.tracker_status||"").replaceAll("_"," "))}${when?" "+esc(when):""}</span>`
     :`<button class="primary" data-applied="${esc(run.id)}">Mark applied</button>`;
   mountApp(run,"send",`<div class="send-shell"><section class="send-main">
     <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Check the PDFs</strong><div class="dim">${review.total?`${review.done} of ${review.total} checks ticked`:"No checks recorded yet"}${checked?"":` · <button class="linkish" data-app-step="review">finish them in Review</button>`}</div></div></div>
-    <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${portal}${reveals}</div></div></div>
+    <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${changeUrl}${portal}${reveals}</div></div></div>
     <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Moves the Notion Stage to Applied, the tracker row, and this job’s board status.</div><div class="title-actions">${record}</div></div></div>
     <form class="send-step owner-form" id="owner-form" data-run-id="${esc(run.id)}"><span class="stepdot">✎</span><div><strong>Portal link &amp; notes</strong><div class="dim">Where you applied, so you can log in again later. Saved to the tracker and Notion.</div>
       <label class="modal-label" for="owner-portal">Application portal</label><input type="url" id="owner-portal" placeholder="https://…" value="${esc(run.portal_url||"")}">
@@ -990,7 +1044,7 @@ let APPLYING_ROUTE=false,SELF_WRITE=false;
 // Back to the Board with that posting selected and open in the Job panel. It
 // outranks whichever chip or facet you left the board on, which could hide it.
 function showJobOnBoard(url){
-  const job=JOBS.find(j=>j.url===url||j.open_url===url);if(!job)return false;
+  const job=JOBS.find(j=>matchesJobUrl(j,url));if(!job)return false;
   if(!shown().includes(job)){filter="all";q="";el("q").value="";resetFacets()}
   const index=shown().indexOf(job);if(index<0)return false;
   sel=index;restoreWorkspace();render();return true;
@@ -1215,7 +1269,7 @@ function takePendingAdd(){
   if(!raw)return;let data={};try{data=JSON.parse(raw)}catch(_){return}
   receiveAdd(data);
 }
-async function reloadJobs(){const response=await fetch("/api/jobs?t="+T);checkAuth(response);if(!response.ok)throw new Error("Could not reload the job list.");const data=await response.json();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();renderStatusKeys();render()}
+async function reloadJobs(){const revision=POSTING_URL_REVISION;const response=await fetch("/api/jobs?t="+T);checkAuth(response);if(!response.ok)throw new Error("Could not reload the job list.");const data=await response.json();if(revision!==POSTING_URL_REVISION)return reloadJobs();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();renderStatusKeys();render()}
 function fetchSummary(status){
   if(status.running)return {message:"Checking for new jobs…",running:true};
   const sources=status.sources||[],added=sources.reduce((n,s)=>n+(s.added||0),0);
@@ -1336,6 +1390,9 @@ function selectCompanyRow(row){
 const closePopovers=(except=null)=>document.querySelectorAll("details.popover[open],details.app-menu[open]").forEach(node=>{if(node!==except)node.removeAttribute("open")});
 document.addEventListener("click",event=>{
   closePopovers(event.target.closest("details.popover,details.app-menu"));
+  const postingUrl=event.target.closest("[data-posting-url]");if(postingUrl)return void openPostingUrl(JOBS.find(j=>j.url===postingUrl.dataset.postingUrl));
+  if(event.target.closest("#posting-url-cancel,#posting-url-close")||event.target===el("posting-url-modal"))return void closePostingUrl();
+  if(event.target.closest("#posting-url-reset"))return void savePostingUrl(true);
   if(event.target.closest("#text-modal-submit"))return void closeTextModal(true);
   if(event.target.closest("#text-modal-cancel,#text-modal-close"))return void closeTextModal(false);
   if(event.target===el("text-modal"))return void closeTextModal(false);
@@ -1420,6 +1477,7 @@ document.addEventListener("input",event=>{
   renderCompanies(false);const search=el("company-search");search.focus();try{search.setSelectionRange(position,position)}catch(_){}
 });
 document.addEventListener("submit",event=>{
+  if(event.target.id==="posting-url-form"){event.preventDefault();return void savePostingUrl()}
   if(event.target.id==="owner-form"){
     event.preventDefault();const form=event.target,runId=form.dataset.runId,button=form.querySelector("button[type=submit]");
     button.disabled=true;
@@ -1468,6 +1526,17 @@ document.addEventListener("change",event=>{
   if(event.target.matches("[data-note-input]"))update(event.target.dataset.noteInput,{note:event.target.value}).then(ok=>ok&&toast("note saved"));
 });
 document.addEventListener("keydown",event=>{
+  if(POSTING_URL_JOB){
+    if(event.key==="Escape"){event.preventDefault();closePostingUrl()}
+    else if((event.metaKey||event.ctrlKey)&&event.key==="Enter"){event.preventDefault();void savePostingUrl()}
+    else if(event.key==="Tab"){
+      const controls=[...el("posting-url-form").querySelectorAll("input,button")].filter(control=>!control.hidden&&!control.disabled),first=controls[0],last=controls[controls.length-1];
+      if(!first)event.preventDefault();
+      else if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
+      else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+    }
+    return;
+  }
   if(ADD_OPEN)return;
   if(MODAL_RESOLVE){if(event.key==="Escape"){event.preventDefault();closeTextModal(false)}else if((event.metaKey||event.ctrlKey)&&event.key==="Enter"){event.preventDefault();closeTextModal(true)}return}
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);

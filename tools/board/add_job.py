@@ -205,14 +205,7 @@ def resolve(job_id, company_url):
 # ---------------------------------------------------------------------- write
 
 def _entry_key(seen, url):
-    canonical = jobs_md.canonical_url(url)
-    if canonical in seen:
-        return canonical
-    for key, entry in seen.items():
-        known = [entry.get("url")] + [s.get("url") for s in entry.get("sources") or []]
-        if canonical in {jobs_md.canonical_url(u) for u in known if u}:
-            return key
-    return None
+    return jobs_md.entry_key(seen, url)
 
 
 def _write(job_id, company_url, found, today):

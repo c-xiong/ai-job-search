@@ -752,13 +752,8 @@ class Supervisor:
     def _board_entry(self, job_url):
         from . import state as board_state
         seen = board_state.load()
-        entry = seen.get(job_url)
-        if entry:
-            return entry
-        for _url, candidate in seen.items():
-            if board_state.primary_url(candidate) == job_url:
-                return candidate
-        return {}
+        key = jobs_md.entry_key(seen, job_url)
+        return seen[key] if key is not None else {}
 
     def _settle(self, run_id, phase, message):
         """Move a still-running run to a terminal phase. Never re-labels one."""
@@ -1133,7 +1128,7 @@ class Supervisor:
             else:
                 reasons.append("board: %s" % why)
         if text is None:
-            fetched, why = fetch_posting_text(record["job_url"])
+            fetched, why = fetch_posting_text(jobs_md.primary_url(entry) or record["job_url"])
             if fetched:
                 text, origin = fetched, "a direct fetch by the supervisor"
             else:

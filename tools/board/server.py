@@ -22,6 +22,7 @@ import argparse
 import atexit
 import errno
 import json
+import ipaddress
 import mimetypes
 import os
 import re
@@ -39,6 +40,7 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_jobs  # noqa: E402
 import jobs_md  # noqa: E402
+import ats_fetch  # noqa: E402
 
 from . import (activity, add_job, companies, docs, notion, review, run_registry, runs,  # noqa: E402
                state, trash)
@@ -249,8 +251,7 @@ def mark_board_applied(job_url):
         return "missing"
     with jobs_md.board_lock():
         seen = state.load()
-        key = job_url if job_url in seen else next(
-            (url for url, entry in seen.items() if state.primary_url(entry) == job_url), None)
+        key = jobs_md.entry_key(seen, job_url)
         if key is None:
             return "missing"
         if jobs_md.user_status(seen[key]) == "applied":
@@ -258,6 +259,41 @@ def mark_board_applied(job_url):
         seen[key]["user_status"] = "applied"
         state.save(seen, "%s -> applied" % (seen[key].get("company") or "job"))
     return "updated"
+
+
+def posting_url_value(value):
+    """Validate an owner's saved destination; an empty string restores the source link."""
+    error = "Posting URL must be a web address (https://…) without spaces or sign-in details"
+    if not isinstance(value, str):
+        return None, "Posting URL must be a string"
+    if not value:
+        return "", None
+    if len(value) > 8192:
+        return None, "Posting URL is longer than 8192 characters"
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 or char == "\\"
+           for char in value):
+        return None, error
+    try:
+        parts = urlsplit(value)
+        hostname, _port = parts.hostname, parts.port
+        if (parts.scheme not in ("http", "https") or not hostname
+                or parts.username is not None or parts.password is not None
+                or parts.netloc.endswith(":")):
+            return None, error
+        # Python versions differ in how strictly urlsplit checks IPv6 brackets.
+        # Check them explicitly, and reject escaped separators in DNS labels.
+        if ":" in hostname or parts.netloc.startswith("["):
+            if not re.fullmatch(r"\[[^\]]+\](?::[0-9]+)?", parts.netloc):
+                return None, error
+            ipaddress.IPv6Address(hostname)
+        else:
+            host = hostname.encode("idna").decode("ascii").rstrip(".")
+            if not host or any(not re.fullmatch(r"(?!-)[a-zA-Z0-9-]{1,63}(?<!-)", label)
+                               for label in host.split(".")):
+                return None, error
+    except (ValueError, UnicodeError):
+        return None, error
+    return value, None
 
 
 # ------------------------------------------------------------------- static
@@ -581,9 +617,21 @@ class Handler(BaseHTTPRequestHandler):
         # copy of the board (or the other way round).
         with jobs_md.board_lock():
             seen = state.load()
-            if url not in seen:
+            if not isinstance(url, str) or url not in seen:
                 return self._send(404, json.dumps({"error": "unknown job"}))
             why = []
+            posting_url = None
+            if "posting_url" in payload:
+                posting_url, error = posting_url_value(payload["posting_url"])
+                if error:
+                    return self._send(400, json.dumps({"error": error}))
+                if posting_url:
+                    canonical = jobs_md.canonical_url(posting_url)
+                    if any(key != url and canonical in {
+                            jobs_md.canonical_url(link) for link in jobs_md.known_urls(entry, key)}
+                           for key, entry in seen.items()):
+                        return self._send(409, json.dumps({
+                            "error": "This URL belongs to another job on the board"}))
             if "status" in payload:
                 status = payload["status"]
                 if status not in state.LOCK_STATUSES:
@@ -593,8 +641,21 @@ class Handler(BaseHTTPRequestHandler):
             if "note" in payload:
                 seen[url]["user_note"] = str(payload["note"])[:500]
                 why.append("note on %s" % (seen[url].get("company") or "job"))
+            if posting_url is not None:
+                entry = seen[url]
+                if posting_url:
+                    ats_fetch.seed_history(entry, url)
+                    entry["user_posting_url"] = posting_url
+                    ats_fetch.append_source(entry, {
+                        "portal": "manual", "url": posting_url, "id": "",
+                        "first_seen": datetime.now().date().isoformat()})
+                else:
+                    entry.pop("user_posting_url", None)
+                why.append("posting link on %s" % (entry.get("company") or "job"))
             state.save(seen, "; ".join(why))
-        self._send(200, json.dumps({"ok": True}))
+            result = {"ok": True, "open_url": state.primary_url(seen[url]),
+                      "posting_url": seen[url].get("user_posting_url") or ""}
+        self._send(200, json.dumps(result))
 
     def do_PATCH(self):
         parts = urlparse(self.path)

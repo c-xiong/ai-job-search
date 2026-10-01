@@ -157,14 +157,8 @@ def _add_stats(total, current):
 
 
 def _entry_for_source(seen, url):
-    canonical = jobs_md.canonical_url(url)
-    matches = []
-    for key, entry in seen.items():
-        known = {key, entry.get("url")}
-        known.update(source.get("url") for source in entry.get("sources") or [])
-        if canonical in {jobs_md.canonical_url(item) for item in known if item}:
-            matches.append(entry)
-    return matches[0] if len(matches) == 1 else None
+    key = jobs_md.entry_key(seen, url)
+    return seen[key] if key is not None else None
 
 
 def import_rows(seen, rows, today, log=lambda _message: None, pending=None, portal=PORTAL):

@@ -87,7 +87,7 @@ tr.fresh .foundcell{color:var(--text)}
 .tablewrap{flex:1;min-height:0;overflow:auto}.panel-empty{padding:30px 12px;text-align:center;color:var(--dim)}
 table{width:100%;border-collapse:collapse;table-layout:fixed}th{position:sticky;top:0;z-index:1;text-align:left;font-size:12px;color:var(--dim);font-weight:600;padding:7px 8px;background:var(--bg);border-bottom:1px solid var(--line)}
 td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}tr{cursor:pointer}tr.sel td{background:var(--sel)}tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--selbar)}
-.fitcol{width:52px}.companycol{width:16%}.draftcol{width:84px}.locationcol{width:12%}.postedcol{width:58px}.foundcol{width:74px}.statuscol{width:96px}
+.jobtable{min-width:1040px}.fitcol{width:52px}.companycol{width:16%}.sourcecol{width:124px}.sourcecell{font-size:12px}.draftcol{width:84px}.locationcol{width:12%}.postedcol{width:58px}.foundcol{width:74px}.statuscol{width:96px}
 .fitword{font-weight:600;font-size:12px}.fitword::first-letter{text-transform:uppercase}.fitword.high{color:var(--high)}.fitword.medium{color:var(--medium)}.fitword.low{color:var(--low)}
 .role{font-weight:600}.co{color:var(--dim)}.dupe{color:var(--medium);font-weight:400;font-size:11px}
 select{max-width:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:2px 4px;font-size:12px}
@@ -109,6 +109,8 @@ kbd{background:var(--chip);border:1px solid var(--line);border-radius:4px;paddin
 .jobactions{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:9px}.statusbuttons{display:flex;gap:6px;flex-wrap:wrap}.statusbuttons button{border:1px solid var(--line);background:var(--chip);color:var(--text);border-radius:6px;padding:4px 11px;cursor:pointer;font-size:12px}.statusbuttons button.on{border-color:var(--selbar);background:var(--selbar);color:#fff;font-weight:600}
 .noteinput{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:6px;padding:6px 9px;font-size:12px}.tailor{width:100%;padding:8px 12px;font-size:13px}.hint{text-align:center;color:var(--dim);font-size:11px}
 a.open{color:var(--selbar);text-decoration:none;font-size:12px;white-space:nowrap}a.open:hover{text-decoration:underline}
+.posting-link{display:flex;align-items:center;gap:10px;min-width:0;font-size:12px}.posting-link a{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);text-decoration:none}.posting-link a:hover{text-decoration:underline}.posting-link button{flex:none;margin-left:auto}
+.posting-url-modal input{display:block;width:100%;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:14px/1.4 ui-sans-serif,-apple-system,"SF Pro Text",Inter,system-ui,sans-serif;padding:9px 12px;outline:none}.posting-url-modal input:focus{border-color:var(--selbar);box-shadow:0 0 0 3px color-mix(in srgb,var(--selbar) 18%,transparent)}
 .parked-view{flex:1;min-height:0;border-top:1px solid var(--line);background:var(--line);display:flex}.app.tailor-mode .workspace{display:none}.app.tailor-mode #tailor-view{display:flex}
 /* The run identity, in the body and in sentence case. Bigger than the 13px
    body, quieter than a heading in a heading-less shell. */

@@ -243,10 +243,10 @@ class ShellMarkupTest(unittest.TestCase):
             self.assertNotIn(removed, self.js)
 
     def test_draft_column_custom_text_modal_and_no_price_chrome(self):
-        # Source is a chip filter already; its column now says whether the job
-        # has documents (APPLICATIONS_PLAN.md §4.2).
+        # Source and Draft answer separate questions: where the job was found,
+        # and whether it has generated documents.
         self.assertIn('<th class="draftcol"', self.html)
-        self.assertNotIn('class="sourcecol"', self.html)
+        self.assertIn('<th class="sourcecol"', self.html)
         self.assertIn('id="text-modal"', self.html)
         self.assertIn('id="text-modal-input"', self.html)
         self.assertIn('id="shortcut-toggle"', self.html)
@@ -476,6 +476,7 @@ if(start<0||end<marker.length)throw new Error("routing block not found in app.js
 
 const build=new Function("ctx","location","history","addEventListener",`
   let JOBS=ctx.JOBS,RUNS=ctx.RUNS;
+  ${src.match(/const jobUrls=[^\n]+\nconst matchesJobUrl=[^\n]+/)[0]}
   let filter="active",q="",sel=0,COMPANY_SELECTED=null,facetsReset=0;
   const resetFacets=()=>{facetsReset++};
   const shown=()=>JOBS.filter(job=>filter==="all"||job.status==="new");

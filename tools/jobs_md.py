@@ -308,13 +308,39 @@ def board_lock():
             handle.close()
 
 
-def primary_url(entry):
-    """The link to click: the first-party ATS posting when the row has one.
+def known_urls(entry, key=""):
+    """All saved links for one immutable board row, in insertion order."""
+    links = [key, entry.get("url")]
+    links.extend(source.get("url") for source in entry.get("sources") or []
+                 if isinstance(source, dict))
+    links.append(entry.get("user_posting_url"))
+    return list(dict.fromkeys(link for link in links if isinstance(link, str) and link))
+
+
+def entry_key(seen, url):
+    """Resolve a posting link or source alias without moving its board key."""
+    if not isinstance(url, str) or not url:
+        return None
+    if url in seen:
+        return url
+    canonical = canonical_url(url)
+    if canonical in seen:
+        return canonical
+    matches = [key for key, entry in seen.items()
+               if canonical in {canonical_url(link) for link in known_urls(entry, key)}]
+    return matches[0] if len(matches) == 1 else None
+
+
+def primary_url(entry, *, use_override=True):
+    """The owner's chosen link, then the first-party ATS posting when available.
 
     A row first seen on LinkedIn and later found on the company's own board keeps
     its original key - nothing is ever re-keyed (§11.5) - so the preferred link
-    lives in `sources`, not in `url`.
+    lives in `sources`, not in `url`. The owner's `user_posting_url` takes
+    precedence; callers can ignore it to preview the link restored by a reset.
     """
+    if use_override and entry.get("user_posting_url"):
+        return entry["user_posting_url"]
     preferred = entry.get("primary_source")
     if preferred:
         for source in entry.get("sources") or []:

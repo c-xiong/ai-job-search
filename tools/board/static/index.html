@@ -82,7 +82,7 @@
         </div>
         <div class="tablewrap">
           <table class="jobtable"><thead><tr>
-            <th class="fitcol">Fit</th><th>Role</th><th class="companycol">Company</th><th class="draftcol" title="Documents generated for this job">Draft</th>
+            <th class="fitcol">Fit</th><th>Role</th><th class="companycol">Company</th><th class="sourcecol" title="Where this job was first found">Source</th><th class="draftcol" title="Documents generated for this job">Draft</th>
             <th class="locationcol">Location</th><th class="postedcol">Posted</th><th class="foundcol">Found</th><th class="statuscol">Status</th>
           </tr></thead><tbody id="tb"></tbody></table>
           <div class="panel-empty" id="empty" hidden>Nothing here.</div>
@@ -143,6 +143,16 @@
       <div class="add-status" id="add-status" role="status" aria-live="polite"></div>
       <div class="modal-actions"><button class="secondary" type="button" id="add-cancel">Cancel</button><button class="secondary" type="button" id="add-anyway" hidden>Add without description</button><button class="primary" type="submit" id="add-submit">Add</button></div>
       <div class="add-bookmarklet">Drag <a id="add-bookmarklet" href="#" title="Drag me to the bookmarks bar">+ JobFlow</a> to your bookmarks bar, then click it on any job page to open this dialog already filled in.</div>
+    </form>
+  </div>
+  <div class="modal-backdrop" id="posting-url-modal" hidden>
+    <form class="text-modal posting-url-modal" id="posting-url-form" role="dialog" aria-modal="true" aria-labelledby="posting-url-title" novalidate>
+      <div class="modal-head"><div><span class="label">Posting link</span><h2 id="posting-url-title">Change posting URL</h2></div><button class="modal-close" type="button" id="posting-url-close" aria-label="Close">×</button></div>
+      <label class="modal-label" for="posting-url-input">Posting URL</label>
+      <input type="url" id="posting-url-input" required placeholder="https://company.com/careers/job" autocomplete="off" aria-describedby="posting-url-hint posting-url-status">
+      <div class="modal-hint" id="posting-url-hint">Paste the company’s job or application page. JobFlow will open this link next time.</div>
+      <div class="add-status" id="posting-url-status" role="status" aria-live="polite"></div>
+      <div class="modal-actions"><button class="linkish" type="button" id="posting-url-reset" hidden>Use original link</button><span class="spacer"></span><button class="secondary" type="button" id="posting-url-cancel">Cancel</button><button class="primary" type="submit" id="posting-url-save">Save URL</button></div>
     </form>
   </div>
   <div id="toast"><span id="toastmsg"></span><button id="toastundo" hidden>Undo <span id="toastsec"></span></button></div>

@@ -76,6 +76,9 @@ def _shape(items):
         rows.append({
             "url": url,
             "open_url": primary_url(entry),
+            "posting_url": entry.get("user_posting_url") or "",
+            "default_open_url": primary_url(entry, use_override=False),
+            "known_urls": jobs_md.known_urls(entry, url),
             "status": jobs_md.user_status(entry),
             "fit": (entry.get("fit") or "").lower(),
             "score": jobs_md.priority_score(entry),

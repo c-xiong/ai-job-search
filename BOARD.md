@@ -53,6 +53,14 @@ Every new row passes through the same merge. That step:
 
 Filters cover source, fit band and when a row was found. Keyboard shortcuts are listed in the page.
 
+### Changing a posting link
+
+In the **Job** panel, click **Change URL** below the job title and source badges.
+Paste the company's job or application page and click **Save URL**. The board's
+**open posting** link and the application's **Open posting** link will use it
+from then on. Your job status, notes and application history stay attached to
+the same job. **Use original link** restores the automatically selected source link.
+
 ### Adding a job you found yourself
 
 - **Add job** (in the board) takes a job URL, optionally the application URL and a
