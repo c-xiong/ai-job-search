@@ -55,6 +55,7 @@ import uuid
 from collections import deque
 from contextlib import contextmanager
 from datetime import datetime
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 
 try:
@@ -1753,12 +1754,21 @@ class Supervisor:
         """
         run_id = record["id"]
         current = get(run_id) or record
-        cap_total = sum(float(v or 0) for v in (current.get("budget_usd") or {}).values())
-        spent = float((current.get("cost") or {}).get("total_usd", 0.0))
-        if spent + float(budget) > cap_total + 1e-6:
-            raise RunFailure("this attempt has reported $%.2f of its $%.2f reservation; a "
-                             "further %s pass could exceed it" % (spent, cap_total, stage),
+        cap_total = sum((Decimal(str(v or 0)) for v in
+                         (current.get("budget_usd") or {}).values()), Decimal(0))
+        spent = Decimal(str((current.get("cost") or {}).get("total_usd", 0.0)))
+        # Stage caps are ceilings, not a minimum purchase: a brief migration or
+        # recovery pass may fit inside the attempt's remaining reservation even
+        # when its normal stage ceiling would not. Never increase the reservation
+        # or round the CLI's cent-sized limit above what remains.
+        pass_budget = min(Decimal(str(budget)), cap_total - spent).quantize(
+            Decimal("0.01"), rounding=ROUND_DOWN)
+        if pass_budget < Decimal("0.01"):
+            raise RunFailure("this attempt has reported $%.2f of its $%.2f reservation; "
+                             "less than $0.01 remains for a further %s pass"
+                             % (spent, cap_total, stage),
                              code="budget_cap", model_started=False)
+        budget = float(pass_budget)
         preflight()
 
         nonce = run_guard.new_nonce()

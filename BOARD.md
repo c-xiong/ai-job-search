@@ -130,6 +130,13 @@ override them in the gitignored `job_scraper/board_config.json`:
 `session_budget_usd` is cumulative across all attempts of one application, so retrying
 does not get around it.
 
+Each model pass uses the smaller of its configured stage cap and the attempt's remaining
+reservation, rounded down to cents. This lets a later pass use the budget still available
+instead of stopping because its full stage cap would exceed the reservation. When less
+than $0.01 remains, the next pass is stopped before model work starts. Daily and cumulative
+application caps still apply. If earlier passes used the model, the failure card says
+"no model work started for this stage" rather than implying the whole attempt was unused.
+
 ## Notion as the status source of truth (optional)
 
 With `/notion-sync` set up (the token goes in the gitignored `job_scraper/notion_sync.json`):

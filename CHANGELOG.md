@@ -63,6 +63,10 @@ Entries under this heading are changes made in this fork
 
 ### Fixed
 
+- Model passes now cap their CLI budget at the attempt's remaining reservation, rounded
+  down to cents, so a saved revision can continue after brief migration without requiring
+  a higher reservation. Daily and cumulative application caps remain enforced. Failure
+  details distinguish a blocked stage from model work already performed in the attempt.
 - `pdf_pages` now counts pages inside compressed PDF object streams (real pdfTeX output).
 - Tracker publication is idempotent and never blanks or zeroes an existing `fit_rating`.
 

@@ -596,10 +596,15 @@ const FAILURE_TITLE={quota_exhausted:"Claude usage limit reached",rate_limited:"
   interrupted:"Interrupted",guard_unverified:"Write guard not proven",provider_rate_limit:"Claude session limit reached"};
 const FAILURE_NEXT={quota_exhausted:"A new session does not reset the allowance. Continue when your usage resets - the saved work is kept.",
   rate_limited:"Wait a moment, then Continue. Nothing is retried automatically.",
-  budget_cap:"Raise the cap in job_scraper/board_config.json, then Continue.",
+  budget_cap:"Check the run and daily caps in job_scraper/board_config.json, adjust them if needed, then Continue.",
   hard_conflict:"Continue anyway only if you still want these documents.",
   missing_input:"Fix the named input, then Continue.",
   interrupted:"Continue resumes from the last checkpoint."};
+function failureActivityNote(run){
+  const hasModelWork=Number(run.cost?.total_usd||0)>0||(run.usage||[]).length>0;
+  const start=run.model_started===false?` · no model work started${hasModelWork?" for this stage":""}`:"";
+  return start+(!hasModelWork?" · no model cost incurred":"");
+}
 function progressPanel(run){
   const p=run.progress;if(!p)return "";if(p.error)return `<div class="dim">Checkpoint unreadable: ${esc(p.error)}</div>`;
   const docs=Object.entries(p.docs||{}).map(([kind,d])=>`<div><span class="verify-mark ${d.state==="verified"?"pass":""}">${DOC_STATE_MARK[d.state]||"·"}</span> ${esc(DOC_TITLE[kind])}: ${esc(d.state)}${d.pdf?` · <button class="linkish" data-preview="${esc(run.id)}">view PDF</button>`:""}</div>`).join("");
@@ -726,7 +731,7 @@ function renderTailor(run){
   const continuedBy=RUNS.find(r=>r.continue_of===run.id||r.retry_of===run.id);
   const lineage=lineageOf(run),latest=lineage[lineage.length-1];
   const origin=lineage.length>1&&latest&&latest.id!==run.id?`<div class="attempt-note">You are viewing an earlier attempt. <button class="linkish" data-run="${esc(latest.id)}">Go to the latest (#${esc(latest.attempt||lineage.length)})</button></div>`:"";
-  const failure=stopped?`<div class="failure-card"><strong>${esc(run.phase==="cancelled"?"Cancelled":FAILURE_TITLE[code]||"Run stopped")}</strong><div>${esc(run.error||"No error detail was recorded.")}</div><div class="dim">Stopped during ${esc((run.failed_phase||"unknown").replaceAll("_"," "))}${run.model_started===false?" · no model work started":""}${Number(run.cost?.total_usd||0)===0?" · no model cost incurred":""}</div>${FAILURE_NEXT[code]&&!continuedBy?`<div class="dim">${esc(FAILURE_NEXT[code])}</div>`:""}</div>`:"";
+  const failure=stopped?`<div class="failure-card"><strong>${esc(run.phase==="cancelled"?"Cancelled":FAILURE_TITLE[code]||"Run stopped")}</strong><div>${esc(run.error||"No error detail was recorded.")}</div><div class="dim">Stopped during ${esc((run.failed_phase||"unknown").replaceAll("_"," "))}${failureActivityNote(run)}</div>${FAILURE_NEXT[code]&&!continuedBy?`<div class="dim">${esc(FAILURE_NEXT[code])}</div>`:""}</div>`:"";
   // Legacy runs keep their evaluation visible; staged runs never had one.
   const fitCard=run.fit?`<div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Earlier fit evaluation — ${esc(fit.verdict||"")}${fit.overall!=null?", "+esc(fit.overall):""}</strong></div></div>`:"";
   const notes=(run.tailoring_notes||[]).map(x=>`<div>${esc(x)}</div>`).join("");

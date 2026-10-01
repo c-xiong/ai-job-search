@@ -488,6 +488,54 @@ class LedgerTest(SupervisorCase):
         self.assertEqual(settings["budget_usd"]["fix"], 4)
 
 
+class PassBudgetTest(SupervisorCase):
+    """A pass may use the reserved balance, without increasing that reservation."""
+
+    def spawn_with_budget(self, reservation, spent, requested):
+        run_id = run_registry.new_run_id("Acme")
+        record = {"id": run_id, "phase": "drafting", "budget_usd": reservation,
+                  "cost": {"total_usd": spent}}
+        run_registry.append(record)
+        job = mock.Mock(exit_code=0)
+        job.usage.return_value = {"cost_usd": 0.0}
+        with mock.patch.object(runs, "preflight") as preflight, \
+                mock.patch.object(runs.run_proc, "Pass", return_value=job) as constructor:
+            try:
+                self.supervisor._spawn(record, "draft", "brief migration",
+                                       lambda nonce: "brief only", requested, 10)
+            except runs.RunFailure as exc:
+                return run_id, exc, preflight, constructor
+        return run_id, None, preflight, constructor
+
+    def test_a_stage_ceiling_is_clipped_to_remaining_attempt_budget(self):
+        reservation = {"revise": 4.0, "pass_c": 1.5}
+        run_id, failure, _preflight, constructor = self.spawn_with_budget(
+            reservation, 0.5868, 12.0)
+        self.assertIsNone(failure)
+        argv = constructor.call_args.kwargs["model_argv"]
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "4.91")
+        self.assertEqual(constructor.call_args.args[4], 4.91)
+        self.assertEqual(run_registry.get(run_id)["budget_usd"], reservation)
+        self.assertEqual(run_registry.get(run_id)["cost"]["total_usd"], 0.5868)
+
+    def test_a_lower_stage_ceiling_is_still_respected_and_rounded_down(self):
+        _run_id, failure, _preflight, constructor = self.spawn_with_budget(
+            {"draft": 5.50}, 0.5868, 1.009)
+        self.assertIsNone(failure)
+        argv = constructor.call_args.kwargs["model_argv"]
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "1.00")
+
+    def test_less_than_one_cent_or_an_overspent_reservation_starts_no_pass(self):
+        for spent in (5.4901, 5.50, 5.60):
+            with self.subTest(spent=spent):
+                _run_id, failure, preflight, constructor = self.spawn_with_budget(
+                    {"revise": 4.0, "pass_c": 1.5}, spent, 12.0)
+                self.assertEqual(failure.code, "budget_cap")
+                self.assertFalse(failure.model_started)
+                preflight.assert_not_called()
+                constructor.assert_not_called()
+
+
 class CancelTest(SupervisorCase):
     def test_a_cancelled_run_is_not_resurrected_by_the_next_stage(self):
         os.environ["FAKE_MODE"] = "hang"
