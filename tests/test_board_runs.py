@@ -118,6 +118,38 @@ class ScopeTest(SupervisorCase):
         self.assertEqual(set(manifest["docs"]), {"cover"})
         self.assertNotIn("consistency", manifest["checks"])
 
+    def test_a_letter_draft_carries_the_letter_rules_and_asks_for_a_plan(self):
+        run_id, _phase = self.run_to_end(scope="cover")
+        prompts = [json.loads(spec.read_text())["argv"][-1]
+                   for spec in run_registry.state_dir(run_id).glob("spec-*.json")]
+        prompt = next(p for p in prompts if "stage: DRAFT" in p)
+        self.assertIn("my_cover.tex", prompt)
+        self.assertIn("letter_plan", prompt)
+        self.assertIn("must not read as a CV recap", prompt)
+        self.assertIn("not its title", prompt)
+        self.assertIn("%d body words maximum" % docs.COVER_MAX_WORDS, prompt)
+        self.assertIn("one to three customised sentences", prompt)
+        self.assertIn("developing NLP pipelines and machine learning models in Python", prompt)
+        self.assertIn("canonical preamble unchanged", prompt)
+        self.assertIn("Obey every COVER_EXCLUSIVE group", prompt)
+        self.assertNotIn("280 body words", prompt)
+        self.assertNotIn("about 47 words", prompt)
+        self.assertNotIn("at most TWO", prompt)
+
+    def test_a_cover_brief_without_a_letter_plan_is_rejected(self):
+        os.environ["FAKE_DRAFT"] = "noplan"
+        run_id, phase = self.run_to_end(scope="cover")
+        self.assertEqual(phase, "failed")
+        record = run_registry.get(run_id)
+        self.assertIn("letter_plan is required", record["error"])
+        self.assertNotIn("review", self.stages())
+
+    def test_a_cv_only_brief_does_not_require_a_letter_plan(self):
+        os.environ["FAKE_DRAFT"] = "noplan"
+        run_id, phase = self.run_to_end(scope="cv")
+        self.assertEqual(phase, "done", run_registry.get(run_id).get("error"))
+        self.assertNotIn("letter_plan", self.manifest(run_id)["brief"])
+
     def test_a_cv_only_run_reads_no_cover_base_into_its_prompt(self):
         run_id, phase = self.run_to_end(scope="cv")
         self.assertEqual(phase, "done")
@@ -817,6 +849,18 @@ class ContractValidatorTest(unittest.TestCase):
         self.assertIn("deadline is required (use null when the posting does not state it)",
                       run_guard.validate_brief(without))
         self.assertTrue(run_guard.validate_brief(dict(BRIEF, keywords=[""])))
+
+    def test_a_letter_plan_is_optional_but_must_be_complete(self):
+        from tests.fake_claude import BRIEF
+        plan = {"role_task": "evaluate agents", "role_task_source": "Responsibilities",
+                "primary_evidence": "[A]", "secondary_evidence": "[B]",
+                "connection": None, "unknowns": []}
+        self.assertEqual(run_guard.validate_brief(dict(BRIEF, letter_plan=plan)), [])
+        self.assertIn("letter_plan.primary_evidence must be a non-empty string",
+                      run_guard.validate_brief(dict(BRIEF, letter_plan=dict(
+                          plan, primary_evidence=""))))
+        self.assertTrue(run_guard.validate_brief(dict(BRIEF, letter_plan=dict(
+            plan, unknowns="none"))))
 
     def test_a_review_cannot_rule_on_an_item_it_was_not_asked_about(self):
         review = {"schema": "jobflow.review/1", "verdict": "revise", "findings": [

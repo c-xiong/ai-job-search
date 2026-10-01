@@ -7,7 +7,7 @@
 This repo is a job application workspace. Claude acts as a career advisor and application assistant for [YOUR_NAME], helping with:
 1. **Application documents** - From a posting, produce a targeted CV, cover letter or both through the staged pipeline in `.claude/commands/apply.md` (posting -> write and check -> build and verify)
 2. **CV variant** - Use the read-only master `cv/my_cv.tex` as-is, choosing only its `sde` or `ai` variant (never tailored); screen the posting for requirements the evidence lacks and report them
-3. **Cover letter writing** - Tailor a copy of the role's cover base, `cover_letters/my_cover_sde.tex` or `my_cover_ai.tex` (fallback `my_cover.tex`), following its TAILORING RULES header (cover.cls, XeLaTeX, one page)
+3. **Cover letter writing** - Tailor a copy of the one cover base, `cover_letters/my_cover.tex`, for every role, following its TAILORING RULES header (evidence and engineering judgement chosen by the posting's tasks, opening + 2-3 highlights + closing, cover.cls, XeLaTeX, one page)
 4. **On request only** - Job fit evaluation (`04-job-evaluation.md`, `/rank`), interview preparation (`/interview`), application-form fields
 5. **Career strategy** - Advise on positioning and personal branding
 
@@ -96,7 +96,7 @@ automatically from your Languages table above - don't duplicate them here. -->
 ## Workflow for New Job Applications
 1. User provides a job posting (URL or saved text) and the scope: CV, cover letter, or both
 2. **Go straight to the documents.** No fit scoring, salary lookup or approval pause unless the user asks. Map decisive requirements to real evidence, and stop only for an explicit **hard conflict** with the deal-breakers below - surface it and let the user decide
-3. Create the requested documents: `cv/main_<company>_<role>.tex` and/or `cover_letters/cover_<company>_<role>.tex`, from copies of the masters (never edit `cv/my_cv.tex` or any `cover_letters/my_cover*.tex` base)
+3. Create the requested documents: `cv/main_<company>_<role>.tex` and/or `cover_letters/cover_<company>_<role>.tex`, from copies of the masters (never edit `cv/my_cv.tex` or `cover_letters/my_cover.tex`)
 4. **Verify the requested documents** (see Verification Checklist below)
 5. Report the material tailoring choices and anything unresolved. Interview preparation only on request
 
@@ -129,7 +129,7 @@ After creating or updating a CV or cover letter, re-read the generated file and 
 - [ ] No spelling or grammar errors
 - [ ] Agentic coding / AI tooling references mention **Claude Code** by name
 - [ ] Cover letter is addressed to the correct person (or "Dear Hiring Manager" if unknown)
-- [ ] Cover letter fits approximately one page
+- [ ] Cover letter is exactly one page, including the signature block
 - [ ] CV section headings (`\section{...}`) and the References boilerplate line match the CV's language, not left as the English template defaults (see `05-cv-templates.md`)
 
 ### Compiled PDF verification (MANDATORY - never skip)
@@ -138,7 +138,9 @@ Both documents MUST be compiled and visually inspected via the Read tool on the 
 - [ ] **CV is exactly 1 page**
 - [ ] **No entry heading separated from its bullets** - use `\needspace{4\baselineskip}` before an entry at risk, or `\enlargethispage{\baselineskip}` for a near miss; never shrink fonts, margins or spacing
 - [ ] **Cover letter is exactly 1 page** - signature block must fit with the body, never overflow
-- [ ] **Cover letter bullet font matches body font** - `\lettercontent{}` must not wrap `\begin{itemize}...\end{itemize}` (the command's trailing `\\` errors on `\end{itemize}`). Standard pattern: close `\lettercontent{}`, then wrap the list in `{\raggedright\letterbodyfont \begin{itemize}...\end{itemize}\par}` so body and bullets use XCharter with true bold labels
+- [ ] **Cover letter reads above CV level** - ideas and judgement explained in plain words; named methods explain supported behavior or decisions, with no bare library inventories or unexplained metrics; at most 380 words of body text, list included (`cover_words`), usually 250–360 with no minimum or padding
+- [ ] **Cover letter preserves the approved base** - selected fixed blocks are exact and relevant to the posting's decisive tasks; the closing gives a genuinely company-specific motivation and evidenced contribution; margins are 23 mm sides, 16 mm top and 20 mm bottom, with 10.7 pt/14 pt body typography
+- [ ] **Cover letter list items use the body font** - `\lettercontent{}` must not wrap `\begin{itemize}...\end{itemize}` (its trailing `\\` errors on `\end{itemize}`). Close `\lettercontent{}`, then wrap the list in `{\raggedright\letterbodyfont \begin{itemize}...\end{itemize}\par}`
 
 ### ATS & keyword verification (CV)
 ATS parsers read the PDF's embedded text layer, not the rendered page. Extract it with `pdftotext -layout` and verify what a parser sees. `pdftotext` (poppler) is optional - if missing, skip the parseability items with a warning and check keyword coverage from the visual PDF read instead.

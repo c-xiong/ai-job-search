@@ -271,8 +271,8 @@ The pipeline reads these and never edits them. `/setup` does not create them.
 - `cv/my_cv.tex`: your one-page LaTeX CV (a file or a symlink to your CV repository).
   `tests/fixtures/latex/cv_fixture.tex` shows the expected shape. `\cvrole{sde}` /
   `\cvrole{ai}` switches let `/apply` pick a variant.
-- `cover_letters/my_cover.tex`: your cover-letter base on `cover.cls`. Optional
-  `my_cover_sde.tex` and `my_cover_ai.tex` take precedence for the matching CV variant. The
+- `cover_letters/my_cover.tex`: your one cover-letter base on `cover.cls`, used for every
+  role (the letter picks its evidence from the posting, not from the CV variant). The
   structure and tailoring rules are in `.claude/skills/job-application-assistant/06-cover-letter-templates.md`.
 
 Then configure the collection side:

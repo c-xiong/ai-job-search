@@ -35,7 +35,9 @@ approval pause on this path; a fit evaluation runs only when the user asks for o
 ### Step 3: Write Cover Letter
 - Follow the writing style rules in `03-writing-style.md` (critical: no em-dashes, no cliches)
 - Follow the template structure in `06-cover-letter-templates.md`
-- Start from the role's cover base (`cover_letters/my_cover_sde.tex` or `my_cover_ai.tex`, matching the CV variant; `my_cover.tex` if absent): obey its TAILORING RULES block, pick bullets only from its bank, and fill its slots; do not silently regenerate the whole letter
+- Start from the one cover base, `cover_letters/my_cover.tex`, for every role: obey its TAILORING RULES block, select exact COVER_LIBRARY_V1 paragraphs by the posting's decisive tasks (not the CV variant or role title), retain USE_COVER_TEXT markers, and assemble one opening, 2-3 distinct highlights and a genuinely company-specific closing
+- Keep fixed wording unchanged in draft, review and repair; never combine nlp_research with nlp_models or research_interface with publication. Use named methods only where the approved text explains relevant behavior or engineering decisions
+- Use one to three customised closing sentences plus the base's conditional relocation and fixed invitation. At most 380 body words, usually 250–360 without padding; exactly one page with the base's approved margins and typography. Preserve its preamble exactly apart from whitespace/comments; add no packages or formatting overrides
 - Create `cover_letters/cover_<company>_<role>.tex`
 - Ensure the letter connects the strongest specific experience to the role rather than answering every requirement; use no more than one honest adjacent-skill bridge and omit generic programme language
 

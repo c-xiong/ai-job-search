@@ -189,6 +189,15 @@ def main():
             write_through_guard(os.environ.get("FAKE_MASTER", "cv/my_cv.tex"), latex("x"))
         if brief_path:
             brief = dict(BRIEF)
+            if (cover or "with its `letter_plan`" in prompt) and how != "noplan":
+                brief["letter_plan"] = {
+                    "role_task": "Build and evaluate retrieval pipelines",
+                    "role_task_source": "posting.md: Requirements and responsibilities",
+                    "primary_evidence": "Contract retrieval agent",
+                    "secondary_evidence": "NLP research pipeline",
+                    "connection": "Reliable retrieval for useful AI products",
+                    "unknowns": [],
+                }
             if how == "conflict":
                 brief["hard_conflicts"] = ["German C1 is required"]
             if how == "badbrief":

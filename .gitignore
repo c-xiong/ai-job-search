@@ -62,6 +62,8 @@ cv/out/
 cv/*.local.sh
 cover_letters/my_cover.tex
 cover_letters/my_cover_*.tex
+# Retired per-role cover bases, kept locally for reference only.
+cover_letters/legacy/
 
 # Working design docs and plans. They name target companies and are written in
 # the first person; a doc meant for the public gets re-included explicitly with

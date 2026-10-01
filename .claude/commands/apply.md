@@ -53,7 +53,7 @@ load other command files, the evaluation framework, or search/interview rules.
 | `cv/my_cv.tex` - the master CV (headless: its pinned snapshot in the run directory) | core career evidence: roles, dates, titles, metrics, projects, education |
 | `.claude/skills/job-application-assistant/01-candidate-profile.md` | confirmed supplemental facts and context |
 | `CLAUDE.md` Candidate Profile | identity, languages, availability, deal-breakers |
-| `cover_letters/my_cover_<sde\|ai>.tex` (role base; `my_cover.tex` if absent) | the letter's structure, tailoring rules and bullet bank (not new facts) |
+| `cover_letters/my_cover.tex` (one base for every role) | the letter's structure, tailoring rules, evidence bank and DO NOT CLAIM list (not new facts) |
 
 - **Read-only:** never edit the master CV (or anything it links to) or the cover
   base. Tailored documents are separate copies.
@@ -111,9 +111,9 @@ shows exactly those as the screening list.
 ### Voice and naming
 
 - Follow `.claude/skills/job-application-assistant/03-writing-style.md`. The
-  letter keeps the owner's voice and the cover base's standing narrative;
-  targeting reorders, trims and emphasises - it is edited into one coherent
-  page, not a concatenation of every base paragraph.
+  letter keeps the owner's voice. There is no standing narrative: each letter
+  selects approved fixed blocks from the cover base's library by the posting's
+  tasks and is assembled as one coherent page.
 - Any mention of agentic coding or AI tooling names **Claude Code**.
 - CV language: the `CV language` in CLAUDE.md (English). The letter matches the
   posting's language.
@@ -162,10 +162,20 @@ evidence. It replaces a fit report; it has no score.
       "evidence": "contract-review agent: hybrid BM25-dense retrieval (master CV, Projects)",
       "status": "documented" }     // documented | adjacent | gap
   ],
-  "keywords": ["RAG", "Python"] }  // the posting's specific hard-skill terms, screened against the CV text
+  "keywords": ["RAG", "Python"],  // the posting's specific hard-skill terms, screened against the CV text
+  "letter_plan": {                 // only when the run writes a cover letter
+    "role_task": "build and evaluate retrieval for contract questions",
+    "role_task_source": "posting, Responsibilities, 2nd bullet",
+    "primary_evidence": "opening_agent + contract_agent: agent evaluation and citation-checked retrieval directly address the role's primary task",
+    "secondary_evidence": "jobjuniors: product requirements through architecture and delivery address the separate responsibility of shipping usable software",
+    "connection": "retrieval reliability and delivery are complementary parts of building a usable contract-question system", // task match, or null
+    "unknowns": ["contact person"] } }
 ```
 
-Write plain JSON (the comments above are documentation only). Every field is required; use `null` where the posting is silent, never a guess.
+Write plain JSON (the comments above are documentation only). Every field is required except `letter_plan`, which a run that writes a letter must include; use `null` where the posting is silent, never a guess. `letter_plan` records the choice the letter makes: the one or two tasks the role spends most time on, where the posting says so, the evidence that most directly does that task, one complementary example of a *different* responsibility, and the task match between them (`connection` is a task match, never a claim of personal enthusiasm).
+Include the selected block IDs and their task-specific rationale in the existing
+evidence strings. These are choices for this posting, not a standing selection
+for every employer. Do not add mandatory fields to the brief schema.
 **Hard conflicts** are only explicit statements that collide with a
 deal-breaker (e.g. German stated as a job condition, a start date before the
 owner's availability). If any exist and the prompt does not say the owner chose
@@ -181,29 +191,49 @@ deal-breaker yourself.
 
 ### Cover letter
 
-- Tailor the seeded copy of the role's cover base in place (`my_cover_sde.tex`
-  or `my_cover_ai.tex`, else `my_cover.tex`); obey the TAILORING RULES block at
-  its top, then `06-cover-letter-templates.md` (cover.cls, A4 Swiss/German letter frame,
-  exactly one page, bullets outside `\lettercontent{}` in `\letterbodyfont`).
-- Explain *this* role with real evidence: at most one adjacent-skill bridge, no
-  generic boilerplate, no unsupported employer claims. Address a named person
-  when the posting names one, otherwise "Dear Hiring Manager" (or the posting
-  language's equivalent). Resolve or remove every `[SLOT]`.
-- Employer statements: only the specific ones the letter needs, verified from
-  the employer's own pages; keep them few.
-- **One page, hard limit, at most 280 words.** Fit by cutting words: first any
-  sentence that adds no evidence, then `[EXTRA]`, then the weakest bullet.
-  Never `\enlargethispage`, negative `\vspace`, smaller fonts or tighter
-  spacing; a mechanical check fails the letter if any appear.
-- **No filler.** Every sentence either says why this company or carries
-  evidence. Cut on sight: pointers to where things live ("the code is on my
-  GitHub", "see my portfolio/CV"), an availability or start-date line unless
-  the posting asks for one, "I am applying for...", self-positioning ("my
-  background sits between..."), generic views on AI or the industry, and any
-  sentence that restates the bullets. The closing is the base's one closing
-  sentence (plus the relocation sentence when its rule applies), nothing more.
-- A CV-only run never writes a letter; a cover-only run reads the CV evidence
-  but never writes a CV.
+- Assemble the seeded copy of `cover_letters/my_cover.tex`. Its TAILORING RULES
+  and COVER_LIBRARY_V1 are the single source of truth for fixed wording.
+- Choose by the posting's responsibilities, not its title or CV variant. Record
+  the role problem and evidence choices in the existing `letter_plan`. Select one
+  complete opening, two distinct highlights (three only when needed and within
+  budget), and an optional publication sentence. Order by relevance; never split
+  one project. Never include both nlp_research and nlp_models (the same current
+  research), or both research_interface and publication (the same project).
+  Use nlp_models when model selection, fine-tuning or quality/cost trade-offs are
+  decisive; use nlp_research when pipelines, data or research evaluation lead.
+  The approved xHeron sample supplies wording and layout, not default evidence
+  choices for unrelated postings.
+- Copy each selected COVER_TEXT verbatim into a matching USE_COVER_TEXT wrapper.
+  Preserve markers, IDs and punctuation. No paraphrasing, compression, bold labels
+  or added mechanisms. Missing suitable evidence is a library-coverage issue to
+  report, not a reason to force a poor match or rewrite a block silently.
+- Customise only recipient, subject, salutation, date/location and the first one
+  to three closing sentences. Connect one actual company/role task to the career
+  direction confirmed in the base and strengths already evidenced. These can
+  share one natural sentence; no generic career paragraph or team praise. The base
+  describes industry, AI application, product and role-fit options. Keep its
+  opening voice and current role/degree status in every selected whole variant;
+  do not infer a conferral date from an old expected date. Relocation and invitation
+  use its fixed wording; do not invent availability, notice periods or visa facts.
+- Employer claims require first-party verification. Unknown address lines are
+  deleted; ambitious future capabilities must not be stated as already achieved.
+  International/energetic teams are optional sourced reasons, never default praise.
+- Exactly one page and at most 380 body words, usually 250–360, with no minimum
+  or padding. Budget the closing after selecting
+  fixed blocks. Cut only customised text first, then optional publication or the
+  third highlight. Preserve the approved 23 mm side, 16 mm top and 20 mm bottom
+  margins and 10.7 pt body/14 pt leading. Do not alter fonts, margins or spacing,
+  or shorten fixed text.
+- Preserve the fixed-library base's preamble exactly; only whitespace and comments
+  may differ. Do not add packages or font, margin or spacing overrides to a copy.
+- All passes, including review/fix/repair, preserve fixed paragraphs. Review their
+  factual currency and selection, not their style. Report source conflicts for a
+  library update. The `cover_fixed_blocks` mechanical check detects missing,
+  modified or unmarked core text and a changed base preamble; manual review mode
+  still reports check failures.
+- A CV-only run never writes a letter; a cover-only run reads CV evidence without
+  editing it. Default English copy is maintained in the library; translations or
+  new evidence variants require a separate template update, not ad hoc rewriting.
 
 ---
 
@@ -221,9 +251,24 @@ only what matters for a truthful, targeted application:
 - **Specificity and clarity** - generic lines that could be sent anywhere. In
   the letter, every filler sentence named under "Cover letter" above (GitHub
   or portfolio pointers, unrequested availability lines, industry philosophy,
-  bullet recaps) is a `must_fix` whose fix is deletion.
+  recaps) in customised prose is a `must_fix`. Never delete or rewrite fixed
+  blocks for stylistic reasons; check their selection and factual currency.
+- **Letter level, shape and selection** - the evidence and the thinking chosen
+  answer the posting's main problems (compare `letter_plan` when present), not a
+  fixed order. Verify the selected block IDs and rationale against the posting's
+  decisive tasks; check same-project exclusions and that each highlight adds a
+  distinct relevant strength. The closing must give a supported, company-specific
+  reason for wanting the work and an evidenced contribution; a company-name swap
+  must not leave an equally suitable paragraph. Do not inherit the xHeron closing
+  or agent-first selection by default. Named methods are appropriate when they
+  explain supported behavior or decisions, as in the approved agent paragraph;
+  a bare library inventory or unexplained metric is a `clarity` finding. At most
+  380 body words with no padding. A fix never adds
+  a background paragraph or a third item to fill space. Preserve the selected
+  library text exactly; only closing wording is open to stylistic improvement.
 - **Consistency** (both documents) - the CV and letter agree on every shared fact.
-- **Voice** - the letter still sounds like the cover base.
+- **Voice** - the letter reads as the owner's plain first person, not as
+  marketing copy.
 
 Skill-level additions follow the admission gate above; an `adjacent` keyword on
 the skills line is not a grounding failure, the same keyword in a project
@@ -258,7 +303,9 @@ named, and nothing else. Change only what they require; never add an
 unsupported claim; keep the page limits. A CV layout repair uses `\needspace` /
 `\enlargethispage` first and removes the least relevant line only when needed.
 A letter is never repaired with layout commands: it is brought back to one page
-by cutting words, in the order given under "Cover letter" above.
+by cutting words, in the order given under "Cover letter" above. A letter fix
+keeps the letter's shape and level - opening, 2-3 highlights, closing; no CV
+detail added back.
 
 ---
 

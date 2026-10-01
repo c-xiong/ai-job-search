@@ -7,20 +7,16 @@
 %   cd cover_letters && xelatex -output-directory=<dir> ../tests/fixtures/latex/cover_fixture.tex
 % It is NOT a fallback for the personal base: a missing
 % cover_letters/my_cover.tex stops a run instead of falling back to this file.
-% It demonstrates the correct itemize pattern: the list sits OUTSIDE
-% \lettercontent{} (whose trailing \\ errors on \end{itemize}) and is
-% wrapped in \letterbodyfont so XCharter, size and leading match the body.
+% It shows the default shape - opening, 2-3 highlights, closing - and the
+% correct itemize pattern: the list sits OUTSIDE \lettercontent{} (whose
+% trailing \\ errors on \end{itemize}) inside \letterbodyfont, so XCharter,
+% size and leading match the body.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \documentclass[a4paper]{cover}
-\usepackage{fancyhdr}
-
-\pagestyle{fancy}
-\fancyhf{}
-
-\rfoot{Page \thepage \hspace{0pt}}
-\thispagestyle{empty}
-\renewcommand{\headrulewidth}{0pt}
+\usepackage{enumitem}
+\geometry{left=2.3cm,right=2.3cm,top=1.6cm,bottom=2.0cm}
+\pagestyle{empty}
 \begin{document}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -45,23 +41,15 @@
 
 \lettercontent{Dear [Hiring Manager / Team],}
 
-\lettercontent{[Opening paragraph: name the role and where you found it, state your strongest connection to it in one sentence, and preview why you are a fit. Keep it to 2--3 sentences.]}
-
-\lettercontent{[Body paragraph: your most relevant experience, framed toward the tasks in the posting. Follow with 3--5 concrete bullets:]}
+\lettercontent{[OPENING: the kind of work you do and the engineering view that meets the role's main problem, in 2--3 sentences.]}
 
 {\raggedright\letterbodyfont
-\begin{itemize}
-    \item \textbf{[Achievement 1]:} [concrete result with a number where possible]
-    \item \textbf{[Achievement 2]:} [skill or project mapped to a posting requirement]
-    \item \textbf{[Achievement 3]:} [evidence for a nice-to-have requirement]
+\begin{itemize}[leftmargin=1.2em, topsep=2pt, itemsep=3pt, parsep=0pt]
+    \item [HIGHLIGHT 1: what you built, in plain words, then how you made it trustworthy or useful.]
+    \item [HIGHLIGHT 2: a different strength, chosen by the posting's main problems.]
 \end{itemize}\par}
-\vspace{6pt}
 
-\lettercontent{[Connection paragraph: why this company specifically. Reference a verified specific: a product, a stated priority, a team. Never generic.]}
-
-\lettercontent{[Personal fit paragraph: behavioral strengths and what you bring to the team, 2--3 sentences.]}
-
-\lettercontent{I look forward to hearing from you.}
+\lettercontent{[CLOSING: the problem you would like to work on there, then a brief invitation to talk.]}
 
 % Note: no trailing \\ inside \closing{} - cover.cls appends its own \\, and a
 % doubled break triggers "There's no line here to end."

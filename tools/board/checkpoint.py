@@ -31,7 +31,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from . import run_registry
+from . import run_guard, run_registry
 
 SCHEMA = "jobflow.checkpoint/1"
 # Bumped whenever a stage's rules change in a way that makes an older check's
@@ -282,9 +282,12 @@ def current_pdf_sha(manifest, kind):
 # ------------------------------------------------------ check input bindings
 
 def content_inputs(manifest, kind):
-    return {"source": current_source_sha(manifest, kind),
-            "posting": (manifest.get("inputs", {}).get("posting") or {}).get("sha256"),
-            "evidence": (manifest.get("inputs", {}).get("evidence") or {}).get(kind)}
+    inputs = {"source": current_source_sha(manifest, kind),
+              "posting": (manifest.get("inputs", {}).get("posting") or {}).get("sha256"),
+              "evidence": (manifest.get("inputs", {}).get("evidence") or {}).get(kind)}
+    if kind == "cover":
+        inputs["letter_plan"] = sha256_json((manifest.get("brief") or {}).get("letter_plan"))
+    return inputs
 
 
 def consistency_inputs(manifest):
@@ -298,8 +301,20 @@ def build_inputs(manifest, kind, toolchain):
 
 
 def mechanical_inputs(manifest, kind):
-    return {"pdf": current_pdf_sha(manifest, kind),
-            "keywords": sha256_json(manifest.get("keywords") or [])}
+    inputs = {"pdf": current_pdf_sha(manifest, kind),
+              "keywords": sha256_json(manifest.get("keywords") or [])}
+    if kind == "cover":
+        # Fixed prose is checked against the live canonical library, even if
+        # the compiled PDF has not changed since the previous measurement.
+        from . import cover_blocks, docs
+        inputs.update(source=current_source_sha(manifest, kind),
+                      cover_base=sha256(docs.cover_base()),
+                      cover_policy=sha256_json({
+                          "max_words": docs.COVER_MAX_WORDS,
+                          "validator": sha256(Path(cover_blocks.__file__)),
+                          "pdf_checks": sha256(Path(docs.__file__)),
+                      }))
+    return inputs
 
 
 def visual_inputs(manifest, kind):
@@ -353,7 +368,9 @@ def plan(manifest, kinds, toolchains, inspection_enabled=True, review_enabled=Tr
     missing = [k for k in kinds if current_source_sha(manifest, k) is None]
     # The draft pass also writes the requirement brief, which the screening
     # needs even when the only document is the (never drafted) CV.
-    if missing or not manifest.get("brief"):
+    letter_plan_missing = "cover" in kinds and run_guard.validate_letter_plan(
+        (manifest.get("brief") or {}).get("letter_plan"))
+    if missing or not manifest.get("brief") or letter_plan_missing:
         steps.append(("draft", missing))
     content = {k: check_valid(manifest, "content_" + k, content_inputs(manifest, k))
                for k in kinds}

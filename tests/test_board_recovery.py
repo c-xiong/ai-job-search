@@ -179,6 +179,61 @@ class RestartAndClickTest(SupervisorCase):
 class IntegrityTest(SupervisorCase):
     """RESUME-3: truncated files and broken manifests never become good."""
 
+    def test_a_brief_migration_keeps_adopted_metadata_when_no_pass_can_start(self):
+        run_id, phase = self.run_to_end(scope="cover")
+        self.assertEqual(phase, "done")
+        manifest = self.manifest(run_id)
+        manifest["brief"].pop("letter_plan")
+        checkpoint.save(run_id, manifest)
+        old_brief = json.loads(json.dumps(manifest["brief"]))
+        brief_path = checkpoint.run_path(run_id, "brief.json")
+        # The disk still holds a valid previous-pass brief. It must never be
+        # treated as this pass's newly generated metadata without write proof.
+        old_bytes = brief_path.read_bytes()
+        record = run_registry.get(run_id)
+        budget = record["budget_usd"]
+        for cause in ("preflight", "budget"):
+            with self.subTest(cause=cause):
+                run_registry.update(run_id, budget_usd=budget if cause == "preflight" else {})
+                error = (runs.PreflightError("guard unavailable")
+                         if cause == "preflight" else None)
+                with mock.patch.object(runs, "preflight", side_effect=error), \
+                        mock.patch.object(runs.run_proc, "Pass") as model_pass:
+                    with self.assertRaises(runs.PreflightError if cause == "preflight"
+                                           else runs.RunFailure):
+                        self.supervisor._stage_draft(record, manifest, [], ["cover"],
+                                                     run_registry.config())
+                    model_pass.assert_not_called()
+                self.assertEqual(manifest["brief"], old_brief)
+                self.assertEqual(self.manifest(run_id)["brief"], old_brief)
+                self.assertEqual(brief_path.read_bytes(), old_bytes)
+
+    def test_saved_cover_without_a_letter_plan_regenerates_only_the_brief(self):
+        os.environ.update(FAKE_MODE="crash", FAKE_ONLY="review")
+        run_id, phase = self.run_to_end(scope="cover")
+        self.assertEqual(phase, "failed")
+        manifest = self.manifest(run_id)
+        source_sha = checkpoint.current_source_sha(manifest, "cover")
+        manifest["brief"].pop("letter_plan")
+        checkpoint.save(run_id, manifest)
+        before = len(self.stages())
+        os.environ["FAKE_MODE"] = "auto"
+        code, body = self.supervisor.continue_run(run_id)
+        self.assertEqual(code, 202, body)
+        resumed_id = body["run_id"]
+        self.assertEqual(self.settle(resumed_id), "done",
+                         run_registry.get(resumed_id).get("error"))
+        resumed = self.manifest(resumed_id)
+        self.assertEqual(run_guard.validate_letter_plan(resumed["brief"]["letter_plan"]), [])
+        self.assertEqual(checkpoint.current_source_sha(resumed, "cover"), source_sha)
+        self.assertEqual(self.stages()[before:], ["draft", "review"])
+        prompt = next(json.loads(spec.read_text())["argv"][-1]
+                      for spec in run_registry.state_dir(resumed_id).glob("spec-*.json")
+                      if "stage: DRAFT" in json.loads(spec.read_text())["argv"][-1])
+        self.assertIn("Scope: brief only", prompt)
+        self.assertIn("with its `letter_plan`", prompt)
+        self.assertNotIn("- write cover letter:", prompt)
+
     def test_a_truncated_letter_is_not_adopted_and_the_brief_is_kept(self):
         os.environ["FAKE_DRAFT"] = "truncate_cover"
         run_id, phase = self.run_to_end()
@@ -462,6 +517,83 @@ class MasterProtectionTest(SupervisorCase):
 
 
 class RevisionTest(SupervisorCase):
+    def legacy_revision_parent(self):
+        self.write_config(automated_review=False,
+                          budget_usd={"pass_a": 5, "pass_b": 12,
+                                      "revise": 4, "pass_c": 1.5})
+        first, phase = self.run_to_end(scope="cover")
+        self.assertEqual(phase, "done", run_registry.get(first).get("error"))
+        manifest = self.manifest(first)
+        manifest["brief"].pop("letter_plan")
+        checkpoint.save(first, manifest)
+        return first
+
+    def test_legacy_revision_migrates_the_brief_within_its_remaining_reservation(self):
+        first = self.legacy_revision_parent()
+        before = len(self.stages())
+        original = runs.Supervisor._stage_draft
+
+        def draft_after_reported_revision(supervisor, record, *args):
+            # Match the live failure: $0.5868 spent from a $5.50 reservation.
+            run_registry.debit(0.3868, record["id"])
+            return original(supervisor, record, *args)
+
+        with mock.patch.object(runs.Supervisor, "_stage_draft", draft_after_reported_revision):
+            code, body = self.start(kind="revise", parent=first, scope="cover",
+                                    edit="cover", note="lead with RAG")
+            self.assertEqual(code, 202, body)
+            new_id = body["run_id"]
+            self.assertEqual(self.settle(new_id), "done", run_registry.get(new_id).get("error"))
+        self.assertEqual(self.stages()[before:], ["revise", "draft"])
+        record = run_registry.get(new_id)
+        self.assertEqual(sum(record["budget_usd"].values()), 5.50)
+        self.assertLess(record["cost"]["total_usd"], 5.50)
+        self.assertEqual(run_guard.validate_letter_plan(
+            self.manifest(new_id)["brief"]["letter_plan"]), [])
+        argv = next(json.loads(spec.read_text())["argv"]
+                    for spec in run_registry.state_dir(new_id).glob("spec-*.json")
+                    if "stage: DRAFT" in json.loads(spec.read_text())["argv"][-1])
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "4.91")
+        self.assertIn("Scope: brief only", argv[-1])
+
+    def test_continue_migrates_a_legacy_brief_without_repeating_a_saved_revision(self):
+        self.continue_saved_revision(keep_brief=True)
+
+    def test_continue_rebuilds_a_missing_brief_without_repeating_a_saved_revision(self):
+        self.continue_saved_revision(keep_brief=False)
+
+    def continue_saved_revision(self, keep_brief):
+        first = self.legacy_revision_parent()
+        with mock.patch.object(runs.Supervisor, "_stage_draft", side_effect=
+                               runs.RunFailure("interrupted", code="interrupted")):
+            code, body = self.start(kind="revise", parent=first, scope="cover",
+                                    edit="cover", note="lead with RAG")
+            self.assertEqual(code, 202, body)
+            failed = body["run_id"]
+            self.assertEqual(self.settle(failed), "failed")
+        saved = self.manifest(failed)
+        self.assertTrue(saved["revision"]["applied"])
+        saved_sha = checkpoint.current_source_sha(saved, "cover")
+        if not keep_brief:
+            # The old drafting guard removed the adopted brief before it
+            # stopped on the budget check: match that live checkpoint exactly.
+            saved.pop("brief", None)
+            checkpoint.save(failed, saved)
+            checkpoint.run_path(failed, "brief.json").unlink(missing_ok=True)
+        before = len(self.stages())
+        code, body = self.supervisor.continue_run(failed)
+        self.assertEqual(code, 202, body)
+        continued = body["run_id"]
+        self.assertEqual(self.settle(continued), "done",
+                         run_registry.get(continued).get("error"))
+        self.assertEqual(self.stages()[before:], ["draft"])
+        self.assertEqual(checkpoint.current_source_sha(self.manifest(continued), "cover"),
+                         saved_sha)
+        argv = next(json.loads(spec.read_text())["argv"]
+                    for spec in run_registry.state_dir(continued).glob("spec-*.json")
+                    if "stage: DRAFT" in json.loads(spec.read_text())["argv"][-1])
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "5.50")
+
     def test_a_revision_edits_the_adopted_version_in_a_fresh_session(self):
         first, _phase = self.run_to_end()
         run_registry.update(first, session_id=None)

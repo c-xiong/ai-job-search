@@ -95,8 +95,8 @@ Then add the two sources the pipeline reads and never edits:
 
 - `cv/my_cv.tex`: your one-page CV master (a file or a symlink). The shape is shown in
   `tests/fixtures/latex/cv_fixture.tex`. Optional `\cvrole{sde|ai}` switches give you role variants.
-- `cover_letters/my_cover.tex`: your cover-letter base on `cover.cls`, optionally with
-  `my_cover_sde.tex` / `my_cover_ai.tex` per role. The rules are in
+- `cover_letters/my_cover.tex`: your one cover-letter base on `cover.cls`, used for every
+  role. The rules are in
   `.claude/skills/job-application-assistant/06-cover-letter-templates.md`.
 
 List the companies you want to watch in `job_scraper/companies.json`, and edit

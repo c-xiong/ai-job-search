@@ -291,17 +291,38 @@ class DocsTest(unittest.TestCase):
         self.assertEqual(detail["state"], "fail")
         self.assertIn("cvTODO", detail["detail"])
 
-    def test_the_cover_base_follows_the_cv_variant_and_falls_back(self):
+    def test_one_cover_base_serves_every_role_and_is_protected(self):
         letters = self.root / "cover_letters"
         letters.mkdir()
-        (letters / "my_cover.tex").write_text("generic")
+        (letters / "my_cover.tex").write_text("base")
+        # A leftover per-role base is never picked up.
         (letters / "my_cover_ai.tex").write_text("ai")
-        self.assertEqual(docs.cover_base("ai").name, "my_cover_ai.tex")
-        self.assertEqual(docs.cover_base("sde").name, "my_cover.tex")
         self.assertEqual(docs.cover_base().name, "my_cover.tex")
-        protected = docs.protected_paths()
-        for rel in docs.COVER_BASE_RELS:
-            self.assertIn(str(self.root / rel), protected)
+        self.assertIn(str(letters / "my_cover.tex"), docs.protected_paths())
+
+    def test_a_letter_over_the_word_ceiling_fails_list_included(self):
+        source = self.root / "cover.tex"
+        pdf = self.root / "cover.pdf"
+        pdf.write_bytes(PDF_ONE)
+        item = "\\item " + "word " * 50
+        for body, state in (
+                ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}" % ("word " * 200), "pass"),
+                ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}" % ("word " * 352), "pass"),
+                ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}" % ("word " * 380), "pass"),
+                ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}" % ("word " * 381), "fail"),
+                # The list counts: 181 words of paragraphs plus 200 in four items.
+                ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}\n"
+                 "\\begin{itemize}[leftmargin=1em]%s\\end{itemize}" % ("word " * 181, item * 4),
+                 "fail"),
+                ("%% \\lettercontent{%s}\n\\lettercontent{Dear Team,}\n"
+                 "\\lettercontent{\\href{x}{y} %s}" % ("word " * 300, "word " * 200), "pass")):
+            source.write_text("\\documentclass{cover}\n\\begin{document}\n%s\n"
+                              "\\end{document}\n" % body)
+            with mock.patch.object(docs, "extract_text", return_value=(None, {})):
+                _state, checks, _cov = docs.check_pdf("cover", pdf, source, [], {})
+            words = [c for c in checks if c["id"] == "cover_words"][0]
+            self.assertEqual(words["state"], state, body[:60])
+            self.assertEqual(words["label"], "Letter body is at most 380 words")
 
     def test_a_letter_squeezed_onto_one_page_fails(self):
         source = self.root / "cover.tex"

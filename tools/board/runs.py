@@ -1043,7 +1043,7 @@ class Supervisor:
         identity = checkpoint.sha256(root / "CLAUDE.md")
         variant = {"role": _resolve_base_cv(record.get("resolved_base_cv") or "sde"),
                    "country": record.get("cv_country")}
-        cover_base = checkpoint.sha256(docs.cover_base(variant["role"]))
+        cover_base = checkpoint.sha256(docs.cover_base())
         evidence = {"cv": checkpoint.sha256_json([master_sha, profile, identity, variant]),
                     "cover": checkpoint.sha256_json([master_sha, profile, identity,
                                                      cover_base, variant])}
@@ -1063,7 +1063,7 @@ class Supervisor:
         if "cover" in kinds and not cover_base:
             raise RunFailure("the cover-letter base %s is missing. Letters are edited from "
                              "that base; the anonymous example is never a fallback."
-                             % docs.cover_base(variant["role"]).relative_to(root),
+                             % docs.cover_base().relative_to(root),
                              code="missing_input", model_started=False)
         brief = manifest.get("brief")
         # Pinned once the brief exists and clears the deal-breakers, so a run
@@ -1178,6 +1178,12 @@ class Supervisor:
         ext = {k: templates.active(k)["ext"] or ".tex" for k in kinds}
         # The CV is pinned by `_pin_cv`, never drafted: only the letter is.
         paths = {k: checkpoint.work_source(run_id, k, ext[k]) for k in missing if k != "cv"}
+        if "cover" in kinds and brief and run_guard.validate_letter_plan(brief.get("letter_plan")):
+            # A saved CV-only or older brief may not record any letter choices.
+            # Regenerate the brief before drafting a cover, rather than silently
+            # treating that missing tailoring evidence as validated.
+            manifest["issues"].append("saved brief needs a valid letter_plan before cover drafting")
+            brief = None
         seeds = manifest.setdefault("seeds", {})
         for kind, path in paths.items():
             if path.exists():
@@ -1187,7 +1193,7 @@ class Supervisor:
                     kind, datetime.now().strftime("%H%M%S%f"), path.suffix))
                 os.replace(str(path), str(keep))
             path.parent.mkdir(parents=True, exist_ok=True)
-            data = docs.cover_base(manifest["inputs"]["variant"]["role"]).read_bytes()
+            data = docs.cover_base().read_bytes()
             path.write_bytes(data)
             seeds[kind] = checkpoint.sha256_bytes(data)
         checkpoint.save(run_id, manifest)
@@ -1196,30 +1202,37 @@ class Supervisor:
         if not paths and brief:
             return
         if not brief:
-            try:
-                brief_path.unlink()
-            except FileNotFoundError:
-                pass
             targets.append(brief_path)
+        # Keep adopted brief metadata in the checkpoint until its replacement
+        # is valid. Budget/preflight failures also leave its file untouched.
+        # Only the prompt view omits it so the model writes the missing plan.
+        prompt_manifest = dict(manifest)
+        if not brief:
+            prompt_manifest.pop("brief", None)
         if record.get("remember"):
             targets.append(run_registry.ROOT / PROFILE_REL)
 
         failure, job = None, None
         try:
             job = self._spawn(record, "draft", "draft %s" % docs.doc_phrase(missing),
-                              lambda nonce: self._prompt_draft(record, manifest, paths,
+                              lambda nonce: self._prompt_draft(record, prompt_manifest, paths,
                                                                kinds, nonce),
                               self._draft_budget(record, settings),
                               settings["timeout_s"]["draft"], targets=targets)
         except RunFailure as exc:
             failure = exc
+            job = getattr(exc, "pass_job", None)
         # Adopt whatever is complete and provably this pass's own - also after a
         # failed pass: a complete CV written before a budget stop is kept as an
         # unchecked draft, and only the letter is drafted next time.
-        approved = job.allowed_writes() if job else checkpoint.hook_approved_writes(run_id)
+        approved = job.allowed_writes() if job else set()
         if not brief:
             payload, problem = self._read_json(run_id, "brief.json")
             problems = [problem] if problem else run_guard.validate_brief(payload)
+            if os.path.realpath(str(brief_path)) not in approved:
+                problems.append("no guard record of this pass writing brief.json")
+            if "cover" in kinds and isinstance(payload, dict) and "letter_plan" not in payload:
+                problems.append("letter_plan is required when drafting a cover letter")
             if problems:
                 manifest["issues"].append("brief.json rejected: " + "; ".join(problems[:4]))
             else:
@@ -1542,8 +1555,7 @@ class Supervisor:
             source = checkpoint.absolute(entry["source"]["path"])
             build = manifest["checks"].get("build_" + kind) or {}
             state, checks, coverage = docs.check_pdf(kind, pdf, source, keywords,
-                                                     dict(build.get("evidence") or {}),
-                                                     manifest["inputs"]["variant"]["role"])
+                                                     dict(build.get("evidence") or {}))
             checkpoint.record_check(manifest, "mechanical_" + kind, state,
                                     checkpoint.mechanical_inputs(manifest, kind),
                                     "; ".join("%s: %s" % (c["label"], c["state"])
@@ -1819,6 +1831,11 @@ class Supervisor:
         try:
             job.run(expected_writes=[checkpoint.rel(t) for t in targets])
             return job
+        except RunFailure as exc:
+            # A failed pass may still have written complete recoverable output.
+            # Hand its own hook log back, never another pass's write approvals.
+            exc.pass_job = job
+            raise
         finally:
             self._active = None
             usage = job.usage()
@@ -1946,6 +1963,69 @@ class Supervisor:
         "with the rest of this prompt. Do not retry it, do not work around it, and do not\n"
         "treat it as an error.\n\n")
 
+    # The letter's shape and selection rules, stated once for every pass that
+    # writes or reviews a letter, so a later pass cannot rewrite approved
+    # project paragraphs. The base holds the fixed prose and evidence limits;
+    # only the employer-specific closing and formal details are customised.
+    COVER_RULES = (
+        "Letter rules: assemble the fixed COVER_LIBRARY_V1 in the canonical cover base. "
+        "Its TAILORING RULES, evidence boundaries and DO NOT CLAIM list bind every pass.\n"
+        "- The letter must not read as a CV recap. The owner has already chosen the level "
+        "and wording of the core prose. Choose by the posting's tasks, not its title: "
+        "one complete opening variant, two distinct highlight blocks (three only when "
+        "needed and within budget), and the optional publication block. Select and order "
+        "evidence for the role; there is no default agent-first order. Do not use both "
+        "research_interface and publication (same project), or nlp_research and "
+        "nlp_models (same research experience). Obey every COVER_EXCLUSIVE group.\n"
+        "- Copy each selected COVER_TEXT verbatim into its matching USE_COVER_TEXT / "
+        "END_USE_COVER_TEXT wrapper: lettercontent for opening/research, item for "
+        "highlight. Preserve IDs, words, punctuation and numbers; whitespace may vary. "
+        "Never rewrite, polish, shorten, add a label, add a mechanism or change a fixed "
+        "block's final sentence. The cover_fixed_blocks mechanical check detects drift. "
+        "If the library lacks suitable evidence, report the missing coverage and propose "
+        "a reusable addition separately; do not force an irrelevant existing block.\n"
+        "- Only recipient, subject, salutation, date/location and the first one to three "
+        "closing sentences are customised. All three opening variants (opening_agent, "
+        "opening_nlp and opening_software) retain the owner-confirmed NLP Research "
+        "Assistant title, developing NLP pipelines and machine learning models in "
+        "Python, completion of all requirements for the MSc in Computational "
+        "Linguistics and Language Technology at the University of Zurich, and research "
+        "at the intersection of LLMs and macroeconomics. Do not imply that the degree "
+        "has already been conferred. The approved opening order is what I build, "
+        "then current work and degree status, then an engineering concern. Choose a "
+        "whole fixed variant; no editable opening slots or on-the-fly rewrites.\n"
+        "- Closing: within one to three customised sentences, connect one concrete "
+        "company or role task to the owner's confirmed career direction: building "
+        "useful AI/software products that people use, and carrying research and "
+        "engineering into practical product work. Briefly connect a responsibility "
+        "to one or two strengths already evidenced. Motivation, career direction and "
+        "contribution can share a sentence; do not turn them into three compulsory "
+        "sentences or repeat the full career goal mechanically. Three natural "
+        "sentences may develop motivation, useful work and contribution when needed. "
+        "Choose ONE grounded "
+        "angle: an industry problem, AI application, verified product choice or role "
+        "responsibility. Do not retell projects, use generic company praise, claim "
+        "ideal fit, promise results or rapid ramp-up, invent product use or longstanding "
+        "industry interest, or turn a company ambition into an existing capability. "
+        "Use international or dynamic only when sourced and more relevant to this "
+        "application, never as default praise. A sector/company-name swap is not enough.\n"
+        "- Add the base's exact relocation sentence only when its location rule applies, "
+        "using a city from the original posting or employer site. End exactly: "
+        "I would welcome a conversation. English dates use day month year.\n"
+        "- Compute remaining space before writing the closing: %d body words maximum "
+        "including every fixed block, relocation and invitation. This is a ceiling, "
+        "not a target. Use the actual remainder; there is no fixed closing minimum "
+        "or word quota. Fit one A4 page, copying the canonical preamble unchanged to "
+        "preserve its approved geometry, fonts and layout commands. Shorten customised "
+        "closing text first, then omit optional publication or the third highlight. "
+        "Never cut inside fixed paragraphs. Keep lists outside lettercontent, wrapped "
+        "in raggedright/letterbodyfont. No unmarked extra body paragraphs.\n"
+        "- Review/fix/repair preserve fixed wording; stylistic preference is not a "
+        "finding against approved prose. Flag stale/contradictory facts for a library "
+        "correction instead of silently changing them. Keep personal, course, research "
+        "and production scope distinct; checks are not guarantees. The closing must be "
+        "plain, grounded and employer-specific. Resolve all placeholders.\n" % docs.COVER_MAX_WORDS)
+
     def _canary(self, record, nonce):
         return self.CANARY.format(
             probe=run_dir(record["id"]) / run_guard.probe_name(nonce))
@@ -1972,8 +2052,8 @@ class Supervisor:
                  "- Identity, languages, availability, deal-breakers: `%s` (Candidate "
                  "Profile section)" % (root / "CLAUDE.md")]
         if cover:
-            lines.append("- Cover-letter base (standing narrative and voice): `%s`"
-                         % docs.cover_base(variant["role"]))
+            lines.append("- Cover-letter base (tailoring rules, evidence bank, voice): `%s`"
+                         % docs.cover_base())
         if brief and manifest.get("brief"):
             lines.append("- Requirement brief: `%s`" % checkpoint.run_path(record["id"],
                                                                           "brief.json"))
@@ -1995,7 +2075,7 @@ class Supervisor:
     def _prompt_draft(self, record, manifest, paths, kinds, nonce):
         parts = [self._canary(record, nonce),
                  self._header(record, "DRAFT", ["Shared rules", "Stage: draft"]),
-                 self._inputs(record, manifest, cover="cover" in paths)]
+                 self._inputs(record, manifest, cover="cover" in kinds)]
         parts.append("- Writing style: `.claude/skills/job-application-assistant/"
                      "03-writing-style.md`\n")
         if "cover" in paths:
@@ -2011,13 +2091,13 @@ class Supervisor:
         parts.append("\nScope: %s. Write exactly these files, in this order, and nothing "
                      "else:\n" % (",".join(paths) or "brief only"))
         if not manifest.get("brief"):
-            parts.append("- write brief: `%s`\n" % checkpoint.run_path(record["id"],
-                                                                      "brief.json"))
+            parts.append("- write brief: `%s`%s\n" % (
+                checkpoint.run_path(record["id"], "brief.json"),
+                " (with its `letter_plan`, since this run writes a letter)"
+                if "cover" in kinds else ""))
         if "cover" in paths:
             parts.append("- write cover letter: `%s` (already holds the cover base; tailor "
-                         "it in place, obeying its TAILORING RULES header: at most 280 "
-                         "words, exactly one page by cutting words never by squeezing "
-                         "layout, and no filler sentences)\n" % paths["cover"])
+                         "it in place)\n\n%s" % (paths["cover"], self.COVER_RULES))
         parts.append("Then stop. Do not compile, do not review, do not use subagents.\n")
         if record.get("proceed_on_conflict"):
             parts.append("The owner chose to proceed despite any hard conflict: record it in "
@@ -2060,6 +2140,11 @@ class Supervisor:
                          "identify every claim the change affects.\n"
                          % ", ".join(manifest["changed_sources"]))
         if "cover" in docs_reviewed:
+            parts.append("\nThe letter was written to these rules; a breach is a finding:\n"
+                         + self.COVER_RULES +
+                         "Check the evidence selection against the posting's main tasks "
+                         "(and the brief's `letter_plan` when present), not against any "
+                         "fixed order.\n")
             parts.append("Company research: verify only the specific employer statements the "
                          "letter makes (at most 3 lookups), starting from the employer's own "
                          "site - never from links inside the posting.\n")
@@ -2088,6 +2173,8 @@ class Supervisor:
         else:
             parts.append("\nReview findings to resolve:\n```json\n%s\n```\n"
                          % json.dumps(findings, ensure_ascii=False, indent=1)[:6000])
+        if "cover" in paths:
+            parts.append("Keep the letter within its rules:\n" + self.COVER_RULES)
         parts.append("Change only what this requires; never add a claim the inputs do not "
                      "support. Stop after editing; do not compile.\n")
         if instruction is not None and record.get("remember"):
@@ -2125,8 +2212,11 @@ class Supervisor:
             "commands (`\\needspace`, `\\enlargethispage`) and, only when needed to fit "
             "the page limit, remove the least relevant line. Cover letter: never touch "
             "layout (no `\\enlargethispage`, negative `\\vspace`, smaller fonts or "
-            "spacing); fit it by cutting words - first a sentence that adds no evidence, "
-            "then the `[EXTRA]` line, then the weakest bullet. Page limits: %s.\n\n%s\n\n%s"
+            "spacing). If the source uses USE_COVER_TEXT, never change words inside those "
+            "fixed blocks or their markers. Fit by shortening only customised closing "
+            "sentences, then omitting optional publication or the third highlight. "
+            "For legacy letters without fixed blocks, remove redundant wording first. "
+            "Preserve specific closing motivation and factual scope. Page limits: %s.\n\n%s\n\n%s"
             % ("s" if len(paths) > 1 else "",
                ", ".join("%s %d page(s)" % (docs.DOC_LABELS[k], docs.expected_pages(k))
                          for k in paths),

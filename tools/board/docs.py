@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import jobs_md  # noqa: E402
 
-from . import activity, run_guard, run_registry, templates
+from . import activity, cover_blocks, run_guard, run_registry, templates
 
 
 ROOT = run_registry.ROOT
@@ -60,14 +60,12 @@ LATEX_CLEAN = (".aux", ".log", ".out", ".fls", ".fdb_latexmk", ".synctex.gz")
 
 # The factual masters. This repository reads them and never writes them: the CV
 # master is maintained (and built) in its own repository and reaches this one
-# as a symlink, and the cover base is the stable narrative every letter copies.
+# as a symlink, and the cover base holds the rules and evidence bank every
+# letter is tailored from.
 MASTER_CV_REL = "cv/my_cv.tex"
+# One cover base serves every role: the letter's evidence is chosen from the
+# posting's tasks, not from the CV's `sde`/`ai` variant.
 COVER_BASE_REL = "cover_letters/my_cover.tex"
-# Role-specific cover bases, chosen by the same `sde`/`ai` switch that pins the
-# CV variant. A role without its own file falls back to the generic base.
-COVER_VARIANT_RELS = {"sde": "cover_letters/my_cover_sde.tex",
-                      "ai": "cover_letters/my_cover_ai.tex"}
-COVER_BASE_RELS = (COVER_BASE_REL,) + tuple(COVER_VARIANT_RELS.values())
 
 
 def _root():
@@ -79,17 +77,8 @@ def master_cv():
     return _root() / MASTER_CV_REL
 
 
-def cover_base(role=None):
-    """The cover base for `role`: its own variant when present, else the generic one."""
-    rel = COVER_VARIANT_RELS.get(role)
-    if rel and (_root() / rel).is_file():
-        return _root() / rel
+def cover_base():
     return _root() / COVER_BASE_REL
-
-
-def cover_bases():
-    """Every cover base, present or not - all of them are read-only masters."""
-    return [_root() / rel for rel in COVER_BASE_RELS]
 
 
 # A letter fits its one page by cutting words, never by squeezing the layout:
@@ -98,6 +87,8 @@ COVER_SQUEEZE = re.compile(
     r"\\enlargethispage|\\vspace\*?\{\s*-"
     r"|\\(?:fontsize|small|footnotesize|scriptsize|linespread)(?![A-Za-z])"
     r"|\\(?:setlength|addtolength)\{?\\(?:parskip|baselineskip|textheight|topmargin|itemsep)")
+
+COVER_MAX_WORDS = 380
 
 # Unresolved template slots: `[COMPANY]`, `[ROLE FIT]`, `[CONTACT PERSON OR
 # HIRING TEAM]` - searched in the document body and the extracted text - and any
@@ -115,7 +106,7 @@ def expected_pages(kind):
 def protected_paths():
     """Realpaths no pipeline step may ever write: the masters and their targets."""
     paths = set()
-    for path in [master_cv()] + cover_bases():
+    for path in (master_cv(), cover_base()):
         paths.add(os.path.realpath(os.path.abspath(str(path))))
         paths.add(os.path.abspath(str(path)))
     return paths
@@ -343,7 +334,7 @@ def extract_text(path):
     return proc.stdout, evidence
 
 
-def _contact_literals(kind=None, role=None):
+def _contact_literals(kind=None):
     """The email and phone a document must carry as literal text.
 
     Read from that document's own source of truth - the CV master for a CV,
@@ -353,7 +344,7 @@ def _contact_literals(kind=None, role=None):
     """
     sources = [_root() / "CLAUDE.md"]
     sources.append(master_cv() if kind == "cv"
-                   else cover_base(role) if kind == "cover" else None)
+                   else cover_base() if kind == "cover" else None)
     emails, phones = [], []
     for path in filter(None, sources):
         try:
@@ -384,7 +375,30 @@ def _check(check_id, label, state, detail, evidence=None):
             "evidence": evidence or {}}
 
 
-def check_pdf(kind, pdf, source, keywords, compile_evidence, role=None):
+def _letter_words(body):
+    """Words of body text in a letter: every `\\lettercontent{..}` after the
+    salutation plus every list, with LaTeX commands removed. An estimate, good
+    to a few words."""
+    blocks, start = [], 0
+    while True:
+        at = body.find("\\lettercontent{", start)
+        if at < 0:
+            break
+        depth, end = 0, at + len("\\lettercontent")
+        for end in range(end, len(body)):
+            depth += {"{": 1, "}": -1}.get(body[end], 0)
+            if depth == 0:
+                break
+        blocks.append(body[at + len("\\lettercontent{"):end])
+        start = end + 1
+    lists = re.findall(r"\\begin\{(?:itemize|enumerate)\}(?:\[[^\]]*\])?(.*?)"
+                       r"\\end\{(?:itemize|enumerate)\}", body, re.S)
+    text = " ".join(blocks[1:] + lists)
+    text = re.sub(r"\\[A-Za-z]+\*?(?:\[[^\]]*\])?", " ", text)
+    return len(re.findall(r"[A-Za-z0-9][A-Za-z0-9'.,%/-]*", text))
+
+
+def check_pdf(kind, pdf, source, keywords, compile_evidence):
     """Mechanical checks for one built document. Returns `(state, checks)`.
 
     Everything here is a property of *this* document: CV keyword coverage is
@@ -414,12 +428,35 @@ def check_pdf(kind, pdf, source, keywords, compile_evidence, role=None):
     if TODO_USE.search(code):
         slots.append("\\cvTODO{..}")
     if kind == "cover":
+        try:
+            base_text = cover_base().read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            base_text = ""
+        fixed = cover_blocks.validate_fixed_blocks(source_text, base_text)
+        if fixed["enabled"]:
+            checks.append(_check(
+                "cover_fixed_blocks", "Selected approved letter paragraphs are unchanged",
+                "fail" if fixed["issues"] else "pass",
+                "; ".join(fixed["issues"]) if fixed["issues"] else
+                "approved blocks match the canonical base", fixed))
+        layout = cover_blocks.validate_layout(source_text, base_text)
+        if layout["enabled"]:
+            checks.append(_check(
+                "cover_layout", "Letter preserves the approved base layout",
+                "fail" if layout["issues"] else "pass",
+                "; ".join(layout["issues"]) if layout["issues"] else
+                "preamble, geometry and fonts match the canonical base", layout))
         squeeze = sorted(set(m.group(0) for m in COVER_SQUEEZE.finditer(body)))
         checks.append(_check("cover_no_squeeze",
                              "Letter fits one page without layout squeezing",
                              "fail" if squeeze else "pass",
                              "cut words instead of: " + ", ".join(squeeze) if squeeze
                              else "no page-stretching or type-shrinking commands"))
+        words = _letter_words(body)
+        checks.append(_check("cover_words",
+                             "Letter body is at most %d words" % COVER_MAX_WORDS,
+                             "fail" if words > COVER_MAX_WORDS else "pass",
+                             "about %d words of body text" % words))
     text, evidence = extract_text(pdf)
     if text is not None:
         slots = sorted(set(slots) | set(PLACEHOLDER.findall(text)))
@@ -439,7 +476,7 @@ def check_pdf(kind, pdf, source, keywords, compile_evidence, role=None):
         checks.append(_check(kind + "_text_layer", "Text layer is extractable",
                              "pass" if clean else "fail",
                              "%d extracted characters" % len(text.strip()), evidence))
-        literals = _contact_literals(kind, role)
+        literals = _contact_literals(kind)
         missing = [literal for literal in literals if not _literal_present(literal, text)]
         checks.append(_check(kind + "_contact_literals",
                              "Contact details survived extraction",

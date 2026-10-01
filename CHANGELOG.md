@@ -26,6 +26,25 @@ Entries under this heading are changes made in this fork
 
 ### Changed
 
+- **One cover-letter base, written above CV level, evidence chosen by task.** The
+  per-role `my_cover_sde.tex` / `my_cover_ai.tex` bases are retired: every letter is
+  tailored from `cover_letters/my_cover.tex`, whatever the CV variant. The letter explains
+  what was built and the engineering judgement behind it in plain words (opening, 2-3
+  highlights, closing), instead of repeating CV detail. The
+  base's evidence bank gives each entry a plain description and THINKING lines, with the
+  detailed facts kept for grounding only. The leading evidence is chosen from the posting's
+  responsibilities rather than its title, and the brief records that choice in an optional
+  `letter_plan`, including selected block IDs and task-specific reasons in the existing
+  evidence fields. The draft, review, revise and repair prompts carry the same letter rules.
+  Approved fixed paragraphs preserve the NLP-pipeline and machine-learning description
+  and the independent open-source agent's concrete mechanisms; a model-selection and
+  fine-tuning variant supports ML-focused roles. The reviewer checks relevance and a
+  genuinely company-specific closing rather than repeating the sample's choices for every
+  employer. The `cover_words` mechanical check fails letters exceeding 380 body
+  words, list included; 250–360 is
+  usual, with no minimum or padding. The approved one-page layout uses 23 mm side, 16 mm
+  top and 20 mm bottom margins, with 10.7 pt body type and 14 pt leading. The
+  `cover_fixed_blocks` check also enforces the unchanged base preamble.
 - **`/apply` is a staged, checkpointed pipeline with no scoring or approval gate.** Posting
   -> CV / cover letter / both -> *Prepare materials* (the complete posting saved once,
   model-free when possible) -> *Write and check* (one draft pass, one independent review,

@@ -1,32 +1,87 @@
 ---
-framework_version: 1.4.0
+framework_version: 1.6.0
 ---
 
 # Cover Letter Templates and Tailoring Guide
 
-The personalized content bases follow the same `sde`/`ai` switch that selects
-the CV variant (ML and data-science roles use `ai`):
+One personalized base serves every role: `cover_letters/my_cover.tex`. The
+CV keeps its `sde`/`ai` variants, but the letter does not follow them - AI, ML,
+software and research letters share one structure, and what differs is which
+evidence leads, chosen from the posting's tasks.
 
-| Role base | Cover base |
-|---|---|
-| `sde` | `cover_letters/my_cover_sde.tex` |
-| `ai` | `cover_letters/my_cover_ai.tex` |
-| fallback (variant file absent) | `cover_letters/my_cover.tex` |
-
-Each base opens with a **TAILORING RULES** comment block; those rules are
-binding and take precedence over the generic guidance below. Existing
-job-specific letters are phrasing references only.
+The base opens with a **TAILORING RULES** comment block, followed by an
+**EVIDENCE BANK** and a **DO NOT CLAIM** list; all three are binding and take
+precedence over the generic guidance below. Existing job-specific letters are
+phrasing references only, never templates for the next letter.
 
 ### Base-content contract
 
-- **Structure is fixed:** short `[WHY THEM]` opening -> one who-I-am paragraph -> 3-4 bold-labelled bullets -> optional one-sentence `[EXTRA]` -> closing (with `[RELOCATION]` only for roles outside the Zurich area). Target 230-280 words, one page.
-- **Tailor every time:** recipient block, subject, salutation, `[WHY THEM]`, bullet choice and order, and the optional `[EXTRA]`/`[RELOCATION]` slots.
-- **Bullets come from the base's active list and BULLET BANK only.** Bold labels may echo the posting's wording; facts and numbers never change, and a bullet is never stretched to cover a requirement it does not meet. Respect each base's DO NOT CLAIM list.
-- **Do not silently regenerate:** changing the who-I-am paragraph or adding evidence outside the bank requires a stated reason in the final tailoring report.
+- **Assembly, not regeneration:** the canonical COVER_LIBRARY_V1 in the base
+  contains exact prose. Select one opening, two distinct highlights (three only
+  when justified and within budget), and optional publication. Choose by the
+  posting's tasks, never a fixed narrative or the CV variant.
+- **Fixed text:** copy selected COVER_TEXT entries verbatim into matching
+  USE_COVER_TEXT markers. Only whitespace may change. Do not modify identity,
+  numbers, terminology or final sentences. Never use nlp_research with nlp_models
+  (two views of the same current research), or research_interface with publication
+  (the same project). New variants belong in a separate owner-requested library edit.
+- **Opening voice and identity:** each whole variant starts with what the candidate
+  builds and combines the current role, research, completed MSc requirements and
+  an engineering interest. Never add a second background paragraph or rewrite the
+  opening for an employer. Do not invent a degree conferral date.
+- **Tailored closing:** connect one actual company/role task to the candidate's
+  career direction and documented strengths; one to three new sentences, combined
+  when natural. The base defines the approved career direction and evidence rules
+  for product appreciation and team interest. No generic praise or mandatory
+  career-goal sentence. Compute the remaining budget; no minimum length. Follow with the
+  conditional relocation and exact invitation from the base. Recipient, role,
+  date and verified location are editable metadata.
+- **Scope and checks:** the CV/profile ground facts; the evidence bank supplies
+  review context, not fresh prose. Keep personal/research/course/production work
+  distinct. Preserve the fixed-library base's preamble exactly, including its
+  explicit geometry and typography; only whitespace and comments may differ.
+  Do not add packages or redefine fonts, margins or spacing. `cover_fixed_blocks`
+  checks selected prose and the unchanged preamble.
+- **One page, at most 380 body words:** usually 250–360, with no minimum and no
+  padding. Shorten customised closing first, then omit optional publication or
+  the third highlight. Never rephrase fixed blocks to fit.
+
+### Evidence selection
+
+Use the posting's decisive tasks to choose the opening and leading highlight;
+the approved xHeron sample establishes wording and layout, not a default evidence
+combination or company closing for other employers. Select complementary work
+for the next highlight:
+
+- `contract_agent`: agent orchestration, retrieval, tool execution, citation
+  checks, failure handling, tracing and regression evaluation.
+- `jobjuniors`: translating product requirements into architecture and carrying
+  implementation through testing and deployment.
+- `nlp_research`: NLP pipelines, data preparation and research evaluation.
+- `nlp_models`: model selection and fine-tuning, with the model-quality and
+  practical-cost trade-off described in the approved paragraph.
+- `research_interface`: human–LLM research and its experimental interface.
+- `event_platform`: course-based software engineering.
+- `publication`: optional research evidence when it helps explain the role fit.
+
+Choose only one of `nlp_research` and `nlp_models`, and only one of
+`research_interface` and `publication`. Preserve distinctions between independent
+projects, research, course work and production work. The base remains the source
+of the exact wording; these cues do not authorize new claims or rewrites.
+
+Named methods are useful when they explain a system's behavior or a relevant
+engineering decision. The approved agent paragraph connects LangGraph, hybrid
+retrieval, citation checks and Langfuse to what the system does and how failures
+are inspected. Keep that supported detail; avoid CV-style library inventories
+that do not explain the work.
 
 ## Template: Custom cover.cls (XeLaTeX)
 
 Cover letters use a custom LaTeX document class (`cover.cls`) with XCharter for body copy and Lato/Raleway for the formal header and metadata. This mirrors the CV's Charter-led typography while keeping the letter hierarchy crisp.
+
+The approved default uses 23 mm left/right margins, 16 mm top, 20 mm bottom and
+10.7 pt body type with 14 pt leading. Keep these settings and the base's spacing;
+do not tighten them to fit longer prose. Exactly one page includes the signature.
 
 ### Swiss/German formal-letter layout
 
@@ -47,7 +102,7 @@ This is the default for Swiss and German applications. If the application is pas
 ### Compile command
 
 ```bash
-cd cover_letters && xelatex -interaction=nonstopmode cover_<company>_<role>.tex
+cd cover_letters && xelatex -output-directory=build -interaction=nonstopmode cover_<company>_<role>.tex
 ```
 
 Expected output: `Output written on cover_<company>_<role>.pdf (1 page, ...)`. Any page count other than 1 is a failure that must be fixed before presenting to the user.
@@ -56,9 +111,9 @@ Expected output: `Output written on cover_<company>_<role>.pdf (1 page, ...)`. A
 
 After writing the cover letter and before presenting to the user, always compile and visually inspect the PDF. Iterate until the layout is clean:
 
-1. Run `xelatex -interaction=nonstopmode cover_<company>_<role>.tex`
+1. Run `xelatex -output-directory=build -interaction=nonstopmode cover_<company>_<role>.tex`
 2. Confirm page count is exactly 1 and compile succeeded
-3. Read the PDF via the Read tool and visually check: signature fits at the bottom, no text cut off, bullet font matches body
+3. Read the PDF via the Read tool and visually check: signature fits at the bottom, no text cut off, list items use the body font
 
 ### Known template pitfall: itemize inside `\lettercontent{}`
 
@@ -77,7 +132,7 @@ The `\lettercontent{}` macro appends `\\` to its argument. This breaks when the 
 \lettercontent{Here is how my experience maps:}
 
 {\raggedright\letterbodyfont
-\begin{itemize}
+\begin{itemize}[leftmargin=1.2em, topsep=2pt, itemsep=3pt, parsep=0pt]
     \item ...
 \end{itemize}\par}
 \vspace{6pt}
@@ -95,14 +150,9 @@ The `\letterbodyfont` wrapper is mandatory: outside `\lettercontent{}`, a list o
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \documentclass[a4paper]{cover}
-\usepackage{fancyhdr}
-
-\pagestyle{fancy}
-\fancyhf{}
-
-\rfoot{Page \thepage \hspace{0pt}}
-\thispagestyle{empty}
-\renewcommand{\headrulewidth}{0pt}
+\usepackage{enumitem}
+\geometry{left=2.3cm,right=2.3cm,top=1.6cm,bottom=2.0cm}
+\pagestyle{empty}
 \begin{document}
 
 \senderblock{[YOUR_NAME]}{
@@ -123,22 +173,22 @@ The `\letterbodyfont` wrapper is mandatory: outside `\lettercontent{}`, a list o
 \subjectline{Application for [ROLE] [REFERENCE NUMBER, IF APPLICABLE]}
 \lettercontent{Dear [Name/Team],}
 
-\lettercontent{[Opening paragraph - role, connection to background, 2-3 sentences]}
-
-\lettercontent{[Body paragraph - most relevant experience, introducing the bullet list]}
+% USE_COVER_TEXT [OPENING_ID]
+\lettercontent{[OPENING_TEXT]}
+% END_USE_COVER_TEXT
 
 {\raggedright\letterbodyfont
-\begin{itemize}
-    \item [Concrete achievement/skill 1]
-    \item [Concrete achievement/skill 2]
-    \item [Concrete achievement/skill 3]
+\begin{itemize}[leftmargin=1.2em, topsep=2pt, itemsep=3pt, parsep=0pt]
+% USE_COVER_TEXT [HIGHLIGHT_1_ID]
+    \item [HIGHLIGHT_1_TEXT]
+% END_USE_COVER_TEXT
+% USE_COVER_TEXT [HIGHLIGHT_2_ID]
+    \item [HIGHLIGHT_2_TEXT]
+% END_USE_COVER_TEXT
 \end{itemize}\par}
+\vspace{6pt}
 
-\lettercontent{[Connection to company - why this role, why this company specifically]}
-
-\lettercontent{[Personal fit paragraph - behavioral strengths, team contribution, 2-3 sentences]}
-
-\lettercontent{I look forward to hearing from you.}
+\lettercontent{[CLOSING]}    % problem I'd like to work on, relocation if needed, invitation
 
 % No trailing \\ inside \closing{} - cover.cls appends its own \\, and a
 % doubled break triggers "! LaTeX Error: There's no line here to end."
@@ -164,7 +214,7 @@ The `\letterbodyfont` wrapper is mandatory: outside `\lettercontent{}`, a list o
 
 The cover letter is a short argument, not a requirement checklist or ATS keyword dump.
 
-- Lead with the two or three strongest documented matches and show what the candidate can do for this role.
+- Lead with the strongest documented match for the role's main problem; 2-3 highlights, each a different strength.
 - Ignore generic graduate-programme language as copy targets. Demonstrate a useful trait through evidence instead of repeating words such as curious, analytical, collaborative, adaptable, or eager to learn.
 - A specific hard skill inferred from close adjacent evidence may be mentioned at most once and only at the honest level of `familiarity` or `working knowledge`. Never imply that it was used in a named project or production system unless a factual source says so.
 - Do not confess every missing nice-to-have. Bridge an unsupported gap only when it is decisive to the role and the adjacent experience makes a credible case.
@@ -172,25 +222,21 @@ The cover letter is a short argument, not a requirement checklist or ATS keyword
 
 ### Salutation
 - If you know the hiring manager's name: "Dear [First Last],"
-- If you know the team: "Dear [Company] hiring team,"
-- Generic: "Dear [Company]," (avoid "To whom it may concern")
+- Otherwise: "Dear [Company] Team," (avoid "To whom it may concern")
 
 ### Length - Hard 1-Page Limit
 - Target: 1 page including signature block
 - Maximum: **never exceed 1 page**
-- **Word budget: 250-300 words** of body text (not counting LaTeX markup). This is the safe maximum. 350 words will overflow.
-- **Always count**: opening paragraph + bullet list paragraph + closing paragraph = 3 blocks. Add a 4th only if the others are short.
-- When adding company-specific content, trim other content to compensate rather than adding net length
+- **Word budget:** usually 250–360 words of body text, including highlights and
+  closing but excluding the letter frame and LaTeX markup. **380 is the hard
+  ceiling.** There is no minimum; never pad toward the range.
+- Opening, 2-3 highlights, closing is the default. Keep motivation within the closing; do not add a standing background paragraph or an item to fill space.
+- Never fit the page with spacing, stretch or font changes: cut customised closing words or optional whole blocks, not fixed text.
 
-### Line Spacing
-- Add `\usepackage{setspace}` and `\setstretch{1.0}` if the letter is long and needs to fit on one page
-- Use `\vspace{.5cm}` between major sections for readability (only if space permits)
-
-### Bullet Lists
-- Place `\begin{itemize}...\end{itemize}` **outside** a `\lettercontent{}` block (see "Known template pitfall" above), wrapped in `\letterbodyfont` so the bullets use the same XCharter family and true bold face as the body
-- 3-5 bullets is ideal
-- Start each bullet with bold label or action verb
-- Use `\textbf{Label:}` for category-style bullets
+### Highlights
+- Use the exact selected library paragraph, inside its USE_COVER_TEXT markers.
+- Put itemize outside lettercontent and inside raggedright/letterbodyfont.
+- Do not add labels or explanatory text outside the selected fixed blocks.
 
 ### LaTeX Special Characters
 - Underscore: `\_`
@@ -204,7 +250,7 @@ The cover letter is a short argument, not a requirement checklist or ATS keyword
 ## Checklist Before Finalizing
 - [ ] PDF uses A4 and the formal Swiss/German letter frame
 - [ ] Candidate contact block is top right and includes working email, phone, literal website domain, LinkedIn and GitHub links
-- [ ] Body uses XCharter; sans fonts are limited to header/metadata; bold labels render with a true bold face
+- [ ] Body uses XCharter; sans fonts are limited to header/metadata; list items use the body font
 - [ ] Verified employer/contact address is left aligned; unresolved optional lines are removed, with no visible placeholders
 - [ ] Place/date is right aligned; the exact role and any reference number appear in a bold, left-aligned subject line
 - [ ] No em-dashes (use commas or periods instead)
@@ -212,14 +258,14 @@ The cover letter is a short argument, not a requirement checklist or ATS keyword
 - [ ] Every claim backed by specific example
 - [ ] No generic programme-language keyword stuffing or requirement-by-requirement narration
 - [ ] Any adjacent inferred skill is levelled honestly and does not imply invented usage
-- [ ] Forward-looking framing: focuses on tasks you'll solve, not just past duties
-- [ ] Motivation section references this specific company's mission/values
+- [ ] The opening and the leading highlight answer the posting's main problem; each highlight shows a different strength
+- [ ] Named technical methods explain supported behavior or decisions; no CV-level inventories or unexplained metrics
+- [ ] The closing links actual company/role work to a believable personal motivation and an evidenced strength, without a recap or an "ideal fit" claim
 - [ ] Company name and role are correct throughout
 - [ ] Date is current
-- [ ] Fits on one page
+- [ ] Exactly one page, at most 380 body words, with the approved margins and typography
 - [ ] Language matches the job posting language
 - [ ] Salutation is appropriate (named person if possible)
-- [ ] Headline is engaging and specific, not generic
 
 ## Submission Guidelines (Best Practice)
 - Submit only the documents the employer requests

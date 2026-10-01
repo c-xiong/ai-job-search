@@ -212,8 +212,7 @@ def protected_masters():
     """
     root = run_registry.ROOT
     paths = set()
-    for rel in ("cv/my_cv.tex", "cover_letters/my_cover.tex",
-                "cover_letters/my_cover_sde.tex", "cover_letters/my_cover_ai.tex"):
+    for rel in ("cv/my_cv.tex", "cover_letters/my_cover.tex"):
         path = root / rel
         paths.add(os.path.abspath(str(path)))
         paths.add(os.path.realpath(str(path)))
@@ -318,6 +317,35 @@ def validate_brief(payload):
             if item.get("status") not in BRIEF_STATUS:
                 problems.append("requirements[%d].status must be one of %s"
                                 % (index, list(BRIEF_STATUS)))
+    if "letter_plan" in payload:
+        problems += validate_letter_plan(payload["letter_plan"])
+    return problems
+
+
+LETTER_PLAN_TEXT = ("role_task", "role_task_source", "primary_evidence",
+                    "secondary_evidence")
+
+
+def validate_letter_plan(plan):
+    """[] when the brief's optional `letter_plan` is well formed.
+
+    A cover-letter draft records which posting task the letter answers and
+    which two pieces of evidence it uses, so the reviewer can check the
+    selection against the posting instead of against a fixed narrative.
+    `connection` may be null when the letter makes no explicit link.
+    """
+    if not isinstance(plan, dict):
+        return ["letter_plan must be an object"]
+    problems = []
+    for key in LETTER_PLAN_TEXT:
+        if not isinstance(plan.get(key), str) or not plan[key].strip():
+            problems.append("letter_plan.%s must be a non-empty string" % key)
+    if "connection" not in plan or (plan["connection"] is not None
+                                    and not isinstance(plan["connection"], str)):
+        problems.append("letter_plan.connection must be a string or null")
+    unknowns = plan.get("unknowns")
+    if not isinstance(unknowns, list) or not all(isinstance(u, str) for u in unknowns):
+        problems.append("letter_plan.unknowns must be a list of strings (empty when none)")
     return problems
 
 

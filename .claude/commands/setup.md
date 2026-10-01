@@ -364,8 +364,7 @@ report the result:
   Do **not** generate one from examples or from the profile: a CV manufactured by setup
   would become the fact source for every later application.
 
-Likewise confirm `cover_letters/my_cover.tex` exists (the optional role bases
-`my_cover_sde.tex` / `my_cover_ai.tex` override it for that CV variant); if it does not, tell the user to
+Likewise confirm `cover_letters/my_cover.tex` exists (one base for every role); if it does not, tell the user to
 create their cover-letter base from `06-cover-letter-templates.md`. The anonymous
 fixtures under `tests/fixtures/latex/` are for CI and are never a fallback.
 

@@ -1,5 +1,5 @@
 ---
-framework_version: 1.2.0
+framework_version: 1.4.0
 ---
 
 # Writing Style Guide
@@ -23,69 +23,83 @@ framework_version: 1.2.0
 - **First person, active voice.** "I built" not "a system was developed by the candidate."
 - **Demonstrate, don't state.** Instead of "I am a team player", write a specific example of teamwork and its outcome.
 
-## Application Headline (Best Practice)
+## Application Subject
 
-The subject line / headline of the application should be engaging and specific, not generic.
+The subject line names the exact role and any reference number ("Application
+for [ROLE] [REFERENCE NUMBER]"), as the cover base sets it. Do not turn it into
+a slogan.
 
-**Bad:** "Application for Sales Engineer Position" / "Ansogning til stilling som ingeniør"
-**Good:** "[Your specialty] specializing in [relevant keyword from posting]"
+## Forward-Looking Framing
 
-Formula: **[Title/education] + [relevant keyword from the job posting]**
-
-## Scannable Structure (Best Practice)
-
-Employers scan applications quickly. Structure for easy reading:
-- Use descriptive subheadings that reflect content (not just "Introduction" / "Body")
-- Include industry-specific keywords in headings where natural
-- Write concisely - eliminate filler language
-- One page maximum (hard rule)
-
-## Forward-Looking Framing (Best Practice)
-
-The cover letter is **not a CV repetition**. It should be forward-looking:
-- Focus on **tasks you can solve for the employer**, not just what you've done before
-- Describe your approach: methods, tools, knowledge you'll bring
-- Explain what positive outcomes the employer can expect from hiring you
-- Use 1-2 brief past examples only to back up forward-looking claims
+The cover letter is **not a CV repetition**. The CV lists what was done; the
+letter explains, at a higher level, what was built, why it was built that way,
+and what the candidate has learned to care about as an engineer:
+- Lead with an idea the role needs (for an agent role, e.g.: can its actions be
+  checked, traced and evaluated; when should it stop or hand over to a person),
+  then support it with a real example.
+- Keep the forward-looking contribution specific and grounded: the
+  problem you would like to work on there, not a promise of business outcomes.
 
 ## Cover Letter Structure
 
-### Opening Paragraph
-- State the role and why you're writing (1 sentence)
-- Immediately connect your background to the role (1-2 sentences)
-- Make it specific to this company/role, not a template opener
+The binding rules and fixed paragraphs live in `cover_letters/my_cover.tex`.
+Use one opening, two selected highlights and optional publication exactly as
+written there, retaining USE_COVER_TEXT markers. Select/order by responsibilities;
+do not rewrite them to insert keywords, simplify them or improve their style.
+Choose a third highlight only when it adds a distinct relevant responsibility
+and fits the budget. Never combine nlp_research with nlp_models, or
+research_interface with publication: each pair describes the same work.
+Each complete opening starts with what the candidate builds, integrates the
+current NLP Research Assistant role, LLM/macroeconomics research and completed MSc
+requirements, then states an engineering interest. Preserve that personal voice;
+do not replace it with an application announcement or add a background paragraph.
+Degree requirements are complete; a conferral date has not been confirmed.
+JobJuniors demonstrates translating product requirements into architecture and
+engineering delivery; do not substitute a new narrow payment/staff-tool anecdote.
+Describe the research with the approved NLP-pipeline and machine-learning wording,
+and preserve the independent open-source project's documented scope. Named methods
+can explain engineering choices and behavior, as in the approved agent paragraph;
+they are not a reason to add library inventories. The xHeron sample is the quality
+reference, not an instruction to reuse its evidence choices for every role.
 
-### Body Paragraphs - Task-Solving Focus
-- Lead with the most relevant experience for this specific role
-- Frame content around **which of their tasks you can solve and how**
-- Describe your approach: methods, tools, and knowledge you'll bring
-- Use bullet lists for concrete skills/achievements when appropriate (3-5 bullets)
-- Each bullet should be specific and outcome-oriented
-- Include at least one example that shows initiative
-- Include 1-2 brief examples of past success, but keep the focus forward-looking
+### The customised closing
 
-### Motivation / Why This Company (place early)
-- The **first section** after the opening should explain why you're applying to *this specific company*
-- Use language and themes from the job posting and company website
-- Focus on how you'll contribute to their goals, not what you gain from employment
-- If you spoke with someone at the company, reference the conversation naturally
+The closing carries employer specificity. Write one to three new sentences:
+- One concrete motivation: connect an industry problem, AI application, verified
+  product choice or role responsibility to the candidate's confirmed direction:
+  building useful AI/software products people use and bringing engineering and
+  research into practical product work. Pick the relevant aspect, not a generic
+  career sentence repeated for every employer.
+- One grounded contribution: connect a responsibility to one or two strengths
+  already evidenced, without retelling projects. Company task, career direction
+  and contribution can share one natural sentence; do not force separate ones.
 
-### Company-Specific Paragraph
-- Show you've researched the company (mention specific projects, values, or market position)
-- Explain why this company specifically, not just "a company like yours"
-- Connect domain knowledge to their business context
+Then append the base's conditional relocation and fixed invitation. Use remaining
+word budget, not a fixed quota or minimum. Warmth comes from a believable reason
+for wanting the work. Mention an international or energetic team only when sourced
+and relevant; never use these as default compliments. Prefer the specific work to
+"real impact", "passionate about technology" or "not just a demo". Do not force
+production language onto research roles. Avoid generic praise, unsupported personal history,
+product-use claims, guarantees, and treating future ambitions as existing products.
+A company-name swap must not leave an equally suitable paragraph for any employer.
+Do not reuse the xHeron closing unless the next posting independently supports the
+same motivation and task match.
 
-### Closing
-- Brief, confident, forward-looking
-- "I look forward to hearing from you" or "I would welcome the opportunity to discuss..."
-- No begging or over-enthusiasm
+### Editing and review
 
-## Bullet Point Style
-- Start with action verb or bold category label
-- Be specific: numbers, tools, outcomes
-- Vary the structure (not every bullet starts the same way)
+Style advice applies to customised closing text. Keep fixed prose unchanged even
+when another phrasing seems better. Flag a stale fact rather than silently changing
+it. Use at most 380 body words, usually 250–360 with no minimum or padding. To fit
+one page, cut customised wording first, then optional publication or the third
+highlight. Keep the approved 23 mm side, 16 mm top and 20 mm bottom margins and
+10.7 pt/14 pt body typography. Never shrink typography or cut inside a fixed paragraph.
 
 ## Language for Different Role Types
+
+These are evidence-selection cues for CVs and general application text. For cover
+letters, the base's high-level rules take precedence: named methods may clarify a
+relevant design decision or behavior, but never turn these cues into library,
+dataset or implementation inventories.
 
 ### Technical/ML roles
 - Lead with programming languages, ML frameworks, specific model architectures
