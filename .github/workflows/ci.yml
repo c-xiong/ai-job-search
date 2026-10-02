@@ -237,9 +237,9 @@ jobs:
           job_scraper/runs.json
           cv/my_cv.tex
           PATHS
-          tracked_private=$(git ls-files -- docs cv/variants cv/out job_scraper/run_state documents/runs)
+          tracked_private=$(git ls-files -- docs cv/variants cv/out job_scraper/run_state documents/runs tmp)
           if [ -n "$tracked_private" ]; then
-            echo "::error::these must stay untracked - working notes, personal CV drivers, and per-run supervisor state and transcripts:"
+            echo "::error::these must stay untracked - working notes, personal CV drivers, per-run supervisor state and transcripts, and tmp/ scratch files:"
             echo "$tracked_private"
             fail=1
           fi

@@ -196,6 +196,10 @@ documents/interview/**
 # Personal job search tracking
 job_search_tracker.csv
 
+# Scratch space for ad-hoc exports and smoke runs (saved job lists, copied
+# postings, run fixtures). Whatever lands here is personal by default.
+tmp/
+
 # Gmail sync state (message IDs, subjects - personal data)
 gmail_sync/
 
