@@ -1,4 +1,4 @@
-import { apiGet, toResult, writeError, type FreehireJob, type JobResult } from "../helpers.js"
+import { apiGet, toResult, writeError, RateLimited, requestMeta, type FreehireJob, type JobResult } from "../helpers.js"
 
 // The agent variant of the job search: the same query, ranking, and facets as the
 // web's /jobs/search, but each hit carries the posting's full description instead
@@ -105,6 +105,8 @@ function renderPlain(rows: JobResult[]): string {
 }
 
 export async function runSearch(opts: SearchOpts): Promise<number> {
+  requestMeta.http_attempts = 0
+  requestMeta.retries = 0
   try {
     const env = await apiGet<FreehireJob[]>(`${SEARCH_PATH}?${buildQuery(opts).toString()}`)
     // A 404 here is a missing endpoint, not a missing job: a freehire instance
@@ -127,7 +129,7 @@ export async function runSearch(opts: SearchOpts): Promise<number> {
     } else {
       process.stdout.write(
         JSON.stringify(
-          { meta: { count: rows.length, page: opts.page, total }, results: rows },
+          { meta: { count: rows.length, page: opts.page, total, ...requestMeta }, results: rows },
           null,
           2,
         ) + "\n",
@@ -135,7 +137,7 @@ export async function runSearch(opts: SearchOpts): Promise<number> {
     }
     return 0
   } catch (e) {
-    writeError(e instanceof Error ? e.message : String(e), "SEARCH_FAILED")
+    writeError(e instanceof Error ? e.message : String(e), e instanceof RateLimited ? "RATE_LIMITED" : "SEARCH_FAILED")
     return 1
   }
 }

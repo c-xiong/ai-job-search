@@ -80,6 +80,15 @@ class AddJobTest(unittest.TestCase):
         self.assertIn("https://www.linkedin.com/jobs/view/4000000001",
                       {s["url"] for s in entry["sources"]})
 
+    def test_guest_discovered_apply_link_is_retained_without_an_extra_fetch(self):
+        self.linkedin["apply_url"] = ASHBY_APPLY
+        code, body = add_job.add({"job_url": SEARCH_URL}, today="2026-09-28")
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["url"], ASHBY)
+        self.assertEqual(self.calls, [("li", "4000000001")])
+        self.assertIn("https://www.linkedin.com/jobs/view/4000000001",
+                      {source["url"] for source in self.seen()[ASHBY]["sources"]})
+
     def test_company_link_added_later_joins_the_linkedin_row(self):
         add_job.add({"job_url": SEARCH_URL}, today="2026-09-28")
         self.ats["company"] = "Example Robotics GmbH"

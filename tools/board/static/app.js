@@ -27,6 +27,7 @@ let REVISE_RUN=null;
 let VIEW=null;
 let COMPANIES=null,COMPANY_SELECTED=null;
 let COMPANY_BUSY=null,COMPANY_ERROR="",COMPANY_QUERY="",COMPANY_ADD_DRAFT={name:"",url:""};
+let INBOX=null,INBOX_POLL=null,INBOX_REVISION=0,FOLLOW_BUSY=false;
 let EV=[],EPOCH=null,SEQ=0,actFilter="all",COUNTS={};
 let RUN_FOLLOW=true;
 const RUN_LOG_SCROLL=new Map();
@@ -243,7 +244,7 @@ const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and au
 const DOC_TITLE={cv:"CV",cover:"cover letter"};
 const docKinds=scope=>(scope||"both")==="both"?["cv","cover"]:[scope];
 const scopeOptions=(selected="both")=>SCOPES.map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
-const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","manual":"Added by you","ats-search":"Your companies","company-careers":"Company careers","freehire-search":"freehire","freehire":"freehire"};
+const SOURCE_LABELS={"linkedin-search":"LinkedIn search","linkedin-browser":"LinkedIn browser","linkedin-inbox":"LinkedIn inbox","linkedin-email":"LinkedIn email","linkedin-saved":"LinkedIn saved","manual":"Added by you","ats-search":"Your companies","company-careers":"Company careers","freehire-search":"freehire","freehire":"freehire","arbeitnow":"Arbeitnow","arbeitnow-search":"Arbeitnow"};
 const sourceLabel=value=>SOURCE_LABELS[value]||String(value||"Other website").replace(/-search$/,"").replaceAll("-"," ");
 const sourceTitle=job=>[...new Set([job.portal,job.primary_source,...(job.sources||[])].filter(Boolean))].map(sourceLabel).join(" · ");
 
@@ -402,7 +403,7 @@ function renderJob(){
   el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitle" title="${esc(j.title)}">${esc(displayTitle(j.title))}</div>
     <div class="jobmeta"><strong>${esc(j.company)}</strong>${j.location?`<span class="sep">·</span><span>${esc(j.location)}</span>`:""}${posted?`<span class="sep">·</span><span>Posted ${esc(posted)}</span>`:""}</div>
     <div class="badges"><span class="fitpill ${esc(j.fit||"none")}" title="${esc(scoreTitle(j))}"><span class="fitdot"></span>${esc(fitLabel)}${score!=null?`<span class="fitscore">${esc(score)}</span>`:""}</span><span class="badge">${esc(sourceLabel(j.primary_source||j.portal)||"Source unknown")}</span>${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">Title only</span>':""}</div>
-    <div class="posting-link"><a href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener" title="${esc(j.open_url||j.url)}">${esc(postingLinkLabel(j.open_url||j.url))} ↗</a><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button></div></div>
+    <div class="posting-link"><a href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener" title="${esc(j.open_url||j.url)}">${esc(postingLinkLabel(j.open_url||j.url))} ↗</a><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button><button class="linkish" data-follow-company="${esc(j.url)}" ${FOLLOW_BUSY?"disabled":""}>Follow company</button></div></div>
     <div class="whybox"><div class="sectionhead">Why it's here</div>${why.length?`<ul class="whylist">${why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:'<div class="dim">No reason was stored.</div>'}</div>
     ${emailBox(j)}
     <div class="posting"><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
@@ -984,10 +985,65 @@ async function renderCompanies(reload=true,scrollTop=null){
     }).join("");
     return `<section class="company-group">${head}${body}</section>`;
   }).join("");
-  el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main"><div class="companies-head"><div><h1>Companies</h1><p>Paste a company's careers page — JobFlow finds its job board and checks it on every fetch.</p></div><label class="search"><span>⌕</span><input id="company-search" type="search" aria-label="Search companies" placeholder="search companies" value="${esc(COMPANY_QUERY)}"></label></div>${!schemaReady?'<div class="company-notice" role="status">Restart JobFlow to enable company editing.</div>':""}${COMPANY_ERROR?`<div class="company-notice" role="alert">${esc(COMPANY_ERROR)}</div>`:""}<form id="company-add" class="company-add"><input id="company-careers" inputmode="url" required aria-label="Careers page or job-board link" value="${esc(COMPANY_ADD_DRAFT.url)}" placeholder="https://… a careers page or job-board link"><button class="primary" ${disabled}>${COMPANY_BUSY==="__add__"?"Looking…":"Watch"}</button></form><div class="companies-scroll">${groups||`<div class="panel-empty">${all.length?"No company matches.":"Paste your first company's careers page above."}</div>`}</div></section></div>`;
+  el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main"><div class="companies-head"><div><h1>Companies</h1><p>Paste a company's careers page — JobFlow finds its job board and checks it on every fetch.</p></div><label class="search"><span>⌕</span><input id="company-search" type="search" aria-label="Search companies" placeholder="search companies" value="${esc(COMPANY_QUERY)}"></label></div>${!schemaReady?'<div class="company-notice" role="status">Restart JobFlow to enable company editing.</div>':""}${COMPANY_ERROR?`<div class="company-notice" role="alert">${esc(COMPANY_ERROR)}</div>`:""}<form id="company-add" class="company-add"><input id="company-careers" inputmode="url" required aria-label="Careers page or job-board link" value="${esc(COMPANY_ADD_DRAFT.url)}" placeholder="https://… a careers page or job-board link"><button class="primary" ${disabled}>${COMPANY_BUSY==="__add__"?"Looking…":"Watch"}</button></form><p class="company-capture">Drag <a href="${esc(JobFlowCapture.companyBookmarklet(location.origin))}" data-bookmarklet title="Drag to your bookmarks bar">Add company</a> to your bookmarks bar. Click it on a careers page to preview and confirm the company.</p><div class="companies-scroll">${groups||`<div class="panel-empty">${all.length?"No company matches.":"Paste your first company's careers page above."}</div>`}</div></section></div>`;
   if(scrollTop!==null)el("tailor-view").querySelector(".companies-scroll").scrollTop=scrollTop;
   openView("companies",null,"/companies"+(COMPANY_SELECTED?"?c="+encodeURIComponent(COMPANY_SELECTED):""));
 }
+async function followJobCompany(job){
+  if(!job||FOLLOW_BUSY)return;
+  FOLLOW_BUSY=true;renderJob();
+  try{
+    const response=await fetch("/api/companies?t="+T);if(!checkAuth(response))return;
+    if(!response.ok)throw new Error("Could not load the company list.");COMPANIES=await response.json();
+    const normalized=value=>String(value||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+    const existing=COMPANIES.companies.find(row=>[row.name,...(row.aliases||[])].some(name=>normalized(name)===normalized(job.company)));
+    let careers_url="",external=false;
+    try{const url=job.default_open_url||job.open_url||job.url,host=new URL(url).hostname;external=host!=="linkedin.com"&&!host.endsWith(".linkedin.com")&&(["company-careers","ats-search"].includes(job.primary_source)||JobFlowCapture.isAtsUrl(url))}catch(_){}
+    if(!existing&&!external){
+      const value=await openTextModal({eyebrow:"Follow company",title:job.company||"Company",label:"Careers page URL (optional)",hint:"Leave this blank to save the company for later. Add its careers URL on Companies when you have it.",submit:"Follow company"});
+      if(value===null)return;careers_url=value.trim();if(careers_url)JobFlowCapture.publicUrl(careers_url);
+    }
+    const data=await postCompany("/api/companies/follow",{mtime:COMPANIES.mtime,url:job.url,careers_url});
+    COMPANY_SELECTED=data.followed?.name||job.company;COMPANY_QUERY="";
+    toast(data.followed?.existing?"Company already saved":`${job.company} saved — review its connection on Companies`,{ms:4500});
+    await renderCompanies(false);
+  }catch(error){toast(error.message||"Could not follow this company.",{warn:true,ms:4500})}
+  finally{FOLLOW_BUSY=false;if(!VIEW)renderJob()}
+}
+
+function captureTime(value){
+  if(!value)return "";const date=new Date(value);
+  return Number.isNaN(date.getTime())?String(value):date.toLocaleString("en-GB",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+async function renderInbox(){
+  const revision=++INBOX_REVISION;
+  if(VIEW!=="inbox")el("tailor-view").innerHTML='<div class="panel-empty">Loading LinkedIn inbox…</div>';
+  openView("inbox",null,"/inbox");
+  clearTimeout(INBOX_POLL);INBOX_POLL=null;
+  try{
+    const response=await fetch("/api/linkedin/inbox?t="+T);if(!checkAuth(response))return;
+    const data=await response.json();if(!response.ok)throw new Error(data.error||"Could not load the LinkedIn inbox.");
+    if(revision!==INBOX_REVISION||VIEW!=="inbox")return;
+    const wasRunning=!!INBOX?.process_status?.running,previousFinished=INBOX?.process_status?.finished_at;INBOX=data;
+    const status=data.process_status||{},counts=data.counts||{},running=!!status.running;
+    const summary=["pending","processing","retry","needs_manual","imported","excluded"].map(key=>`${counts[key]||0} ${key.replaceAll("_"," ")}`).join(" · ");
+    const result=status.result?`${status.result.imported||0} imported · ${status.result.excluded||0} excluded · ${status.result.retry||0} retry · ${status.result.needs_manual||0} need details`:"";
+    const rows=(data.items||[]).slice().sort((a,b)=>String(b.last_captured_at||"").localeCompare(String(a.last_captured_at||"")));
+    el("tailor-view").innerHTML=`<div class="companies-shell"><section class="companies-main inbox-main"><div class="companies-head"><div><h1>LinkedIn inbox</h1><p>Capture visible recommendations, then process a bounded batch of descriptions.</p></div><button class="secondary" data-inbox-refresh>Refresh</button></div><p class="inbox-capture">Drag <a data-bookmarklet href="${esc(JobFlowCapture.linkedinBookmarklet(location.origin))}" title="Drag to your bookmarks bar">Capture LinkedIn list</a> to your bookmarks bar. Click it on a LinkedIn jobs list, review the preview and confirm.</p><p class="dim">Capture reads currently rendered cards. Scroll and capture again for more. <a href="/static/capture.html" target="_blank" rel="noopener">Paste/import JSON</a> is available if bookmarklets are blocked.</p><p class="dim">LinkedIn restricts scripts that copy its service. <a href="https://www.linkedin.com/help/linkedin/answer/a1341387/" target="_blank" rel="noopener">Policy</a>.</p><div class="inbox-controls"><label>Descriptions per batch <input id="inbox-limit" type="number" value="15" min="0" max="20" ${running?"disabled":""}></label><button class="primary" data-inbox-process ${running?"disabled":""}>${running?"Processing…":"Process inbox"}</button></div><p class="inbox-counts" role="status">${esc(summary)}</p><p class="dim">${data.last_capture_at?"Last capture: "+esc(captureTime(data.last_capture_at)):"No captures yet."}</p>${status.error?`<p class="company-notice" role="alert">${esc(status.error)}</p>`:""}${result?`<p role="status">${esc(result)}</p>`:""}<div class="companies-scroll"><table class="inbox-table"><thead><tr><th>Role / company</th><th>Location / posted</th><th>State</th><th>Captured</th><th>Action</th></tr></thead><tbody>${rows.map(card=>`<tr><td><strong>${esc(card.title||"ID "+card.job_id)}</strong><div>${esc(card.company||"Unknown company")}</div>${card.possible_duplicate?'<span class="dim">Possible duplicate — kept for review</span>':""}</td><td>${esc(card.location)}<div class="dim">${esc(postedText({posted:card.posted_date||card.posted||""}))}</div></td><td>${esc(String(card.state||"pending").replaceAll("_"," "))}<div class="dim">${esc(card.reason||"")}</div>${card.next_retry_at?`<div class="dim">Retry after ${esc(captureTime(card.next_retry_at))}</div>`:""}</td><td>${esc(captureTime(card.last_captured_at))}</td><td><a href="https://www.linkedin.com/jobs/view/${esc(card.job_id)}" target="_blank" rel="noopener">Open ↗</a>${["needs_manual","retry"].includes(card.state)?`<button class="linkish" data-inbox-manual="${esc(card.job_id)}">Add details</button>`:""}</td></tr>`).join("")}</tbody></table>${rows.length?"":'<p class="panel-empty">Capture a LinkedIn list or import email files to fill this inbox.</p>'}</div></section></div>`;
+    if((wasRunning&&!running)||(status.finished_at&&status.finished_at!==previousFinished)){await reloadJobs();void pollActivity()}
+    if(running)INBOX_POLL=setTimeout(()=>{if(VIEW==="inbox")void renderInbox()},2000);
+  }catch(error){toast(error.message||"Could not load the LinkedIn inbox.",{warn:true,ms:4500})}
+}
+async function processInbox(){
+  const input=el("inbox-limit");if(!input?.reportValidity())return;
+  const button=document.querySelector("[data-inbox-process]");if(button)button.disabled=true;
+  try{
+    const response=await fetch("/api/linkedin/process?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:+input.value})});
+    checkAuth(response);const data=await response.json();if(!response.ok){if(response.status===409){toast(data.error||"Inbox processing is already running.",{warn:true,ms:4500});await renderInbox();return}throw new Error(data.error||"Could not start inbox processing.")}
+    await renderInbox();
+  }catch(error){if(button)button.disabled=false;toast(error.message,{warn:true,ms:4500})}
+}
+
 // "N on Board →": the Board, searched to that company.
 function showCompanyOnBoard(name){
   filter="all";q=name;el("q").value=name;sel=0;restoreWorkspace();render();
@@ -1001,7 +1057,7 @@ function showCompanyOnBoard(name){
 // 40px to its left, a leading "Board" segment was the same word twice in a row.
 const crumbRun=run=>({label:run.company,sub:run.role,run:run.id});
 function renderChrome(crumb){
-  const place=VIEW==="companies"?"companies":APP_VIEWS.includes(VIEW)?"runs":"board";
+  const place=VIEW==="companies"?"companies":VIEW==="inbox"?"inbox":APP_VIEWS.includes(VIEW)?"runs":"board";
   document.querySelectorAll(".navitem[data-nav]").forEach(node=>{
     const on=node.dataset.nav===place;node.classList.toggle("on",on);
     if(on)node.setAttribute("aria-current","page");else node.removeAttribute("aria-current");
@@ -1096,6 +1152,7 @@ function dispatchRoute(){
     setRoute("/",true);return true;
   }
   if(head==="companies"){COMPANY_SELECTED=params.get("c")||null;renderCompanies();return true}
+  if(head==="inbox"){void renderInbox();return true}
   if(head==="app"||head==="run"){
     const run=RUNS.find(item=>item.id===first);if(!run)return false;
     const step=head==="run"?(second==="preview"?"review":second==="revise"?"revise":"log"):second;
@@ -1193,12 +1250,12 @@ applyLayout();autoCollapse();addEventListener("resize",autoCollapse);
 
 // Fetching: one action, truthful status, optional settings.
 const FETCH_SETTINGS_KEY="jobflow.fetch.v1";
-const FETCH_DEFAULTS={sources:["ats","freehire","linkedin"],mc:8,mn:40,md:15};
+const FETCH_DEFAULTS={sources:["ats","freehire","linkedin","arbeitnow"],mc:8,mn:40,md:15};
 let FETCH_STARTING=false,FETCH_POLLING=false;
-const chosenSources=()=>["ats","freehire","linkedin"].filter(s=>el("s-"+s).checked);
+const chosenSources=()=>["ats","freehire","linkedin","arbeitnow"].filter(s=>el("s-"+s).checked);
 function fetchSettings(){return {sources:chosenSources(),mc:+el("mc").value,mn:+el("mn").value,md:+el("md").value}}
 function applyFetchSettings(value){
-  ["ats","freehire","linkedin"].forEach(s=>el("s-"+s).checked=(value.sources||FETCH_DEFAULTS.sources).includes(s));
+  ["ats","freehire","linkedin","arbeitnow"].forEach(s=>el("s-"+s).checked=(value.sources||FETCH_DEFAULTS.sources).includes(s));
   for(const [id,min,max] of [["mc",1,20],["mn",1,200],["md",0,20]]){const n=value[id];el(id).value=Number.isInteger(n)?Math.max(min,Math.min(max,n)):FETCH_DEFAULTS[id]}
 }
 try{applyFetchSettings(JSON.parse(localStorage.getItem(FETCH_SETTINGS_KEY))||FETCH_DEFAULTS)}catch(_){applyFetchSettings(FETCH_DEFAULTS)}
@@ -1291,18 +1348,18 @@ function takePendingAdd(){
 async function reloadJobs(){const revision=POSTING_URL_REVISION;const response=await fetch("/api/jobs?t="+T);checkAuth(response);if(!response.ok)throw new Error("Could not reload the job list.");const data=await response.json();if(revision!==POSTING_URL_REVISION)return reloadJobs();JOBS=data.jobs;STATUSES=data.statuses;FILTERS=buildFilters();renderStatusKeys();render()}
 function fetchSummary(status){
   if(status.running)return {message:"Checking for new jobs…",running:true};
-  const sources=status.sources||[],added=sources.reduce((n,s)=>n+(s.added||0),0);
-  const labels={"ats-search":"Your companies","linkedin-search":"LinkedIn","freehire-search":"freehire"};
+  const sources=status.sources||[],added=sources.reduce((n,s)=>n+(s.added||0),0),enriched=sources.reduce((n,s)=>n+(s.enriched||0),0);
+  const labels={"ats-search":"Your companies","linkedin-search":"LinkedIn","freehire-search":"freehire","arbeitnow":"Arbeitnow","arbeitnow-search":"Arbeitnow","linkedin-inbox":"LinkedIn inbox"};
   const failed=sources.filter(s=>s.degraded||s.error||s.failed?.length||s.retry_later).map(s=>labels[s.source]||s.source);
   // Boards the fetch found for companies you saved (COMPANIES_PLAN §3.1).
   const boards=sources.flatMap(s=>s.boards_found||[]);
-  const result=(added?`${added} new job${added===1?"":"s"} added`:"No new jobs found")+(boards.length?` · found job boards for ${boards.slice(0,3).join(", ")}${boards.length>3?` and ${boards.length-3} more`:""}`:"");
-  if(status.error)return {message:added?`${result} · Fetch stopped early. See Activity.`:"Could not finish fetching. Try again or see Activity.",error:true};
+  const result=(added?`${added} new job${added===1?"":"s"} added`:"No new jobs found")+(enriched?` · ${enriched} description${enriched===1?"":"s"} completed`:"")+(boards.length?` · found job boards for ${boards.slice(0,3).join(", ")}${boards.length>3?` and ${boards.length-3} more`:""}`:"");
+  if(status.error)return {message:added||enriched?`${result} · Fetch stopped early. See Activity.`:"Could not finish fetching. Try again or see Activity.",error:true};
   if(failed.length)return {message:`${result} · ${failed.join(", ")} could not be fully checked. See Activity.`,error:true};
   if(!status.finished_at)return {message:"Ready to fetch"};
   const remaining=sources.reduce((n,s)=>n+(s.remaining_due||0)+(s.deferred_descriptions||0),0);
   if(remaining)return {message:`${result} · More to check — fetch again.`};
-  if(sources.length&&sources.every(s=>s.source==="ats-search"?s.remaining_due===0:s.cached===true))return {message:added?`${result} · Up to date for connected sources.`:"Up to date for connected sources. Recent searches are reused for an hour."};
+  if(sources.length&&sources.every(s=>s.source==="ats-search"?s.remaining_due===0:s.cached===true))return {message:added||enriched?`${result} · Up to date for connected sources.`:"Up to date for connected sources. Recent searches are reused for an hour."};
   return {message:result};
 }
 function renderFetchLog(status){
@@ -1412,6 +1469,11 @@ document.addEventListener("click",event=>{
   const copyEmail=event.target.closest("[data-copy-email]");
   if(copyEmail){const address=copyEmail.dataset.copyEmail;return void navigator.clipboard.writeText(address).then(()=>toast("copied "+address),()=>toast("could not copy",{warn:true}))}
   const postingUrl=event.target.closest("[data-posting-url]");if(postingUrl)return void openPostingUrl(JOBS.find(j=>j.url===postingUrl.dataset.postingUrl));
+  const followCompany=event.target.closest("[data-follow-company]");if(followCompany)return void followJobCompany(JOBS.find(j=>j.url===followCompany.dataset.followCompany));
+  if(event.target.closest("[data-bookmarklet]")){event.preventDefault();toast("Drag this link to your bookmarks bar, then click it on the source page.",{ms:4500});return}
+  if(event.target.closest("[data-inbox-refresh]"))return void renderInbox();
+  if(event.target.closest("[data-inbox-process]"))return void processInbox();
+  const manualInbox=event.target.closest("[data-inbox-manual]");if(manualInbox){const card=INBOX?.items.find(item=>item.job_id===manualInbox.dataset.inboxManual);if(card)openAddJob({job_url:card.linkedin_url||"https://www.linkedin.com/jobs/view/"+card.job_id,title:card.title,company:card.company,location:card.location});return}
   if(event.target.closest("#posting-url-cancel,#posting-url-close")||event.target===el("posting-url-modal"))return void closePostingUrl();
   if(event.target.closest("#posting-url-reset"))return void savePostingUrl(true);
   if(event.target.closest("#text-modal-submit"))return void closeTextModal(true);
@@ -1423,7 +1485,7 @@ document.addEventListener("click",event=>{
   const toastOpen=event.target.closest("#toastmsg");if(toastOpen?.dataset.open){const run=RUNS.find(r=>r.id===toastOpen.dataset.open);el("toast").classList.remove("on");if(run)openApp(run);return}
   if(event.target.closest("#striptoggle"))return void toggleDrawer();
   if(event.target.closest("#copylog"))return void copyLog();
-  const nav=event.target.closest("[data-nav]");if(nav)return void(nav.dataset.nav==="companies"?renderCompanies():nav.dataset.nav==="runs"?openRuns():restoreWorkspace());
+  const nav=event.target.closest("[data-nav]");if(nav)return void(nav.dataset.nav==="companies"?renderCompanies():nav.dataset.nav==="inbox"?renderInbox():nav.dataset.nav==="runs"?openRuns():restoreWorkspace());
   const collapse=event.target.closest("[data-collapse]");if(collapse)return void toggleCollapse(collapse.dataset.collapse);
   if(event.target.closest("[data-apps-collapse]"))return void toggleAppsList();
   if(event.target.closest("[data-apps-applied]")){APPS_SHOW_APPLIED=!APPS_SHOW_APPLIED;renderAppsList();return}
@@ -1569,7 +1631,7 @@ document.addEventListener("keydown",event=>{
   if(event.key==="["){event.preventDefault();toggleAppsList();return}
   if(event.key==="]"){event.preventDefault();toggleCollapse("right");return}
   if(event.key==="\\"){event.preventDefault();resetLayout();return}
-  if(VIEW==="companies")return;
+  if(VIEW==="companies"||VIEW==="inbox")return;
   // Inside Applications, j/k walk the list; the board's marking keys do not
   // reach through to a job you cannot see.
   if(APP_VIEWS.includes(VIEW)){if(event.key==="j"||event.key==="k"){event.preventDefault();stepApp(event.key==="j"?1:-1)}return}

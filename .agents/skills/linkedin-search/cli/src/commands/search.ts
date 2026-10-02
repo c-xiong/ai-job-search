@@ -1,6 +1,8 @@
 import {
   SEARCH_URL,
   htmlFetch,
+  RateLimited,
+  requestMeta,
   parseJobCards,
   jobageToTPR,
   minutesToTPR,
@@ -15,6 +17,7 @@ export interface SearchOpts {
   jobage: number
   jobageMinutes?: number
   remote?: string // "remote" | "hybrid" | "onsite"
+  sort?: "date" | "relevance"
   page: number
   limit?: number
   format: "json" | "table" | "plain"
@@ -28,6 +31,7 @@ function buildUrl(opts: SearchOpts): string {
   if (tpr) params.set("f_TPR", tpr)
   const wt = workTypeFlag(opts.remote)
   if (wt) params.set("f_WT", wt)
+  params.set("sortBy", opts.sort === "date" ? "DD" : "R")
   params.set("start", String((opts.page - 1) * 10))
   return `${SEARCH_URL}?${params.toString()}`
 }
@@ -54,9 +58,15 @@ function renderTable(cards: JobCard[]): string {
 }
 
 export async function runSearch(opts: SearchOpts): Promise<number> {
+  requestMeta.http_attempts = 0
+  requestMeta.retries = 0
   try {
     const html = await htmlFetch(buildUrl(opts))
     let cards = parseJobCards(html)
+    if (html.trim() && cards.length === 0) {
+      writeError("Search returned unexpected nonempty HTML without job cards", "SEARCH_PARSE_FAILED")
+      return 1
+    }
     if (opts.limit !== undefined && opts.limit >= 0) cards = cards.slice(0, opts.limit)
 
     if (opts.format === "table") {
@@ -73,7 +83,7 @@ export async function runSearch(opts: SearchOpts): Promise<number> {
     } else {
       process.stdout.write(
         JSON.stringify(
-          { meta: { count: cards.length, page: opts.page }, results: cards },
+          { meta: { count: cards.length, page: opts.page, ...requestMeta }, results: cards },
           null,
           2,
         ) + "\n",
@@ -81,7 +91,7 @@ export async function runSearch(opts: SearchOpts): Promise<number> {
     }
     return 0
   } catch (e) {
-    writeError(e instanceof Error ? e.message : String(e), "SEARCH_FAILED")
+    writeError(e instanceof Error ? e.message : String(e), e instanceof RateLimited ? "RATE_LIMITED" : "SEARCH_FAILED")
     return 1
   }
 }

@@ -53,6 +53,7 @@ Key flags:
 - `--jobage-minutes <n>` — posted within N minutes (sub-day precision, e.g. `30`). Conflicts with `--jobage` — pass only one.
 - `--remote <mode>` — `remote`, `hybrid`, or `onsite` (workplace-type filter).
 - `--page <n>` — page number (1-indexed, 10 results per page).
+- `--sort date|relevance` — ordering (default `date`); guest ordering is best-effort.
 - `--limit <n>` / `-n <n>` — cap total results emitted (client-side).
 - `--format json|table|plain` — default `json`.
 
@@ -99,5 +100,6 @@ All errors are written to **stderr** as `{ "error": "...", "code": "..." }` and 
 
 - Data is from LinkedIn's public `jobs-guest` endpoints — no credentials required.
 - Page size is fixed at 10 results per page.
-- LinkedIn may rate-limit; the CLI retries 429/5xx with exponential backoff. Keep volume low (see ToS note above).
+- LinkedIn may rate-limit; 429 stops immediately, while 5xx gets at most two retries.
+  Request/retry counts are included in metadata. Keep volume low (see ToS note above).
 - Job IDs are numeric (e.g. `4426311357`) — pass them as-is to `detail`.

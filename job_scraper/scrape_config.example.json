@@ -1,11 +1,12 @@
 {
-  "_comment": "Template for the scheduled collector (tools/scrape_cron.py). Copy to scrape_config.json and edit for your own market - the real file is gitignored, because the queries encode where you are looking and for what. It is re-read on every run. Keep the volume modest: linkedin-search hits LinkedIn's public pages and is personal-use only.",
+  "_comment": "Template for tools/fetch_jobs.py, shared by the board and scheduler. Copy to scrape_config.json and edit for your market; the real file stays gitignored. LinkedIn guest access is personal-use and against its automation terms. Optional authenticated intake is disabled until configured.",
   "jobage_days": 7,
   "limit_per_query": 10,
   "linkedin": [
     {
       "q": "[YOUR_PRIMARY_JOB_TITLE]",
-      "l": "[YOUR_CITY], [YOUR_COUNTRY]"
+      "l": "[YOUR_CITY], [YOUR_COUNTRY]",
+      "pages": 2
     },
     {
       "q": "[YOUR_SECONDARY_JOB_TITLE]",
@@ -23,5 +24,34 @@
     "max_companies": 8,
     "max_new_jobs": 40
   },
-  "linkedin_max_detail_fetches": 15
+  "linkedin_max_detail_fetches": 15,
+  "keyword_search_budget": 12,
+  "arbeitnow": {
+    "enabled": false,
+    "max_pages": 2,
+    "locations": [
+      "[YOUR_COUNTRY_OR_CITY]"
+    ],
+    "include_titles": [
+      "[YOUR_PRIMARY_JOB_TITLE]"
+    ],
+    "remote": true
+  },
+  "linkedin_inbox": {
+    "auto_process": false,
+    "process_limit": 5
+  },
+  "linkedin_intake": {
+    "email": {
+      "enabled": false,
+      "directory": "job_scraper/linkedin_emails",
+      "max_messages": 30
+    },
+    "saved_jobs": {
+      "enabled": false,
+      "token_env": "LINKEDIN_PORTABILITY_TOKEN",
+      "max_pages": 3,
+      "page_size": 10
+    }
+  }
 }

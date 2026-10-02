@@ -95,7 +95,7 @@ describe("runSearch (mocked fetch)", () => {
     expect(code).toBe(0);
 
     const parsed = JSON.parse(out.get());
-    expect(parsed.meta).toEqual({ count: 1, page: 1, total: 42 });
+    expect(parsed.meta).toEqual({ count: 1, page: 1, total: 42, http_attempts: 1, retries: 0 });
     expect(parsed.results).toHaveLength(1);
     expect(parsed.results[0].id).toBe("backend-engineer-acme-ab12cd34");
     expect(parsed.results[0].date).toBe("2026-07-06T00:00:00Z");

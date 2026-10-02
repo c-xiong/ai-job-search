@@ -9,7 +9,7 @@ export interface CLIResult {
 }
 
 export async function runCLI(args: string[]): Promise<CLIResult> {
-  const proc = Bun.spawn(["bun", "run", CLI_PATH, ...args], {
+  const proc = Bun.spawn(["bun", "run", "--preload", join(import.meta.dir, "offline-fetch.ts"), CLI_PATH, ...args], {
     stdout: "pipe",
     stderr: "pipe",
   });

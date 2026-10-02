@@ -13,10 +13,12 @@ export function baseUrl(): string {
 }
 
 export function writeError(error: string, code: string): void {
-  process.stderr.write(JSON.stringify({ error, code }) + "\n")
+  process.stderr.write(JSON.stringify({ error, code, request_meta: requestMeta }) + "\n")
 }
 
 const UA = "freehire-search-skill/1.0 (+https://freehire.me)"
+export const requestMeta = { http_attempts: 0, retries: 0 }
+export class RateLimited extends Error {}
 
 /** The shared API response envelope: {data, meta, error}. */
 export interface Envelope<T> {
@@ -26,17 +28,18 @@ export interface Envelope<T> {
 }
 
 /**
- * GET a JSON envelope from the freehire API. Retries 429/5xx (transient server
- * states) with backoff; returns `null` on a 404. A connection failure fails fast
+ * GET a JSON envelope with at most two 5xx retries; a 429 stops immediately.
+ * Returns `null` on a 404. A connection failure fails fast
  * with a clear message — no retry, so an outage degrades this source quickly
  * rather than hanging the caller (the graceful-degradation contract).
  */
 export async function apiGet<T>(path: string): Promise<Envelope<T> | null> {
   const url = `${baseUrl()}${path}`
-  const maxRetries = 6
+  const maxRetries = 2
   let delay = 500
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    requestMeta.http_attempts++
     let response: Response
     try {
       response = await fetch(url, {
@@ -51,10 +54,12 @@ export async function apiGet<T>(path: string): Promise<Envelope<T> | null> {
       )
     }
 
-    if (response.status === 429 || response.status >= 500) {
+    if (response.status === 429) throw new RateLimited("freehire API HTTP 429: no retry")
+    if (response.status >= 500) {
       if (attempt === maxRetries) {
         throw new Error(`freehire API request failed: ${response.status} ${response.statusText}`)
       }
+      requestMeta.retries++
       await sleep(delay + Math.floor(Math.random() * 500))
       delay = Math.min(delay * 2, 8000)
       continue

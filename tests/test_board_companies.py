@@ -109,6 +109,85 @@ class CompaniesTest(unittest.TestCase):
                                 "careers_url": "https://jobs.ashbyhq.com/example"})
         self.assertEqual(result["companies"][-1]["name"], "example")
 
+    def test_follow_extracted_ats_is_a_candidate_without_human_evidence(self):
+        job = {"url": "https://www.linkedin.com/jobs/view/12345", "company": "Demo Labs",
+               "default_open_url": "https://jobs.ashbyhq.com/demo/anonymous-role"}
+        with mock.patch.object(companies.collectors, "bun") as bun:
+            result = companies.follow({"mtime": companies.listing()["mtime"]}, job)
+        row = result["companies"][-1]
+        self.assertEqual(row["status"], "ambiguous")
+        self.assertEqual(row["candidates"][0]["token"], "demo")
+        self.assertEqual(row["candidates"][0]["source_url"], job["default_open_url"])
+        self.assertNotIn("identity", row)
+        self.assertFalse(row["will_be_searched"])
+        bun.assert_not_called()
+
+    def test_follow_easy_apply_needs_careers_url_without_domain_guess(self):
+        job = {"url": "https://www.linkedin.com/jobs/view/12345", "company": "Demo Labs",
+               "default_open_url": "https://www.linkedin.com/jobs/view/12345"}
+        result = companies.follow({"mtime": companies.listing()["mtime"]}, job)
+        row = result["companies"][-1]
+        self.assertEqual(row["monitoring_status"], "careers_url_needed")
+        self.assertEqual(row["watch_state"], "needs_you")
+        self.assertNotIn("domain", row)
+        self.assertIsNone(row["next_resolve_at"])
+
+    def test_follow_aggregator_links_do_not_deduplicate_distinct_employers(self):
+        for name, ident in (("Demo Labs", "123456"), ("Fixture Studio", "223456")):
+            job = {"url": "https://www.arbeitnow.com/jobs/" + ident,
+                   "company": name, "primary_source": "arbeitnow",
+                   "default_open_url": "https://www.arbeitnow.com/jobs/" + ident}
+            result = companies.follow({"mtime": companies.listing()["mtime"]}, job)
+            row = next(r for r in result["companies"] if r["name"] == name)
+            self.assertNotIn("domain", row); self.assertNotIn("careers_url", row)
+        self.assertEqual(len(companies.listing()["companies"]), 3)
+
+    def test_follow_explicit_first_party_provenance_preserves_company_domain(self):
+        job = {"url": "https://www.linkedin.com/jobs/view/123456", "company": "Demo Labs",
+               "primary_source": "company-careers", "default_open_url": "https://demo.test/careers/data"}
+        result = companies.follow({"mtime": companies.listing()["mtime"]}, job)
+        self.assertEqual(result["companies"][-1]["domain"], "demo.test")
+
+    def test_follow_freehire_aggregate_needs_optional_company_careers_url(self):
+        job = {"url": "https://freehire.me/jobs/anonymous", "company": "Demo Labs",
+               "primary_source": "freehire-search", "default_open_url": "https://freehire.me/jobs/anonymous"}
+        result = companies.follow({"mtime": companies.listing()["mtime"]}, job)
+        self.assertEqual(result["companies"][-1]["monitoring_status"], "careers_url_needed")
+        self.assertNotIn("domain", result["companies"][-1])
+
+    def test_follow_matches_aliases_idempotently_and_requires_current_version(self):
+        data = json.loads(self.registry.read_text())
+        data["companies"][0]["aliases"] = ["Acme Demo"]
+        self.registry.write_text(json.dumps(data))
+        job = {"url": "https://www.linkedin.com/jobs/view/12345", "company": "Acme Demo"}
+        before = self.registry.read_bytes()
+        result = companies.follow({"mtime": companies.listing()["mtime"]}, job)
+        self.assertEqual(result["followed"], {"name": "Acme", "existing": True})
+        self.assertEqual(self.registry.read_bytes(), before)
+        with self.assertRaises(companies.CompanyError) as caught:
+            companies.follow({"mtime": "stale"}, job)
+        self.assertEqual(caught.exception.status, 409)
+
+    def test_company_handoff_requires_explicit_confirmation_and_is_idempotent(self):
+        payload = {"mtime": companies.listing()["mtime"], "name": "Demo Labs",
+                   "careers_url": "https://jobs.ashbyhq.com/demo"}
+        with self.assertRaises(companies.CompanyError):
+            companies.capture(payload)
+        payload["confirmed"] = True
+        first = companies.capture(payload)
+        row = first["companies"][-1]
+        self.assertEqual(row["identity"]["evidence_kind"], "human_confirmed")
+        payload.update(mtime=first["mtime"], careers_url="https://jobs.ashbyhq.com/demo/role")
+        second = companies.capture(payload)
+        self.assertEqual(len(second["companies"]), 2)
+        self.assertTrue(second["followed"]["existing"])
+
+    def test_careers_url_rejects_credentials_controls_and_oversized_input(self):
+        for url in ("https://user:pass@demo.test/careers", "https://demo.test/ bad",
+                    "https://demo.test/" + "a" * 8192):
+            with self.subTest(url=url[:80]), self.assertRaises(companies.CompanyError):
+                companies.add({"mtime": companies.listing()["mtime"], "careers_url": url})
+
     def test_pause_resume_preserves_unconfirmed_identity(self):
         before = companies.listing()["companies"][0]
         paused = companies.manage("acme", {"mtime": companies.listing()["mtime"], "action": "pause"})

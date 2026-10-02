@@ -729,6 +729,7 @@ if(start<0||end<start)throw new Error("the companies block was not found in app.
     {name:"Manual Co",route:"manual",status:"paused",watch_state:"paused"}
   ]}};
   const R=new Function("ctx",`
+    const JobFlowCapture={companyBookmarklet:()=>"javascript:void(0)"},location={origin:"http://127.0.0.1:8765"};
     const el=id=>ctx.nodes[id]||(ctx.nodes[id]={innerHTML:"",value:"",querySelector:()=>ctx.scroll});
     const esc=value=>String(value??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
     const openView=(...a)=>ctx.opened=a,toast=()=>{},restoreWorkspace=()=>ctx.home=true,render=()=>{};

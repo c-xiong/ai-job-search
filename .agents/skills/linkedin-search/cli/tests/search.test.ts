@@ -3,6 +3,7 @@ import { runSearch } from "../src/commands/search";
 
 const originalFetch = globalThis.fetch;
 const originalStdoutWrite = process.stdout.write;
+const originalStderrWrite = process.stderr.write;
 
 function searchCard(id: string, title: string): string {
   return `<li>
@@ -16,9 +17,30 @@ function searchCard(id: string, title: string): string {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   process.stdout.write = originalStdoutWrite;
+  process.stderr.write = originalStderrWrite;
 });
 
 describe("runSearch", () => {
+  test("date sorting and page offset are passed to LinkedIn", async () => {
+    let capturedUrl = "";
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      capturedUrl = input.toString();
+      return new Response("");
+    }) as typeof fetch;
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    expect(await runSearch({location: "Remote", jobage: 7, page: 3, sort: "date", format: "json"})).toBe(0);
+    const url = new URL(capturedUrl);
+    expect(url.searchParams.get("sortBy")).toBe("DD");
+    expect(url.searchParams.get("start")).toBe("20");
+  });
+
+  test("unexpected HTML is a parser failure rather than successful empty search", async () => {
+    globalThis.fetch = (async () => new Response("<html>Please sign in</html>")) as typeof fetch;
+    let stderr = "";
+    process.stderr.write = ((chunk: string) => {stderr += chunk; return true;}) as typeof process.stderr.write;
+    expect(await runSearch({location: "Remote", jobage: 7, page: 1, format: "json"})).toBe(1);
+    expect(JSON.parse(stderr).code).toBe("SEARCH_PARSE_FAILED");
+  });
   test("--limit 0 emits zero results", async () => {
     globalThis.fetch = (async () => new Response(searchCard("123456", "Engineer"))) as typeof fetch;
 

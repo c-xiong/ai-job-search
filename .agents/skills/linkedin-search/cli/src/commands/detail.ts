@@ -1,4 +1,4 @@
-import { DETAIL_URL, htmlFetch, parseJobDetail, writeError } from "../helpers.js"
+import { DETAIL_URL, htmlFetch, parseJobDetail, writeError, RateLimited, requestMeta } from "../helpers.js"
 
 export interface DetailOpts {
   id: string
@@ -17,6 +17,8 @@ function normalizeId(input: string): string | null {
 }
 
 export async function runDetail(opts: DetailOpts): Promise<number> {
+  requestMeta.http_attempts = 0
+  requestMeta.retries = 0
   const id = normalizeId(opts.id)
   if (!id) {
     writeError(`Could not parse a job ID from "${opts.id}"`, "BAD_ID")
@@ -29,6 +31,10 @@ export async function runDetail(opts: DetailOpts): Promise<number> {
       return 1
     }
     const job = parseJobDetail(html, id)
+    if (!job.description) {
+      writeError("Job page has no readable description", "DETAIL_PARSE_FAILED")
+      return 1
+    }
 
     if (opts.format === "plain") {
       const lines = [
@@ -47,11 +53,11 @@ export async function runDetail(opts: DetailOpts): Promise<number> {
       ].filter((l) => l !== "")
       process.stdout.write(lines.join("\n") + "\n")
     } else {
-      process.stdout.write(JSON.stringify(job, null, 2) + "\n")
+      process.stdout.write(JSON.stringify({ ...job, request_meta: requestMeta }, null, 2) + "\n")
     }
     return 0
   } catch (e) {
-    writeError(e instanceof Error ? e.message : String(e), "DETAIL_FAILED")
+    writeError(e instanceof Error ? e.message : String(e), e instanceof RateLimited ? "RATE_LIMITED" : "DETAIL_FAILED")
     return 1
   }
 }

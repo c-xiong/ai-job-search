@@ -15,7 +15,9 @@ touched here: its row is created when documents are published.
 """
 
 import json
+import ipaddress
 import re
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -112,14 +114,104 @@ def _quiet(_message):
     pass
 
 
+class LinkedInDetailError(RuntimeError):
+    """A guest-detail failure that the inbox can retry or leave for its owner."""
+
+    def __init__(self, reason, retryable=True, rate_limited=False):
+        super().__init__(reason)
+        self.retryable = retryable
+        self.rate_limited = rate_limited
+
+
+def external_apply_url(value):
+    """Validate an external link without fetching it or accepting login wrappers."""
+    if not isinstance(value, str) or not value.strip() or len(value) > 4000:
+        return ""
+    try:
+        parts = urlsplit(value.strip())
+        host = (parts.hostname or "").lower().rstrip(".")
+        if host == "linkedin.com" or host.endswith(".linkedin.com"):
+            # LinkedIn's redirect wrapper sometimes retains the destination.
+            if parts.path.startswith("/redir/"):
+                target = (parse_qs(parts.query).get("url") or [""])[0]
+                if target and target != value:
+                    return external_apply_url(target) if not _is_linkedin(target) else ""
+            return ""
+        if (parts.scheme not in ("http", "https") or not host or "." not in host
+                or parts.username or parts.password or parts.port not in (None, 80, 443)
+                or host.endswith((".localhost", ".local", ".internal"))):
+            return ""
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and (not address.is_global or address.is_multicast):
+            return ""
+        return jobs_md.canonical_url(value.strip())
+    except ValueError:
+        return ""
+
+
+def _linkedin_fields(data):
+    def value(key):
+        found = data.get(key)
+        return found.strip() if isinstance(found, str) else ""
+
+    title = value("title")
+    row = {"title": "" if title == "(untitled)" else title,
+           "company": value("company"), "location": value("location"),
+           "posted": value("date")[:10], "description": value("description")}
+    apply_url = external_apply_url(data.get("applyUrl"))
+    if apply_url:
+        row["apply_url"] = apply_url
+    return row
+
+
 def resolve_linkedin(job_id):
     data = collectors.bun([collectors.LINKEDIN, "detail", job_id, "--format", "json"],
                           _quiet, timeout=45)
     if not isinstance(data, dict) or not data.get("title"):
         return {}
-    return {"title": data.get("title") or "", "company": data.get("company") or "",
-            "location": data.get("location") or "", "posted": (data.get("date") or "")[:10],
-            "description": data.get("description") or ""}
+    return _linkedin_fields(data)
+
+
+def resolve_linkedin_detail(job_id):
+    """Same guest resolver, with structured failures for durable inbox processing."""
+    if not isinstance(job_id, str) or not LINKEDIN_ID.fullmatch(job_id):
+        raise LinkedInDetailError("Invalid LinkedIn job ID", retryable=False)
+    try:
+        proc = subprocess.run(["bun", "run", collectors.LINKEDIN, "detail", job_id,
+                               "--format", "json"], cwd=str(jobs_md.ROOT),
+                              timeout=45, capture_output=True, text=True)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LinkedInDetailError("LinkedIn detail request unavailable or timed out") from exc
+    if proc.returncode != 0:
+        code = ""
+        for line in (proc.stderr or "").splitlines():
+            try:
+                error = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(error, dict):
+                code = error.get("code") or ""
+                # Retain a class, never arbitrary server text or URLs in logs.
+                if code == "DETAIL_FAILED" and "429" in str(error.get("error", "")):
+                    code = "RATE_LIMITED"
+        if code in ("BAD_ID", "NOT_FOUND"):
+            raise LinkedInDetailError("Posting unavailable; open it manually", retryable=False)
+        if code == "RATE_LIMITED":
+            raise LinkedInDetailError("LinkedIn rate limited the detail request", rate_limited=True)
+        raise LinkedInDetailError("LinkedIn detail request failed")
+    try:
+        data = json.loads(proc.stdout)
+    except (ValueError, TypeError) as exc:
+        raise LinkedInDetailError("LinkedIn detail response was malformed") from exc
+    if not isinstance(data, dict):
+        raise LinkedInDetailError("LinkedIn detail response was malformed")
+    row = _linkedin_fields(data)
+    if not row["title"] and not row["description"]:
+        raise LinkedInDetailError("LinkedIn detail response did not contain a posting")
+    return row
 
 
 def resolve_ats(url):
@@ -272,6 +364,7 @@ def add(payload, today=None):
         job_id, company_url = classify(_text(payload, "job_url", 2000),
                                        _text(payload, "apply_url", 2000))
         found = resolve(job_id, company_url)
+        company_url = company_url or external_apply_url(found.get("apply_url"))
         # What the owner typed (or the bookmarklet carried) fills gaps only.
         for key in ("title", "company", "location"):
             if not found.get(key) and _text(payload, key):

@@ -269,8 +269,14 @@ def check_cards(seen, payload, aliases=None):
         if job_id in batch:
             continue
         batch.add(job_id)
-        card = {"linkedin_url": linkedin_url, "title": (raw.get("title") or "").strip(),
-                "company": (raw.get("company") or "").strip()}
+        card = {"linkedin_url": linkedin_url,
+                "title": _optional_text(raw, "title", index),
+                "company": _optional_text(raw, "company", index)}
+        for field in ("location", "posted", "posted_date", "description"):
+            if field in raw:
+                card[field] = _optional_text(raw, field, index)
+        if "badges" in raw:
+            card["badges"] = raw["badges"]
         if job_id in known_ids:
             result["known"].append(card)
             continue

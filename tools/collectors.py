@@ -13,11 +13,17 @@ Stdlib only, Python 3.9+. Requires `bun` on PATH for the portal CLIs.
 """
 
 import json
+import hashlib
 import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
+from datetime import date, datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jobs_md  # noqa: E402
@@ -37,10 +43,109 @@ ROOT = jobs_md.ROOT
 # only on failure, so "which command produced these 48 rows, and how long did it
 # take" was unanswerable. Now every call emits start and finish.
 EMITTER = None
+COLLECTION = None
 
 LINKEDIN = ".agents/skills/linkedin-search/cli/src/cli.ts"
 FREEHIRE = ".agents/skills/freehire-search/cli/src/cli.ts"
 ATS = ".agents/skills/ats-search/cli/src/cli.ts"
+ARBEITNOW = "https://www.arbeitnow.com/api/job-board-api"
+
+
+def bounded(value, default, low, high):
+    try:
+        return max(low, min(int(value), high))
+    except (TypeError, ValueError):
+        return default
+
+
+class CollectionSession:
+    """Pure per-run search plan; checkpoints are committed after board persistence.
+
+    Each query/page costs one keyword call. First pages precede second pages,
+    and sources are interleaved so a large query pool cannot starve another.
+    The cursor rotates over this plan across successful board writes.
+    """
+
+    def __init__(self, cfg, sources, state=None):
+        self.cfg, self.state = cfg, dict(state or {})
+        self.outcomes, self.blocked = [], set()
+        self.last_error = None
+        self.last_meta = {}
+        specs = {s: [q for q in cfg.get(s, []) if isinstance(q, dict)
+                     and q.get("enabled", True)] for s in ("linkedin", "freehire") if s in sources}
+        tasks = []
+        for page in range(1, 4):
+            for index in range(max((len(q) for q in specs.values()), default=0)):
+                for source, queries in specs.items():
+                    if index >= len(queries):
+                        continue
+                    spec = queries[index]
+                    if page > bounded(spec.get("pages", cfg.get("pages_per_query", 1)), 1, 1, 3):
+                        continue
+                    key = hashlib.sha256(json.dumps([source, spec, page], sort_keys=True).encode()).hexdigest()[:16]
+                    tasks.append({"source": source, "spec": spec, "page": page, "key": key})
+        self.tasks = tasks
+        self.cursor_key = ",".join(sorted(specs))
+        cursors = self.state.get("query_cursors") or {}
+        cursors = cursors if isinstance(cursors, dict) else {}
+        self.start = bounded(cursors.get(self.cursor_key, self.state.get("query_cursor", 0)), 0, 0, 10**9) % max(1, len(tasks))
+        budget = bounded(cfg.get("keyword_search_budget", 12), 12, 0, 12)
+        self.selected = [tasks[(self.start + n) % len(tasks)] for n in range(min(budget, len(tasks)))]
+        self.next_cursor = (self.start + len(self.selected)) % max(1, len(tasks))
+
+    def __enter__(self):
+        global COLLECTION
+        self.previous, COLLECTION = COLLECTION, self
+        return self
+
+    def __exit__(self, *exc):
+        global COLLECTION
+        COLLECTION = self.previous
+        return False
+
+    def for_source(self, source):
+        return [task for task in self.selected if task["source"] == source]
+
+    def outcome(self, source, key, page, rows, error=None, meta=None, deferred=False):
+        result = {"source": source, "query_id": key, "page": page,
+                  "returned": len(rows), "status": "deferred" if deferred else "failed" if error else "ok",
+                  "failed": int(bool(error)), "deferred": int(deferred),
+                  "urls": [r["url"] for r in rows],
+                  "http_attempts": (meta or {}).get("http_attempts"),
+                  "retries": (meta or {}).get("retries", 0)}
+        if error:
+            result["error"] = str(error)[:300]
+        self.outcomes.append(result)
+        return result
+
+    def summary(self, source):
+        outcomes = [o for o in self.outcomes if o["source"] == source]
+        deferred = len([t for t in self.tasks if t["source"] == source and t not in self.selected])
+        return {"queries": outcomes, "search_calls": sum(o["status"] != "deferred" for o in outcomes),
+                "failed": [o["query_id"] for o in outcomes if o["failed"]],
+                "deferred_queries": deferred + sum(o["deferred"] for o in outcomes),
+                "degraded": any(o["failed"] for o in outcomes),
+                "returned": sum(o["returned"] for o in outcomes),
+                "retry_policy": "at most two 5xx retries; 429 stops this source" if source in ("linkedin", "freehire") else "no API retries"}
+
+    def persisted_state(self, stamp):
+        state = dict(self.state)
+        if self.tasks:
+            cursors = self.state.get("query_cursors") or {}
+            cursors = dict(cursors) if isinstance(cursors, dict) else {}
+            cursors[self.cursor_key] = self.next_cursor
+            state.update(query_cursor=self.next_cursor, query_cursors=cursors)
+        queries = dict(state.get("queries") or {})
+        for outcome in self.outcomes:
+            old = dict(queries.get(outcome["query_id"]) or {})
+            old.update(outcome, last_attempt_at=stamp)
+            if outcome["status"] == "ok":
+                old["last_persisted_at"] = stamp
+            queries[outcome["query_id"]] = old
+        # Removed configurations must not grow an unbounded history.
+        # Keep other source selections' checkpoints; cap retired configurations.
+        state["queries"] = dict(sorted(queries.items(), key=lambda item: item[1].get("last_attempt_at", ""), reverse=True)[:1000])
+        return state
 
 # German stated as a job condition. Conservative on purpose: these are phrasings
 # that appear in a requirements list, not any mention of the word "German".
@@ -83,10 +188,15 @@ def bun(args, log, timeout=120):
     if emit:
         emit("start", argv)
     started = time.monotonic()
+    if COLLECTION:
+        COLLECTION.last_error = None
+        COLLECTION.last_meta = {}
     try:
         proc = subprocess.run(argv, cwd=str(ROOT), timeout=timeout,
                               capture_output=True, text=True)
     except (OSError, subprocess.TimeoutExpired) as exc:
+        if COLLECTION:
+            COLLECTION.last_error = str(exc)
         log("  ! cli failed: %s" % exc)
         if emit:
             emit("finish", argv, exit_code=None, ms=(time.monotonic() - started) * 1000,
@@ -99,10 +209,18 @@ def bun(args, log, timeout=120):
         except ValueError:
             payload = None
     if proc.returncode != 0:
+        if COLLECTION:
+            COLLECTION.last_error = (proc.stderr or "CLI failed").strip()[:400]
+            try:
+                COLLECTION.last_meta = json.loads(proc.stderr).get("request_meta") or {}
+            except (ValueError, AttributeError):
+                pass
         log("  ! exit %d: %s" % (proc.returncode, (proc.stderr or "").strip()[:160]))
         if payload is not None:
             log("  . stdout still parsed - keeping what the run did produce")
     elif payload is None:
+        if COLLECTION:
+            COLLECTION.last_error = "unparseable CLI output"
         log("  ! unparseable output (%d bytes)" % len(proc.stdout))
     if emit:
         emit("finish", argv, exit_code=proc.returncode,
@@ -158,15 +276,36 @@ def screen_text(text):
 
 
 def collect_linkedin(cfg, log):
-    """Run every configured LinkedIn query. Returns {canonical_url: record}."""
+    """Run the selected LinkedIn query/pages. Returns {canonical_url: record}."""
     found = {}
-    age = str(cfg.get("jobage_days", 7))
-    limit = str(cfg.get("limit_per_query", 10))
-    for spec in cfg.get("linkedin", []):
-        rows = results_of(bun([LINKEDIN, "search", "-q", spec["q"], "-l", spec["l"],
-                               "--jobage", age, "-n", limit, "--format", "json"], log))
-        log("  linkedin  %-28s %-24s %d" % (spec["q"][:28], spec["l"][:24], len(rows)))
+    session = COLLECTION or CollectionSession(cfg, ["linkedin"])
+    age = str(bounded(cfg.get("jobage_days", 7), 7, 1, 30))
+    limit = str(bounded(cfg.get("limit_per_query", 10), 10, 1, 15))
+    for task in session.for_source("linkedin"):
+        spec, page = task["spec"], task["page"]
+        if "linkedin" in session.blocked:
+            session.outcome("linkedin", task["key"], page, [], deferred=True)
+            continue
+        if not spec.get("l"):
+            session.outcome("linkedin", task["key"], page, [], error="query missing location")
+            continue
+        args = [LINKEDIN, "search", "-q", spec.get("q", ""), "-l", spec["l"],
+                "--jobage", age, "--page", str(page), "--sort", "date", "-n", limit, "--format", "json"]
+        if spec.get("remote"):
+            args.extend(["--remote", spec["remote"]])
+        session.last_error = None
+        payload = bun(args, log)
+        rows = results_of(payload)
+        error = session.last_error or ("unusable CLI output" if not isinstance(payload, dict)
+                                      or not isinstance(payload.get("results"), list) else None)
+        if error and ("429" in error or "RATE_LIMITED" in error):
+            session.blocked.add("linkedin")
+        log("  linkedin  %-28s %-24s %d" % (spec.get("q", "")[:28], spec["l"][:24], len(rows)))
+        returned = []
         for row in rows:
+            if not isinstance(row, dict):
+                error = "malformed result row"
+                continue
             jid = str(row.get("id") or "")
             if not jid and not row.get("url"):
                 continue
@@ -176,24 +315,41 @@ def collect_linkedin(cfg, log):
                           "company": row.get("company", ""), "location": row.get("location", ""),
                           "posted": (row.get("date") or "")[:10], "url": url,
                           "portal": "linkedin-search", "description": row.get("description")}
+            returned.append(found[url])
+        session.outcome("linkedin", task["key"], page, returned, error, payload.get("meta") if isinstance(payload, dict) else session.last_meta)
     return found
 
 
 def collect_freehire(cfg, log):
     """Run every configured freehire query. Returns {canonical_url: record}."""
     found = {}
-    age = str(cfg.get("jobage_days", 7))
-    limit = str(cfg.get("limit_per_query", 10))
-    for spec in cfg.get("freehire", []):
-        args = [FREEHIRE, "search", "--jobage", age, "-n", limit, "--format", "json"]
-        for flag in ("category", "country", "seniority", "region", "city"):
+    session = COLLECTION or CollectionSession(cfg, ["freehire"])
+    age = str(bounded(cfg.get("jobage_days", 7), 7, 1, 30))
+    limit = str(bounded(cfg.get("limit_per_query", 10), 10, 1, 15))
+    for task in session.for_source("freehire"):
+        spec, page = task["spec"], task["page"]
+        if "freehire" in session.blocked:
+            session.outcome("freehire", task["key"], page, [], deferred=True)
+            continue
+        args = [FREEHIRE, "search", "--jobage", age, "--page", str(page), "-n", limit, "--format", "json"]
+        for flag in ("category", "country", "seniority", "region", "city", "work-mode"):
             if spec.get(flag):
                 args += ["--" + flag, spec[flag]]
         if spec.get("q"):
             args += ["-q", spec["q"]]
-        rows = results_of(bun(args, log))
+        session.last_error = None
+        payload = bun(args, log)
+        rows = results_of(payload)
+        error = session.last_error or ("unusable CLI output" if not isinstance(payload, dict)
+                                      or not isinstance(payload.get("results"), list) else None)
+        if error and ("429" in error or "RATE_LIMITED" in error):
+            session.blocked.add("freehire")
         log("  freehire  %-53s %d" % (str(spec)[:53], len(rows)))
+        returned = []
         for row in rows:
+            if not isinstance(row, dict):
+                error = "malformed result row"
+                continue
             slug = str(row.get("id") or row.get("slug") or "")
             if not slug and not row.get("url"):
                 continue
@@ -206,6 +362,115 @@ def collect_freehire(cfg, log):
                           # freehire's agent search hydrates the description server-side,
                           # so the screen below costs no extra request.
                           "description": row.get("description")}
+            returned.append(found[url])
+        session.outcome("freehire", task["key"], page, returned, error, payload.get("meta") if isinstance(payload, dict) else session.last_meta)
+    return found
+
+
+class _PostingHTML(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.hidden = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self.hidden += 1
+        elif tag in ("p", "br", "li", "div", "h1", "h2", "h3"):
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self.hidden = max(0, self.hidden - 1)
+        elif tag in ("p", "li", "div"):
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
+
+
+def posting_text(html):
+    parser = _PostingHTML()
+    parser.feed(html or "")
+    return re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()
+
+
+def arbeitnow_access():
+    """Injectable policy check; fixed API host, bounded existing robots transport."""
+    import robots_check
+    return robots_check.gate(ARBEITNOW, cache={})
+
+
+def collect_arbeitnow(cfg, log):
+    """Small bounded keyless API scan; geography/role filters happen locally."""
+    spec = cfg.get("arbeitnow") or {}
+    if not spec.get("enabled", False):
+        return {}
+    session = COLLECTION or CollectionSession(cfg, [])
+    found = {}
+    code, message = arbeitnow_access()
+    if code:
+        session.outcome("arbeitnow", "arbeitnow-access", 0, [], error=message)
+        log("  ! arbeitnow access unconfirmed: %s" % message)
+        return found
+    age = bounded(spec.get("jobage_days", cfg.get("jobage_days", 7)), 7, 1, 30)
+    terms = spec.get("include_titles") or spec.get("query") or []
+    terms = [terms] if isinstance(terms, str) else terms
+    locations = spec.get("locations") or []
+    locations = [locations] if isinstance(locations, str) else locations
+    for page in range(1, bounded(spec.get("max_pages", 2), 2, 1, 3) + 1):
+        key, rows = "arbeitnow-page-%d" % page, []
+        try:
+            req = urllib.request.Request(ARBEITNOW + "?page=%d" % page,
+                                         headers={"Accept": "application/json", "User-Agent": "ai-job-search/1.0"})
+            with urllib.request.urlopen(req, timeout=20) as response:
+                raw = response.read(8 * 1024 * 1024 + 1)
+            if len(raw) > 8 * 1024 * 1024:
+                raise ValueError("API payload exceeds size limit")
+            payload = json.loads(raw)
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                raise ValueError("API response has no data array")
+            for raw in payload["data"]:
+                if not isinstance(raw, dict):
+                    raise ValueError("malformed API result")
+                if not isinstance(raw.get("slug"), str) or not isinstance(raw.get("url"), str):
+                    raise ValueError("API result missing stable slug or URL")
+                parts = urlsplit(raw["url"])
+                if parts.scheme not in ("https", "http") or not parts.hostname or parts.username:
+                    raise ValueError("API result has invalid job URL")
+                title, location = raw.get("title") or "", raw.get("location") or ""
+                if terms and title and not any(str(t).lower() in title.lower() for t in terms):
+                    continue
+                if locations and location and not any(str(l).lower() in location.lower() for l in locations):
+                    remote_scopes = spec.get("remote_locations") or ["remote", "worldwide", "anywhere", "europe", "european union"]
+                    if not (spec.get("include_remote", True) and raw.get("remote")
+                            and location.strip().lower() in {str(scope).lower() for scope in remote_scopes}):
+                        continue
+                posted = ""
+                try:
+                    timestamp = float(raw.get("created_at"))
+                    posted_date = datetime.fromtimestamp(timestamp, timezone.utc).date()
+                    posted = posted_date.isoformat()
+                    if (date.today() - posted_date).days > age:
+                        continue
+                except (ValueError, TypeError, OverflowError, OSError):
+                    pass  # Unknown posting dates stay unknown and remain eligible.
+                url = jobs_md.canonical_url(raw["url"])
+                record = {"id": "arbeitnow:" + raw["slug"], "title": title,
+                          "company": raw.get("company_name") or "", "location": location,
+                          "posted": posted, "url": url, "portal": "arbeitnow",
+                          "description": posting_text(raw.get("description") or ""),
+                          "remote": raw.get("remote")}
+                found[url] = record
+                rows.append(record)
+            session.outcome("arbeitnow", key, page, rows, meta={"http_attempts": 1})
+            if not payload["data"] or not (payload.get("links") or {}).get("next"):
+                break
+        except (OSError, ValueError, TypeError) as exc:
+            session.outcome("arbeitnow", key, page, rows, error=str(exc), meta={"http_attempts": 1})
+            log("  ! arbeitnow page %d failed: %s" % (page, exc))
+            break
+    log("  arbeitnow %d eligible records" % len(found))
     return found
 
 
@@ -228,6 +493,8 @@ def screen(record, log, budget=None):
     if record.get("description"):
         status, note = screen_text(record["description"])
         return status, note, record["description"]
+    if record.get("portal") != "linkedin-search":
+        return "new", "AUTO-SCREEN: missing inline description - not screened", ""
     cli = LINKEDIN if record["portal"] == "linkedin-search" else FREEHIRE
     ident = record.get("id")
     if not ident:
@@ -235,14 +502,42 @@ def screen(record, log, budget=None):
     if budget is not None and not budget.take():
         return "new", "AUTO-SCREEN: not screened - the run's detail budget was spent", ""
     try:
-        proc = subprocess.run(["bun", "run", cli, "detail", ident, "--format", "plain"],
+        proc = subprocess.run(["bun", "run", cli, "detail", ident, "--format", "json"],
                               cwd=str(ROOT), timeout=90, capture_output=True, text=True)
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if budget is not None:
+            budget.failed += 1
+        log("  ! detail failed: %s" % exc)
         return "new", "", ""
     if proc.returncode != 0:
+        if budget is not None:
+            budget.failed += 1
+            try:
+                meta = json.loads(proc.stderr).get("request_meta") or {}
+                budget.http_attempts += bounded(meta.get("http_attempts"), 1, 1, 100)
+                budget.retries += bounded(meta.get("retries"), 0, 0, 100)
+            except (ValueError, AttributeError):
+                pass
+            if "429" in (proc.stderr or "") or "RATE_LIMITED" in (proc.stderr or ""):
+                budget.blocked = True
+        log("  ! detail failed: %s" % (proc.stderr or "CLI error")[:200])
         return "new", "", ""
-    status, note = screen_text(proc.stdout)
-    return status, note, proc.stdout
+    try:
+        payload = json.loads(proc.stdout)
+        text = payload.get("description") or ""
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("missing readable description")
+    except (ValueError, AttributeError):
+        if budget is not None:
+            budget.failed += 1
+        log("  ! detail returned no readable description")
+        return "new", "", ""
+    if budget is not None:
+        meta = payload.get("request_meta") or {}
+        budget.http_attempts += bounded(meta.get("http_attempts"), 1, 1, 100)
+        budget.retries += bounded(meta.get("retries"), 0, 0, 100)
+    status, note = screen_text(text)
+    return status, note, text
 
 
 class Budget:
@@ -252,9 +547,13 @@ class Budget:
         self.limit = int(limit)
         self.used = 0
         self.deferred = 0
+        self.failed = 0
+        self.blocked = False
+        self.http_attempts = 0
+        self.retries = 0
 
     def take(self):
-        if self.used >= self.limit:
+        if self.blocked or self.used >= self.limit:
             self.deferred += 1
             return False
         self.used += 1

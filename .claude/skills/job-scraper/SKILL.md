@@ -19,7 +19,10 @@ This skill searches job portals using the **installed portal-search CLIs** in
 It deduplicates against previously seen jobs and the application tracker, and
 presents new matches with a quick fit assessment.
 
-Authenticated LinkedIn job recommendations are an interactive source handled by Codex/ChatGPT App through `.agents/skills/linkedin-browser-import/`; they still enter the unified merge and board-generation workflow.
+Personalized LinkedIn recommendations can enter the board's LinkedIn inbox through
+rendered-card capture, local `.eml` intake, or optional official saved-job sync.
+These use the existing merge; the interactive fallback is
+`.agents/skills/linkedin-browser-import/`. See `BOARD.md` for setup and coverage.
 
 ## Invocation
 

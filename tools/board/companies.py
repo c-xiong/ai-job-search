@@ -122,8 +122,11 @@ def _domain(website):
 
 def _careers_url(value):
     raw = str(value or "").strip()
+    if len(raw) > 8192 or any(c.isspace() or ord(c) < 32 or c == "\\" for c in raw):
+        raise CompanyError("careers page must be a valid http(s) URL")
     parsed = urlparse(raw if "://" in raw else "https://" + raw)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+    if (parsed.scheme not in ("http", "https") or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None):
         raise CompanyError("careers page must be a valid http(s) URL")
     _domain(raw)
     return parsed._replace(fragment="").geturl()
@@ -295,7 +298,18 @@ def _fresh(expected):
         raise CompanyError("registry changed since it was loaded", 409)
 
 
-def add(payload):
+def _matching_company(data, name, careers_url="", domain=None):
+    wanted = slug(name)
+    direct = _ats_identity(careers_url) if careers_url else None
+    return next((row for row in data["companies"] if
+                 wanted in {slug(value) for value in [row.get("name")] + list(row.get("aliases") or [])}
+                 or (domain and domain == str(row.get("domain") or "").casefold())
+                 or (direct and (direct == (row.get("vendor"), row.get("token"))
+                                 or direct == _ats_identity(str(row.get("careers_url") or ""))))
+                 or (careers_url and careers_url.casefold() == str(row.get("careers_url") or "").casefold())), None)
+
+
+def add(payload, idempotent=False):
     careers_url = _careers_url(payload.get("careers_url") or payload.get("website"))
     direct_ats = _ats_identity(careers_url)
     name = str(payload.get("name") or "").strip()
@@ -308,12 +322,10 @@ def add(payload):
     with company_lock():
         data = _load()
         _fresh(payload.get("mtime"))
-        names = {slug(value) for row in data["companies"]
-                 for value in [row.get("name")] + list(row.get("aliases") or [])}
-        domains = {str(row.get("domain") or "").casefold() for row in data["companies"]
-                   if row.get("domain")}
-        urls = {str(row.get("careers_url") or "").casefold() for row in data["companies"]}
-        if slug(name) in names or (domain and domain in domains) or careers_url.casefold() in urls:
+        existing = _matching_company(data, name, careers_url, domain)
+        if existing and idempotent:
+            return {**_public(data), "followed": {"name": existing["name"], "existing": True}}
+        if existing:
             raise CompanyError("company name or careers page already exists", 409)
         row = {"name": name, "careers_url": careers_url, "tier": 3,
                "countries": countries, "status": "unresolved", "route": "ats",
@@ -334,6 +346,58 @@ def add(payload):
     if direct_ats:
         return listing()
     return resolve(slug(name), {"mtime": _mtime()})
+
+
+def capture(payload):
+    """An external careers-page handoff only saves after explicit confirmation."""
+    if payload.get("confirmed") is not True:
+        raise CompanyError("Confirm that this careers page belongs to the company first.")
+    return add(payload, idempotent=True)
+
+
+def follow(payload, job):
+    """Follow a stored employer without promoting extracted links to evidence."""
+    name = str(job.get("company") or "").strip()
+    if not name or len(name) > 250 or not slug(name):
+        raise CompanyError("This job needs a company name before it can be followed.")
+    explicit = str(payload.get("careers_url") or "").strip()
+    careers_url = _careers_url(explicit) if explicit else ""
+    source_url = str(job.get("url") or "")
+    if not careers_url:
+        external = str(job.get("default_open_url") or job.get("open_url") or "")
+        host = (urlparse(external).hostname or "").casefold()
+        first_party = job.get("primary_source") in ("company-careers", "ats-search")
+        if (external and host != "linkedin.com" and not host.endswith(".linkedin.com")
+                and (first_party or _ats_identity(external))):
+            careers_url = _careers_url(external)
+    direct_ats = _ats_identity(careers_url) if careers_url else None
+    domain = _domain(careers_url) if careers_url and not direct_ats else None
+    with company_lock():
+        data = _load(); _fresh(payload.get("mtime"))
+        existing = _matching_company(data, name, careers_url, domain)
+        if existing:
+            return {**_public(data), "followed": {"name": existing["name"], "existing": True}}
+        row = {"name": name, "tier": 3, "status": "unresolved", "route": "ats",
+               "cadence_days": ADDED_CADENCE_DAYS,
+               "follow_source": {"kind": "job", "url": source_url}}
+        if careers_url:
+            row["careers_url"] = careers_url
+        if domain:
+            row["domain"] = domain
+        if direct_ats:
+            vendor, token = direct_ats
+            row.update({"status": "ambiguous", "candidates": [{
+                "vendor": vendor, "token": token, "source_url": careers_url,
+                "evidence_kind": "job_link", "evidence": "extracted from a followed job",
+            }]})
+        elif not careers_url:
+            # Avoid speculative employer-domain discovery for Easy Apply jobs.
+            row["next_resolve_at"] = None
+            row["resolve_detail"] = "careers URL needed; followed from a job"
+        data["companies"].append(row); _write(data)
+        result = {**_public(data), "followed": {"name": name, "existing": False}}
+    activity.emit("registry", "followed %s from a job" % name)
+    return result
 
 
 def patch_company(company_slug, payload):

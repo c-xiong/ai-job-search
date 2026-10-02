@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_jobs  # noqa: E402
 import jobs_md  # noqa: E402
 import ats_fetch  # noqa: E402
+import linkedin_inbox  # noqa: E402
 
 from . import (activity, add_job, companies, docs, notion, review, run_registry, runs,  # noqa: E402
                state, trash)
@@ -92,6 +93,47 @@ def load_token(new=False):
 
 FETCH_LOCK = threading.Lock()
 FETCH = {"running": False, "log": [], "sources": [], "error": None, "finished_at": None}
+INBOX_LOCK = threading.Lock()
+INBOX_PROCESS = {"running": False, "error": None, "result": None, "finished_at": None}
+
+
+def inbox_status():
+    result = linkedin_inbox.listing()
+    with INBOX_LOCK:
+        result["process_status"] = dict(INBOX_PROCESS)
+    return result
+
+
+def inbox_worker(limit):
+    try:
+        with fetch_jobs.RunLock():
+            result = linkedin_inbox.process(limit=limit)
+        with INBOX_LOCK:
+            INBOX_PROCESS["result"] = result
+        activity.emit("board", "LinkedIn inbox: %d imported, %d retry" %
+                      (result.get("imported", 0), result.get("retry", 0)))
+    except Exception as exc:
+        with INBOX_LOCK:
+            INBOX_PROCESS["error"] = str(exc)
+        activity.emit("board", "LinkedIn inbox: %s" % exc, level="warn")
+    finally:
+        with INBOX_LOCK:
+            INBOX_PROCESS.update(running=False, finished_at=datetime.now().isoformat())
+
+
+def start_inbox_process(payload):
+    limit = payload.get("limit", 15)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 0 <= limit <= 20:
+        return 400, {"error": "limit must be an integer from 0 to 20"}
+    with FETCH_LOCK:
+        if FETCH["running"]:
+            return 409, {"error": "A job fetch is already running. Process the inbox after it finishes."}
+    with INBOX_LOCK:
+        if INBOX_PROCESS["running"]:
+            return 409, {"error": "the inbox is already being processed"}
+        INBOX_PROCESS.update(running=True, error=None, result=None, finished_at=None)
+    threading.Thread(target=inbox_worker, args=(limit,), daemon=True).start()
+    return 202, {"started": True, "limit": limit}
 
 
 # --------------------------------------------------------------- collection
@@ -373,6 +415,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(row, ensure_ascii=False))
         if parts.path == "/api/fetch/status":
             return self._send(200, json.dumps(fetch_status(), ensure_ascii=False))
+        if parts.path == "/api/linkedin/inbox":
+            try:
+                body = inbox_status()
+            except (ValueError, OSError) as exc:
+                return self._send(500, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
         if parts.path == "/api/activity":
             try:
                 seq = int((query.get("since") or ["0"])[0])
@@ -444,8 +492,10 @@ class Handler(BaseHTTPRequestHandler):
         run_id, action = run_route(parts.path)
         company_match = COMPANY_PATH.fullmatch(parts.path)
         known = parts.path in ("/api/update", "/api/jobs/add", "/api/fetch", "/api/runs",
+                               "/api/linkedin/capture", "/api/linkedin/process",
                                "/api/runs/undelete",
                                "/api/companies", "/api/companies/resolve-all",
+                               "/api/companies/follow", "/api/companies/capture",
                                "/api/companies/health-check") or \
             (run_id and action in RUN_POST_ACTIONS)
         known = known or bool(company_match and company_match.group("action") in
@@ -458,6 +508,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, json.dumps({"error": "forbidden"}))
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if length < 0 or (parts.path in ("/api/linkedin/capture", "/api/companies/capture")
+                              and length > 262144):
+                return self._send(413, json.dumps({"error": "capture payload exceeds 256 KB"}))
             payload = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, TypeError):
             return self._send(400, json.dumps({"error": "bad json"}))
@@ -495,6 +548,18 @@ class Handler(BaseHTTPRequestHandler):
             code, body = start_fetch(payload)
             return self._send(code, json.dumps(body, ensure_ascii=False))
 
+        if parts.path == "/api/linkedin/capture":
+            try:
+                body = linkedin_inbox.capture(payload)
+            except linkedin_inbox.InputError as exc:
+                return self._send(400, json.dumps({"error": str(exc)}))
+            except (OSError, ValueError) as exc:
+                return self._send(500, json.dumps({"error": "Could not save LinkedIn capture: %s" % exc}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+        if parts.path == "/api/linkedin/process":
+            code, body = start_inbox_process(payload)
+            return self._send(code, json.dumps(body, ensure_ascii=False))
+
         if parts.path == "/api/runs":
             code, body = runs.supervisor().start(payload)
             return self._send(code, json.dumps(body, ensure_ascii=False))
@@ -503,6 +568,19 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = companies.never(payload) if payload.get("decision") == "never" \
                     else companies.add(payload)
+            except companies.CompanyError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body, ensure_ascii=False))
+
+        if parts.path in ("/api/companies/follow", "/api/companies/capture"):
+            try:
+                if parts.path.endswith("/follow"):
+                    job = state.job_payload(str(payload.get("url") or ""))
+                    if job is None:
+                        return self._send(404, json.dumps({"error": "unknown job"}))
+                    body = companies.follow(payload, job)
+                else:
+                    body = companies.capture(payload)
             except companies.CompanyError as exc:
                 return self._send(exc.status, json.dumps({"error": str(exc)}))
             return self._send(200, json.dumps(body, ensure_ascii=False))
