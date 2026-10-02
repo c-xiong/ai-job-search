@@ -195,37 +195,56 @@ deal-breaker yourself.
   and COVER_LIBRARY_V1 are the single source of truth for fixed wording.
 - Choose by the posting's responsibilities, not its title or CV variant. Record
   the role problem and evidence choices in the existing `letter_plan`. Select one
-  complete opening, two distinct highlights (three only when needed and within
-  budget), and an optional publication sentence. Order by relevance; never split
+  fixed introduction and the two strongest distinct highlights, preceded by a
+  concise tailored motivation and followed by a tailored closing. Add a third
+  highlight or optional publication only when it adds relevant evidence and both
+  tailored parts fit the budget. Order by relevance; never split
   one project. Never include both nlp_research and nlp_models (the same current
   research), or both research_interface and publication (the same project).
-  Use nlp_models when model selection, fine-tuning or quality/cost trade-offs are
-  decisive; use nlp_research when pipelines, data or research evaluation lead.
-  The approved xHeron sample supplies wording and layout, not default evidence
+  Include nlp_models when hands-on model adaptation, empirical comparison or
+  quality versus memory/response-time judgement adds a relevant strength for
+  applied AI, LLM product, agent or research work. A research role or explicit
+  fine-tuning requirement is not necessary. Its model-level evaluation complements
+  contract_agent's system controls, tracing and regression checks; jobjuniors
+  contributes product delivery. Do not add it solely because fine-tuning is
+  impressive, or infer production optimization, generally superior smaller
+  models, or foundation-model training. Use nlp_research instead when pipelines,
+  data or time-aware research evaluation contribute more. The approved samples
+  supply wording and layout, not default evidence
   choices for unrelated postings.
 - Copy each selected COVER_TEXT verbatim into a matching USE_COVER_TEXT wrapper.
   Preserve markers, IDs and punctuation. No paraphrasing, compression, bold labels
   or added mechanisms. Missing suitable evidence is a library-coverage issue to
   report, not a reason to force a poor match or rewrite a block silently.
-- Customise only recipient, subject, salutation, date/location and the first one
-  to three closing sentences. Connect one actual company/role task to the career
-  direction confirmed in the base and strengths already evidenced. These can
-  share one natural sentence; no generic career paragraph or team praise. The base
-  describes industry, AI application, product and role-fit options. Keep its
-  opening voice and current role/degree status in every selected whole variant;
+- Customise recipient, subject, salutation, date/location, a motivation before the
+  fixed introduction, and one to three closing sentences. The motivation is
+  normally one concise sentence; a second must add a distinct reason. Connect
+  specific role/company work to an owner-confirmed interest from the profile.
+  The closing develops that attraction through relevant career direction or
+  values and one evidenced contribution, rather than repeating the opening or
+  retelling projects. The base supplies the generation rules; the profile alone
+  supplies confirmed personal direction. Apply its agent-specific preferences
+  only to relevant work. Do not invent personal history,
+  product usage or industry passion, or use generic praise. Keep tailored
+  motivation outside the fixed introduction's markers. Preserve the introduction's
+  voice and current role/degree status in every selected whole variant;
   do not infer a conferral date from an old expected date. Relocation and invitation
   use its fixed wording; do not invent availability, notice periods or visa facts.
 - Employer claims require first-party verification. Unknown address lines are
   deleted; ambitious future capabilities must not be stated as already achieved.
   International/energetic teams are optional sourced reasons, never default praise.
 - Exactly one page and at most 380 body words, usually 250–360, with no minimum
-  or padding. Budget the closing after selecting
-  fixed blocks. Cut only customised text first, then optional publication or the
-  third highlight. Preserve the approved 23 mm side, 16 mm top and 20 mm bottom
+  or padding. Budget the motivation and a meaningful closing alongside the two
+  strongest fixed highlights before optional third evidence or publication.
+  Remove verbose customised wording without erasing either tailored part; drop
+  optional publication or the least relevant third highlight before reducing
+  necessary specificity. Preserve the approved 23 mm side, 16 mm top and 20 mm bottom
   margins and 10.7 pt body/14 pt leading. Do not alter fonts, margins or spacing,
   or shorten fixed text.
 - Preserve the fixed-library base's preamble exactly; only whitespace and comments
   may differ. Do not add packages or font, margin or spacing overrides to a copy.
+- Routine application passes keep the canonical base read-only; an explicit owner
+  request to update the pipeline/template is a separate authorized library edit.
 - All passes, including review/fix/repair, preserve fixed paragraphs. Review their
   factual currency and selection, not their style. Report source conflicts for a
   library update. The `cover_fixed_blocks` mechanical check detects missing,
@@ -250,22 +269,27 @@ only what matters for a truthful, targeted application:
   with real evidence but do not.
 - **Specificity and clarity** - generic lines that could be sent anywhere. In
   the letter, every filler sentence named under "Cover letter" above (GitHub
-  or portfolio pointers, unrequested availability lines, industry philosophy,
+  or portfolio pointers, unrequested availability lines, unsupported industry philosophy,
   recaps) in customised prose is a `must_fix`. Never delete or rewrite fixed
   blocks for stylistic reasons; check their selection and factual currency.
 - **Letter level, shape and selection** - the evidence and the thinking chosen
   answer the posting's main problems (compare `letter_plan` when present), not a
   fixed order. Verify the selected block IDs and rationale against the posting's
-  decisive tasks; check same-project exclusions and that each highlight adds a
-  distinct relevant strength. The closing must give a supported, company-specific
-  reason for wanting the work and an evidenced contribution; a company-name swap
-  must not leave an equally suitable paragraph. Do not inherit the xHeron closing
-  or agent-first selection by default. Named methods are appropriate when they
+  actual tasks; check same-project exclusions and that each highlight adds a
+  distinct relevant strength. Verify a concise tailored motivation before the
+  unchanged fixed introduction; it must identify specific work tied to a confirmed
+  interest. The closing must develop that reason through relevant career direction
+  or values and an evidenced contribution; it must not simply repeat the opening.
+  A company-name swap must not leave equally suitable customised prose for unrelated
+  roles. Do not inherit a sample's closing or agent-first selection by default.
+  Owner-confirmed values are useful when connected to the work, not filler merely
+  because they express a personal principle. Named methods are appropriate when they
   explain supported behavior or decisions, as in the approved agent paragraph;
   a bare library inventory or unexplained metric is a `clarity` finding. At most
   380 body words with no padding. A fix never adds
   a background paragraph or a third item to fill space. Preserve the selected
-  library text exactly; only closing wording is open to stylistic improvement.
+  library text exactly; only tailored motivation and closing wording are open to
+  stylistic improvement.
 - **Consistency** (both documents) - the CV and letter agree on every shared fact.
 - **Voice** - the letter reads as the owner's plain first person, not as
   marketing copy.
@@ -304,7 +328,8 @@ unsupported claim; keep the page limits. A CV layout repair uses `\needspace` /
 `\enlargethispage` first and removes the least relevant line only when needed.
 A letter is never repaired with layout commands: it is brought back to one page
 by cutting words, in the order given under "Cover letter" above. A letter fix
-keeps the letter's shape and level - opening, 2-3 highlights, closing; no CV
+keeps the letter's shape and level - tailored motivation, fixed introduction,
+2-3 highlights, developed closing; no CV
 detail added back.
 
 ---

@@ -170,18 +170,28 @@ def _shape(source, selected, kinds, issues):
         issues.append("every list item must use an approved text block")
 
     paragraphs = list(_commands(body, "lettercontent"))
-    if len(paragraphs) != 2:
-        issues.append("only the salutation and closing may be unmarked lettercontent")
+    if len(paragraphs) != 3:
+        issues.append("exactly the salutation, role motivation and closing must be unmarked lettercontent")
     elif tokens:
         if (paragraphs[0][1] > tokens[0].start()
                 or paragraphs[-1][0] < tokens[-1].end()):
             issues.append("salutation must precede, and closing must follow, fixed blocks")
         if not re.match(r"Dear\b", paragraphs[0][2][0].strip()):
             issues.append("the first unmarked lettercontent must be the salutation")
+        if paragraphs[1][1] > tokens[0].start():
+            issues.append("role motivation must precede the fixed opening")
+        motivation = paragraphs[1][2][0].strip()
+        if not motivation:
+            issues.append("role motivation must be non-empty")
+        if re.search(r"\[[A-Z][A-Z0-9 _.,/&()'-]*\]", motivation):
+            issues.append("role motivation must not contain unresolved placeholders")
+        if starts and ends and any(starts[0].end() <= start < ends[0].start()
+                                   for start, _finish, _values in paragraphs):
+            issues.append("custom paragraphs must remain outside the highlight list")
 
     # Consume the known formal header/footer and layout commands. Anything
     # else left in the body would be new, unmarked prose or an unsupported
-    # wrapper rather than one of the two permitted custom paragraphs.
+    # wrapper rather than one of the three permitted custom paragraphs.
     spans = [(start, finish) for start, finish, _values in paragraphs]
     for name, nargs in (("senderblock", 2), ("recipientblock", 1),
                         ("currentdate", 1), ("subjectline", 1),
@@ -190,7 +200,7 @@ def _shape(source, selected, kinds, issues):
         if name != "vspace" and len(commands) > 1:
             issues.append("duplicate formal letter command: " + name)
         for start, finish, _ in commands:
-            if len(paragraphs) == 2 and name != "vspace":
+            if len(paragraphs) == 3 and name != "vspace":
                 if name in ("closing", "signature"):
                     correctly_placed = start >= paragraphs[-1][1]
                 else:

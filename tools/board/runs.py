@@ -132,6 +132,12 @@ def _resolve_base_cv(base):
     return "ai" if base == "ml" else base
 
 
+def fresh_edit(record):
+    """A Regenerate with no instruction: redo `record["edit"]` from scratch."""
+    return (record.get("kind") == "revise" and bool(record.get("edit"))
+            and not (record.get("note") or "").strip() and not record.get("continue_of"))
+
+
 def _check_modes(settings):
     """(review_enabled, inspection_enabled). Manual checking is the default:
     the owner ticks the PDF checklist, so neither model check runs."""
@@ -288,7 +294,9 @@ class Supervisor:
                 base_cv = parent_base
             if country is None:
                 country = parent.get("cv_country")
-            if kind == "revise" and not note and not (
+            # No instruction is still a request when it names a document to
+            # regenerate from scratch, or switches the CV variant.
+            if kind == "revise" and not note and not payload.get("edit") and not (
                     "cv" in docs.doc_kinds({"scope": scope})
                     and _resolve_base_cv(base_cv) != parent_base):
                 return 400, {"error": "say what should change"}
@@ -311,9 +319,13 @@ class Supervisor:
 
         budget = lineage.get("budget")
         if budget is None:
-            # A revision with no instruction is a CV variant switch: no model.
-            budget = ({} if kind == "revise" and not note
-                      else run_registry.stage_budget(settings, kind))
+            # A revision with no instruction is a CV variant switch or a CV
+            # reseed (no model), or a cover letter drafted afresh.
+            if kind == "revise" and not note:
+                budget = (run_registry.stage_budget(settings, "apply")
+                          if edit == "cover" else {})
+            else:
+                budget = run_registry.stage_budget(settings, kind)
         worst_case = round(sum(budget.values()), 4)
         needs_model = worst_case > 0
         if needs_model:
@@ -962,6 +974,10 @@ class Supervisor:
             source = get(source_id)
             src_manifest, src_problem = checkpoint.load(source_id)
             adopt_kinds = [] if posting_only else kinds
+            if fresh_edit(record):
+                # Regenerate one document from scratch: leave it behind so the
+                # plan drafts the letter again, or reseeds the CV from the master.
+                adopt_kinds = [k for k in adopt_kinds if k != record["edit"]]
             if src_manifest:
                 items = checkpoint.adopt_from_checkpoint(
                     manifest, run_id, src_manifest, source_id, adopt_kinds, ext["cv"])
@@ -1966,17 +1982,32 @@ class Supervisor:
     # The letter's shape and selection rules, stated once for every pass that
     # writes or reviews a letter, so a later pass cannot rewrite approved
     # project paragraphs. The base holds the fixed prose and evidence limits;
-    # only the employer-specific closing and formal details are customised.
+    # only role motivation, the closing and formal details are customised.
     COVER_RULES = (
         "Letter rules: assemble the fixed COVER_LIBRARY_V1 in the canonical cover base. "
         "Its TAILORING RULES, evidence boundaries and DO NOT CLAIM list bind every pass.\n"
         "- The letter must not read as a CV recap. The owner has already chosen the level "
         "and wording of the core prose. Choose by the posting's tasks, not its title: "
-        "one complete opening variant, two distinct highlight blocks (three only when "
-        "needed and within budget), and the optional publication block. Select and order "
+        "a tailored role-motivation paragraph, one complete fixed introduction variant, "
+        "two distinct highlight blocks (three when a distinct contribution fits the "
+        "budget), the optional publication block, and a tailored closing. Select and order "
         "evidence for the role; there is no default agent-first order. Do not use both "
         "research_interface and publication (same project), or nlp_research and "
         "nlp_models (same research experience). Obey every COVER_EXCLUSIVE group.\n"
+        "- Consider nlp_models for applied AI, LLM and agent product roles, not only "
+        "research jobs or postings that explicitly require fine-tuning. Prefer it when "
+        "hands-on model adaptation and evaluation, model choice, or quality versus "
+        "latency/memory decisions add a relevant model-level strength alongside agent "
+        "engineering and software delivery. The introduction's general research title "
+        "does not make this concrete evidence redundant. Record its task match and "
+        "distinct contribution in letter_plan's existing evidence strings, including "
+        "a third block when selected; if omitted for an AI role, record the stronger "
+        "alternative or lack of relevance/space there. Prefer nlp_research when data "
+        "pipelines or forecasting evaluation better answer the role. Do not force "
+        "nlp_models into unrelated software work or add it merely to reach three items. "
+        "This research comparison supports similar task classification performance "
+        "with lower memory use and faster responses; it does not prove production "
+        "agent performance, measured monetary savings or universal model superiority.\n"
         "- Copy each selected COVER_TEXT verbatim into its matching USE_COVER_TEXT / "
         "END_USE_COVER_TEXT wrapper: lettercontent for opening/research, item for "
         "highlight. Preserve IDs, words, punctuation and numbers; whitespace may vary. "
@@ -1984,8 +2015,18 @@ class Supervisor:
         "block's final sentence. The cover_fixed_blocks mechanical check detects drift. "
         "If the library lacks suitable evidence, report the missing coverage and propose "
         "a reusable addition separately; do not force an irrelevant existing block.\n"
-        "- Only recipient, subject, salutation, date/location and the first one to three "
-        "closing sentences are customised. All three opening variants (opening_agent, "
+        "- Only recipient, subject, salutation, date/location, the role-motivation "
+        "paragraph and the closing's substantive sentences are customised. Immediately "
+        "after the salutation, write one concise sentence explaining which concrete "
+        "company/role work attracts the owner and why; use two only when the second "
+        "adds meaning. Ground the interest in confirmed personal direction and verified "
+        "employer work. The supplied candidate profile is the authority for motivation, "
+        "career direction and preferences. For agent roles, use its confirmed "
+        "agent-specific interest only when relevant to actual agent responsibilities; "
+        "do not force that interest into other work. Tailor the work named to each posting; do not "
+        "use a generic application announcement, company-name swap or invented "
+        "domain passion. This paragraph must be non-empty and precede the fixed "
+        "introduction. All three fixed variants (opening_agent, "
         "opening_nlp and opening_software) retain the owner-confirmed NLP Research "
         "Assistant title, developing NLP pipelines and machine learning models in "
         "Python, completion of all requirements for the MSc in Computational "
@@ -1994,14 +2035,16 @@ class Supervisor:
         "has already been conferred. The approved opening order is what I build, "
         "then current work and degree status, then an engineering concern. Choose a "
         "whole fixed variant; no editable opening slots or on-the-fly rewrites.\n"
-        "- Closing: within one to three customised sentences, connect one concrete "
-        "company or role task to the owner's confirmed career direction: building "
-        "useful AI/software products that people use, and carrying research and "
-        "engineering into practical product work. Briefly connect a responsibility "
-        "to one or two strengths already evidenced. Motivation, career direction and "
-        "contribution can share a sentence; do not turn them into three compulsory "
-        "sentences or repeat the full career goal mechanically. Three natural "
-        "sentences may develop motivation, useful work and contribution when needed. "
+        "- Closing: develop the personal reason established at the start, without "
+        "repeating that sentence. Explain the relevant career direction and connect "
+        "one company/role responsibility to strengths already evidenced. Choose the "
+        "relevant confirmed direction from the supplied candidate profile. For agent "
+        "work, explain what its confirmed dependability interest means in practice "
+        "when it adds meaning beyond the fixed introduction; for other work, choose "
+        "the profile's relevant AI/software, product or research direction. Usually "
+        "two or three substantive sentences can explain what matters to the owner "
+        "and what they would contribute; use no compulsory sentence count or quota. "
+        "Keep the reason, career direction and contribution sincere and concrete. "
         "Choose ONE grounded "
         "angle: an industry problem, AI application, verified product choice or role "
         "responsibility. Do not retell projects, use generic company praise, claim "
@@ -2012,19 +2055,25 @@ class Supervisor:
         "- Add the base's exact relocation sentence only when its location rule applies, "
         "using a city from the original posting or employer site. End exactly: "
         "I would welcome a conversation. English dates use day month year.\n"
-        "- Compute remaining space before writing the closing: %d body words maximum "
-        "including every fixed block, relocation and invitation. This is a ceiling, "
-        "not a target. Use the actual remainder; there is no fixed closing minimum "
-        "or word quota. Fit one A4 page, copying the canonical preamble unchanged to "
-        "preserve its approved geometry, fonts and layout commands. Shorten customised "
-        "closing text first, then omit optional publication or the third highlight. "
+        "- Budget both tailored paragraphs before deciding whether a third highlight "
+        "fits: %d body words maximum including every fixed block, role motivation, "
+        "closing, relocation and invitation. This is a ceiling, not a target; there "
+        "is no paragraph word quota or padding. Fit one A4 page, copying the "
+        "canonical preamble unchanged to preserve its approved geometry, fonts and "
+        "layout commands. Trim repetition in either tailored paragraph while "
+        "preserving the concrete role attraction, personal direction and grounded "
+        "contribution. Omit optional publication or the least relevant third "
+        "highlight before hollowing out these tailored ideas. "
         "Never cut inside fixed paragraphs. Keep lists outside lettercontent, wrapped "
-        "in raggedright/letterbodyfont. No unmarked extra body paragraphs.\n"
+        "in raggedright/letterbodyfont. Exactly three unmarked lettercontent "
+        "paragraphs: salutation, role motivation before the fixed introduction, "
+        "and closing after all selected evidence. No extra background paragraphs.\n"
         "- Review/fix/repair preserve fixed wording; stylistic preference is not a "
         "finding against approved prose. Flag stale/contradictory facts for a library "
         "correction instead of silently changing them. Keep personal, course, research "
-        "and production scope distinct; checks are not guarantees. The closing must be "
-        "plain, grounded and employer-specific. Resolve all placeholders.\n" % docs.COVER_MAX_WORDS)
+        "and production scope distinct; checks are not guarantees. Both tailored "
+        "paragraphs must be plain, grounded and employer-specific, with distinct "
+        "functions. Resolve all placeholders.\n" % docs.COVER_MAX_WORDS)
 
     def _canary(self, record, nonce):
         return self.CANARY.format(
@@ -2213,10 +2262,13 @@ class Supervisor:
             "the page limit, remove the least relevant line. Cover letter: never touch "
             "layout (no `\\enlargethispage`, negative `\\vspace`, smaller fonts or "
             "spacing). If the source uses USE_COVER_TEXT, never change words inside those "
-            "fixed blocks or their markers. Fit by shortening only customised closing "
-            "sentences, then omitting optional publication or the third highlight. "
+            "fixed blocks or their markers. Trim repetition only in customised role "
+            "motivation and closing sentences, preserving the role attraction, personal "
+            "direction and grounded contribution. Omit optional publication or the "
+            "least relevant third highlight before hollowing out these ideas. "
             "For legacy letters without fixed blocks, remove redundant wording first. "
-            "Preserve specific closing motivation and factual scope. Page limits: %s.\n\n%s\n\n%s"
+            "Keep the role-motivation paragraph before the fixed introduction and the "
+            "closing after selected evidence. Preserve factual scope. Page limits: %s.\n\n%s\n\n%s"
             % ("s" if len(paths) > 1 else "",
                ", ".join("%s %d page(s)" % (docs.DOC_LABELS[k], docs.expected_pages(k))
                          for k in paths),

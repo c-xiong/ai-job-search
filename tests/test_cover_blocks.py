@@ -34,7 +34,9 @@ def letter(research=True, highlights=("agent", "product")):
             "\\senderblock{Jane}{Zurich\\\\\\href{mailto:jane@example.test}{jane@example.test}}\n"
             "\\recipientblock{Acme}\n\\currentdate{Zurich, 1 October 2026}\n"
             "\\subjectline{Application for Engineer}\n"
-            "\\lettercontent{Dear Acme Team,}\n" + block("opening_ai") +
+            "\\lettercontent{Dear Acme Team,}\n"
+            "\\lettercontent{Acme's editorial workflows offer the chance to build dependable agents.}\n" +
+            block("opening_ai") +
             "{\\raggedright\\letterbodyfont\n\\begin{itemize}[leftmargin=1.2em]\n" +
             "".join(block(ident) for ident in highlights) +
             "\\end{itemize}\\par}\n\\vspace{6pt}\n" +
@@ -64,8 +66,10 @@ class FixedBlocksTest(unittest.TestCase):
         self.assert_valid(letter(research=False))
         self.assert_valid(letter(highlights=("agent", "model", "product")))
 
-    def test_whitespace_and_custom_closing_may_change(self):
+    def test_whitespace_and_both_tailored_paragraphs_may_change(self):
         self.assert_valid(letter().replace("I built a contract agent.", "I built\n   a contract agent.")
+                          .replace("Acme's editorial workflows offer the chance to build dependable agents.",
+                                   "Building reliable tools for Acme's scheduling workflows interests me.")
                           .replace("Your work on automation interests me.",
                                    "Acme's focus on booking workflows interests me."))
         self.assert_valid(letter(), BASE.replace("I build useful", "I build\n% useful"))
@@ -86,7 +90,7 @@ class FixedBlocksTest(unittest.TestCase):
                             "every list item must use an approved text block")
         self.assert_invalid(letter().replace(block("paper"),
                             "\\lettercontent{I wrote a different paper.}\n"),
-                            "only the salutation and closing may be unmarked")
+                            "exactly the salutation, role motivation and closing")
 
     def test_duplicate_or_unknown_selected_ids_fail(self):
         self.assert_invalid(letter(highlights=("agent", "agent")), "duplicate selected ID")
@@ -143,13 +147,39 @@ class FixedBlocksTest(unittest.TestCase):
 
     def test_missing_or_misplaced_custom_paragraphs_fail(self):
         self.assert_invalid(letter().replace("\\lettercontent{Dear Acme Team,}\n", ""),
-                            "only the salutation and closing")
+                            "exactly the salutation, role motivation and closing")
         self.assert_invalid(letter().replace("Dear Acme Team,", "An unapproved introduction."),
                             "must be the salutation")
         source = letter().replace("\\lettercontent{Dear Acme Team,}\n", "")
         source = source.replace(block("opening_ai"), block("opening_ai") +
                                 "\\lettercontent{Dear Acme Team,}\n")
-        self.assert_invalid(source, "salutation must precede")
+        self.assert_invalid(source, "the first unmarked lettercontent must be the salutation")
+
+    def test_role_motivation_is_required_before_the_fixed_introduction(self):
+        motivation = ("\\lettercontent{Acme's editorial workflows offer the chance "
+                      "to build dependable agents.}\n")
+        self.assert_invalid(letter().replace(motivation, ""),
+                            "exactly the salutation, role motivation and closing")
+        self.assert_invalid(letter().replace(motivation, "\\lettercontent{  }\n"),
+                            "role motivation must be non-empty")
+        for placeholder in ("[ROLE MOTIVATION]", "[ROLE_MOTIVATION]"):
+            with self.subTest(placeholder=placeholder):
+                self.assert_invalid(letter().replace(motivation,
+                                    "\\lettercontent{%s}\n" % placeholder),
+                                    "role motivation must not contain unresolved placeholders")
+        moved = letter().replace(motivation, "").replace(
+            block("opening_ai"), block("opening_ai") + motivation)
+        self.assert_invalid(moved, "role motivation must precede the fixed opening")
+        in_list = letter().replace(motivation, "").replace(
+            block("agent"), motivation + block("agent"))
+        self.assert_invalid(in_list, "custom paragraphs must remain outside the highlight list")
+
+    def test_tailored_closing_must_follow_all_selected_evidence(self):
+        closing = ("\\lettercontent{Your work on automation interests me. "
+                   "I would welcome a conversation.}\n")
+        source = letter().replace(closing, "").replace(
+            block("paper"), closing + block("paper"))
+        self.assert_invalid(source, "closing must follow")
 
     def test_incomplete_or_malformed_markers_fail(self):
         for source in (letter().replace("% END_USE_COVER_TEXT", "", 1),

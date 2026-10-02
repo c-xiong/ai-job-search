@@ -7,7 +7,8 @@
 %   cd cover_letters && xelatex -output-directory=<dir> ../tests/fixtures/latex/cover_fixture.tex
 % It is NOT a fallback for the personal base: a missing
 % cover_letters/my_cover.tex stops a run instead of falling back to this file.
-% It shows the default shape - opening, 2-3 highlights, closing - and the
+% It shows the default shape - role motivation, fixed introduction,
+% 2-3 highlights, career/contribution closing - and the
 % correct itemize pattern: the list sits OUTSIDE \lettercontent{} (whose
 % trailing \\ errors on \end{itemize}) inside \letterbodyfont, so XCharter,
 % size and leading match the body.
@@ -41,7 +42,9 @@
 
 \lettercontent{Dear [Hiring Manager / Team],}
 
-\lettercontent{[OPENING: the kind of work you do and the engineering view that meets the role's main problem, in 2--3 sentences.]}
+\lettercontent{[ROLE MOTIVATION: one specific responsibility that attracts you, grounded in confirmed interests and the employer's actual work.]}
+
+\lettercontent{[FIXED INTRODUCTION: the kind of work you do, your current role and education, and the engineering view that meets the role's main problem.]}
 
 {\raggedright\letterbodyfont
 \begin{itemize}[leftmargin=1.2em, topsep=2pt, itemsep=3pt, parsep=0pt]
@@ -49,7 +52,7 @@
     \item [HIGHLIGHT 2: a different strength, chosen by the posting's main problems.]
 \end{itemize}\par}
 
-\lettercontent{[CLOSING: the problem you would like to work on there, then a brief invitation to talk.]}
+\lettercontent{[CLOSING: develop your relevant career direction, explain what matters to you in this work, and connect an evidenced strength to what you would contribute there. End with a brief invitation to talk.]}
 
 % Note: no trailing \\ inside \closing{} - cover.cls appends its own \\, and a
 % doubled break triggers "There's no line here to end."

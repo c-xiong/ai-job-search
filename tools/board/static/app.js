@@ -877,7 +877,7 @@ function regeneratePanel(run,v){
   const kinds=docKinds(run.scope),hasCv=kinds.includes("cv");
   const variant=hasCv?`<div class="regen-row"><span class="label">CV variant</span><div class="seg">${[["sde","SDE"],["ai","AI"]].map(([value,label])=>`<button type="button" class="chip${v.variant===value?" on":""}" data-variant="${value}" ${v.variant===value?"disabled":""}>${label}</button>`).join("")}</div></div>`:"";
   const docs=kinds.map((kind,i)=>`<label><input type="radio" name="edit" value="${kind}" ${i===(kinds.length>1?1:0)?"checked":""}> ${kind==="cv"?"CV":"Cover letter"}</label>`).join("");
-  return `<form class="regen" id="regen-form">${variant}<div class="regen-row"><span class="label">Regenerate</span><div class="seg">${docs}</div></div><textarea id="regen-note" placeholder="${hasCv?"e.g. change the CV title to “AI Engineer | LLM Applications”":"What should change?"}"></textarea><button class="primary" type="submit">Regenerate with Claude</button></form>`;
+  return `<form class="regen" id="regen-form">${variant}<div class="regen-row"><span class="label">Regenerate</span><div class="seg">${docs}</div></div><textarea id="regen-note" placeholder="${hasCv?"Optional, e.g. change the CV title to “AI Engineer | LLM Applications”. Leave empty to regenerate from scratch.":"Optional: what should change? Leave empty to regenerate from scratch."}"></textarea><button class="primary" type="submit">Regenerate with Claude</button></form>`;
 }
 
 async function renderRevise(run){
@@ -1521,7 +1521,7 @@ document.addEventListener("submit",event=>{
   }
   if(event.target.id==="regen-form"){
     event.preventDefault();const run=RUNS.find(r=>r.id===PREVIEW_RUN),note=el("regen-note").value.trim(),edit=new FormData(event.target).get("edit");
-    if(!run||!edit)return;if(!note){toast("say what should change",{warn:true});return}
+    if(!run||!edit)return;
     const button=event.submitter;if(button)button.disabled=true;
     postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope:run.scope||"both",edit,note}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else if(button)button.disabled=false});return;
   }

@@ -1,5 +1,5 @@
 ---
-framework_version: 1.6.0
+framework_version: 1.7.0
 ---
 
 # Cover Letter Templates and Tailoring Guide
@@ -17,23 +17,34 @@ phrasing references only, never templates for the next letter.
 ### Base-content contract
 
 - **Assembly, not regeneration:** the canonical COVER_LIBRARY_V1 in the base
-  contains exact prose. Select one opening, two distinct highlights (three only
-  when justified and within budget), and optional publication. Choose by the
-  posting's tasks, never a fixed narrative or the CV variant.
+  contains exact prose. Write a tailored motivation, select one fixed introduction
+  and two distinct highlights, then write a tailored closing. Add a third highlight
+  or optional publication only when it adds relevant evidence and both tailored
+  parts fit the budget. Choose by the posting's tasks, never a fixed narrative or
+  the CV variant.
 - **Fixed text:** copy selected COVER_TEXT entries verbatim into matching
   USE_COVER_TEXT markers. Only whitespace may change. Do not modify identity,
   numbers, terminology or final sentences. Never use nlp_research with nlp_models
   (two views of the same current research), or research_interface with publication
-  (the same project). New variants belong in a separate owner-requested library edit.
-- **Opening voice and identity:** each whole variant starts with what the candidate
+  (the same project). New variants belong in a separate owner-requested library edit;
+  an explicitly requested pipeline/template update may change the base, while
+  routine applications keep it read-only.
+- **Tailored motivation:** one concise sentence before the fixed introduction
+  explains what specific role/company work attracts the candidate. A second
+  sentence is allowed only when it adds meaning. Use an owner-confirmed interest
+  from `01-candidate-profile.md` and supported responsibilities or independently
+  verified company facts. Do not invent passion or copy an agent motivation into
+  unrelated roles. Keep this prose outside the fixed introduction's markers.
+- **Introduction voice and identity:** each whole variant starts with what the candidate
   builds and combines the current role, research, completed MSc requirements and
   an engineering interest. Never add a second background paragraph or rewrite the
-  opening for an employer. Do not invent a degree conferral date.
-- **Tailored closing:** connect one actual company/role task to the candidate's
-  career direction and documented strengths; one to three new sentences, combined
-  when natural. The base defines the approved career direction and evidence rules
-  for product appreciation and team interest. No generic praise or mandatory
-  career-goal sentence. Compute the remaining budget; no minimum length. Follow with the
+  fixed introduction for an employer. Do not invent a degree conferral date.
+- **Tailored closing:** develop the opening's attraction through the candidate's
+  confirmed career direction or values and one grounded contribution; one to three
+  new sentences, combined when natural. The profile grounds personal motivations;
+  the base supplies generation and evidence rules. Do not repeat the opening,
+  retell projects, add generic praise or force a career-goal sentence. Reserve
+  space for meaningful content before optional evidence, with no padding. Follow with the
   conditional relocation and exact invitation from the base. Recipient, role,
   date and verified location are editable metadata.
 - **Scope and checks:** the CV/profile ground facts; the evidence bank supplies
@@ -43,13 +54,14 @@ phrasing references only, never templates for the next letter.
   Do not add packages or redefine fonts, margins or spacing. `cover_fixed_blocks`
   checks selected prose and the unchanged preamble.
 - **One page, at most 380 body words:** usually 250–360, with no minimum and no
-  padding. Shorten customised closing first, then omit optional publication or
-  the third highlight. Never rephrase fixed blocks to fit.
+  padding. Remove verbose customised prose without erasing either tailored part.
+  Omit optional publication or the least relevant third highlight before cutting
+  needed motivation or contribution. Never rephrase fixed blocks to fit.
 
 ### Evidence selection
 
-Use the posting's decisive tasks to choose the opening and leading highlight;
-the approved xHeron sample establishes wording and layout, not a default evidence
+Use the posting's actual tasks to choose the fixed introduction and leading highlight;
+the approved samples establish wording and layout, not a default evidence
 combination or company closing for other employers. Select complementary work
 for the next highlight:
 
@@ -58,11 +70,22 @@ for the next highlight:
 - `jobjuniors`: translating product requirements into architecture and carrying
   implementation through testing and deployment.
 - `nlp_research`: NLP pipelines, data preparation and research evaluation.
-- `nlp_models`: model selection and fine-tuning, with the model-quality and
-  practical-cost trade-off described in the approved paragraph.
+- `nlp_models`: hands-on fine-tuning, empirical model comparison, and quality
+  versus memory/response-time judgement. Useful for applied AI, LLM product and
+  agent engineering as well as research; an explicit fine-tuning requirement is
+  not necessary when this adds relevant evidence of model-level judgement.
 - `research_interface`: human–LLM research and its experimental interface.
 - `event_platform`: course-based software engineering.
 - `publication`: optional research evidence when it helps explain the role fit.
+
+Choose the two strongest complementary examples. `nlp_models` can complement
+`contract_agent`: classification/model comparison is different evidence from
+agent controls, tracing and regression checks. `jobjuniors` adds product delivery.
+Use three only when each adds a relevant task or strength and both tailored parts
+fit. Prefer `nlp_research` when pipelines, data or time-aware evaluation matter
+more; omit model evidence for general software work if stronger examples match.
+Do not infer production inference optimization, general superiority of smaller
+models, or foundation-model training from the classification comparison.
 
 Choose only one of `nlp_research` and `nlp_models`, and only one of
 `research_interface` and `publication`. Preserve distinctions between independent
@@ -173,6 +196,8 @@ The `\letterbodyfont` wrapper is mandatory: outside `\lettercontent{}`, a list o
 \subjectline{Application for [ROLE] [REFERENCE NUMBER, IF APPLICABLE]}
 \lettercontent{Dear [Name/Team],}
 
+\lettercontent{[TAILORED_MOTIVATION]} % specific attraction, normally one sentence
+
 % USE_COVER_TEXT [OPENING_ID]
 \lettercontent{[OPENING_TEXT]}
 % END_USE_COVER_TEXT
@@ -188,7 +213,7 @@ The `\letterbodyfont` wrapper is mandatory: outside `\lettercontent{}`, a list o
 \end{itemize}\par}
 \vspace{6pt}
 
-\lettercontent{[CLOSING]}    % problem I'd like to work on, relocation if needed, invitation
+\lettercontent{[CLOSING]}    % develop motivation, grounded contribution, relocation if needed, invitation
 
 % No trailing \\ inside \closing{} - cover.cls appends its own \\, and a
 % doubled break triggers "! LaTeX Error: There's no line here to end."
@@ -227,11 +252,17 @@ The cover letter is a short argument, not a requirement checklist or ATS keyword
 ### Length - Hard 1-Page Limit
 - Target: 1 page including signature block
 - Maximum: **never exceed 1 page**
-- **Word budget:** usually 250–360 words of body text, including highlights and
-  closing but excluding the letter frame and LaTeX markup. **380 is the hard
+- **Word budget:** usually 250–360 words of body text, including tailored motivation,
+  fixed introduction, highlights and closing but excluding the letter frame and
+  LaTeX markup. **380 is the hard
   ceiling.** There is no minimum; never pad toward the range.
-- Opening, 2-3 highlights, closing is the default. Keep motivation within the closing; do not add a standing background paragraph or an item to fill space.
-- Never fit the page with spacing, stretch or font changes: cut customised closing words or optional whole blocks, not fixed text.
+- Tailored motivation, fixed introduction, two highlights and tailored closing is
+  the default. A third highlight needs a distinct role contribution and room for
+  both tailored parts; do not add background paragraphs or items to fill space.
+- Budget the motivation and a meaningful closing before optional third evidence or
+  publication. Trim verbose customised wording, then drop the least relevant
+  optional block before reducing needed specificity. Never change spacing,
+  stretch, fonts or fixed text to fit.
 
 ### Highlights
 - Use the exact selected library paragraph, inside its USE_COVER_TEXT markers.
@@ -258,9 +289,10 @@ The cover letter is a short argument, not a requirement checklist or ATS keyword
 - [ ] Every claim backed by specific example
 - [ ] No generic programme-language keyword stuffing or requirement-by-requirement narration
 - [ ] Any adjacent inferred skill is levelled honestly and does not imply invented usage
-- [ ] The opening and the leading highlight answer the posting's main problem; each highlight shows a different strength
+- [ ] A concise tailored motivation precedes the unchanged fixed introduction and names specific work connected to a confirmed interest
+- [ ] The fixed introduction and leading highlight answer the posting's main problem; each highlight shows a different strength
 - [ ] Named technical methods explain supported behavior or decisions; no CV-level inventories or unexplained metrics
-- [ ] The closing links actual company/role work to a believable personal motivation and an evidenced strength, without a recap or an "ideal fit" claim
+- [ ] The closing develops the opening through confirmed career direction/values and an evidenced contribution, without repetition, a project recap or an "ideal fit" claim
 - [ ] Company name and role are correct throughout
 - [ ] Date is current
 - [ ] Exactly one page, at most 380 body words, with the approved margins and typography

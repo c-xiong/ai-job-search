@@ -128,12 +128,42 @@ class ScopeTest(SupervisorCase):
         self.assertIn("must not read as a CV recap", prompt)
         self.assertIn("not its title", prompt)
         self.assertIn("%d body words maximum" % docs.COVER_MAX_WORDS, prompt)
-        self.assertIn("one to three customised sentences", prompt)
+        self.assertIn("one concise sentence explaining which concrete company/role work", prompt)
+        self.assertIn("Exactly three unmarked lettercontent paragraphs", prompt)
+        self.assertIn("candidate profile is the authority for motivation, career direction and preferences", prompt)
+        self.assertIn("agent-specific interest only when relevant to actual agent responsibilities", prompt)
+        self.assertIn("do not force that interest into other work", prompt)
+        self.assertIn("without repeating that sentence", prompt)
+        self.assertIn("Consider nlp_models for applied AI, LLM and agent product roles", prompt)
+        self.assertIn("not only research jobs", prompt)
+        self.assertIn("distinct contribution in letter_plan's existing evidence strings", prompt)
+        self.assertIn("Budget both tailored paragraphs", prompt)
+        self.assertIn("before hollowing out these tailored ideas", prompt)
         self.assertIn("developing NLP pipelines and machine learning models in Python", prompt)
         self.assertIn("canonical preamble unchanged", prompt)
         self.assertIn("Obey every COVER_EXCLUSIVE group", prompt)
         self.assertNotIn("280 body words", prompt)
         self.assertNotIn("about 47 words", prompt)
+
+    def test_review_fix_and_repair_preserve_both_tailored_paragraphs(self):
+        run_id, phase = self.run_to_end(scope="cover")
+        self.assertEqual(phase, "done")
+        record, manifest = run_registry.get(run_id), self.manifest(run_id)
+        paths = {"cover": self.home / record["targets"]["cover"]}
+        review = self.supervisor._prompt_review(record, manifest, ["cover"], {}, "a" * 32)
+        fix = self.supervisor._prompt_fix(record, manifest, paths, [], "a" * 32)
+        for prompt in (review, fix):
+            with self.subTest(stage="review" if prompt is review else "fix"):
+                self.assertIn("Exactly three unmarked lettercontent paragraphs", prompt)
+                self.assertIn("candidate profile is the authority for motivation, career direction and preferences", prompt)
+                self.assertIn("relevant confirmed direction from the supplied candidate profile", prompt)
+                self.assertIn("Consider nlp_models for applied AI, LLM and agent product roles", prompt)
+                self.assertIn("Budget both tailored paragraphs", prompt)
+        repair = self.supervisor._prompt_repair(record, paths, [], "a" * 32)
+        self.assertIn("customised role motivation and closing sentences", repair)
+        self.assertIn("least relevant third highlight before hollowing out these ideas", repair)
+        self.assertIn("role-motivation paragraph before the fixed introduction", repair)
+        self.assertNotIn("shortening only customised closing", repair)
         self.assertNotIn("at most TWO", prompt)
 
     def test_a_cover_brief_without_a_letter_plan_is_rejected(self):

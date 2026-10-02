@@ -310,6 +310,11 @@ class DocsTest(unittest.TestCase):
                 ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}" % ("word " * 352), "pass"),
                 ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}" % ("word " * 380), "pass"),
                 ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}" % ("word " * 381), "fail"),
+                # The new tailored role motivation uses the same body-word budget.
+                ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}\n\\lettercontent{%s}" %
+                 ("interest " * 15, "word " * 365), "pass"),
+                ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}\n\\lettercontent{%s}" %
+                 ("interest " * 15, "word " * 366), "fail"),
                 # The list counts: 181 words of paragraphs plus 200 in four items.
                 ("\\lettercontent{Dear Team,}\n\\lettercontent{%s}\n"
                  "\\begin{itemize}[leftmargin=1em]%s\\end{itemize}" % ("word " * 181, item * 4),
