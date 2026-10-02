@@ -235,6 +235,7 @@ class NotionSyncTest(unittest.TestCase):
             self.assertEqual(notion.save_owner_fields(record, values), "updated")
         schema = [b for m, p, b in fake.calls if m == "PATCH" and "data_sources" in p]
         self.assertEqual(schema, [{"properties": {"Application Portal": {"url": {}},
+                                                  "Application Email": {"email": {}},
                                                   "My Notes": {"rich_text": {}}}}])
         props = fake.calls[-1][2]["properties"]
         self.assertEqual(props["Application Portal"],
@@ -264,7 +265,7 @@ class NotionSyncTest(unittest.TestCase):
         self.fake([acme, beta])
         self.assertEqual(notion.pull()["tracker"], 2)
         rows = {r["company"]: r for r in self.read_tracker()}
-        self.assertEqual(list(rows["Acme"])[-2:], ["portal_url", "my_notes"])
+        self.assertEqual(list(rows["Acme"])[-3:], ["portal_url", "my_notes", "apply_email"])
         self.assertEqual((rows["Acme"]["portal_url"], rows["Acme"]["my_notes"]),
                          ("https://acme.example/portal", "ref 42"))
         self.assertEqual(rows["Beta"]["portal_url"], "")
@@ -282,6 +283,21 @@ class NotionSyncTest(unittest.TestCase):
         self.assertEqual(props, {"Application Portal": {"url": "https://acme.example/portal"}})
         self.assertEqual(self.read_tracker()[0]["portal_url"], "https://acme.example/portal")
 
+    def test_application_email_round_trips_as_an_email_property(self):
+        row = page("p1", Position_Title="ML Engineer", Company="Acme", Stage="Interested",
+                   Job_Posting_URL="https://jobs.lever.co/acme/1")
+        row["properties"]["Application Email"] = {"type": "email", "email": "jobs@acme.ch"}
+        fake = self.fake([row])
+        self.write_tracker({"date": "2026-09-19", "company": "Acme", "role": "ML Engineer",
+                            "status": "drafted"})
+        notion.pull()
+        self.assertEqual(self.read_tracker()[0]["apply_email"], "jobs@acme.ch")
+        record = {"job_url": "https://jobs.lever.co/acme/1", "company": "Acme",
+                  "role": "ML Engineer", "targets": {}}
+        with mock.patch.object(notion, "_schema_ready", {("ds", "owner")}):
+            notion.save_owner_fields(record, {"apply_email": ""})
+        self.assertEqual(fake.calls[-1][2]["properties"], {"Application Email": {"email": None}})
+
     def test_owner_values_accepts_web_links_only(self):
         from board import server
         self.assertEqual(server.run_route("/api/runs/r-20260928-101010-acme-abc123/owner"),
@@ -291,8 +307,10 @@ class NotionSyncTest(unittest.TestCase):
                                               "my_notes": "hi  "}),
                          ({"portal_url": "https://x.com/a", "my_notes": "hi"}, None))
         self.assertEqual(server.owner_values({"portal_url": ""}), ({"portal_url": ""}, None))
+        self.assertEqual(server.owner_values({"apply_email": " jobs@acme.ch "}),
+                         ({"apply_email": "jobs@acme.ch"}, None))
         for bad in ({"portal_url": "javascript:alert(1)"}, {"my_notes": 3}, {},
-                    {"my_notes": "x" * 2001}):
+                    {"my_notes": "x" * 2001}, {"apply_email": "not an address"}):
             values, error = server.owner_values(bad)
             self.assertIsNone(values)
             self.assertTrue(error)

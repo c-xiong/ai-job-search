@@ -22,7 +22,9 @@ writer, so the two sides never conflict:
                             replaces the stale copy and an unchanged one is
                             never re-sent.
     owner fields (both ways) "Application Portal" (the employer's candidate
-                            portal) and "My Notes" are typed by the owner, on
+                            portal), "Application Email" (where an emailed
+                            application goes, prefilled from the posting) and
+                            "My Notes" are typed by the owner, on
                             the board's Send step or in Notion. A board save
                             writes Notion first, then the tracker's `portal_url`
                             and `my_notes`; a pull copies a non-empty Notion
@@ -59,6 +61,7 @@ AUTO_PREFIX = "Apply - drafted"
 DOC_PROPS = {"cv": "CV", "cover": "Cover Letter"}   # tracker target -> files property
 # tracker column -> (Notion property, property schema)
 OWNER_PROPS = {"portal_url": ("Application Portal", {"url": {}}),
+               "apply_email": ("Application Email", {"email": {}}),
                "my_notes": ("My Notes", {"rich_text": {}})}
 
 # Notion Stage -> tracker status (the /outcome vocabulary). Interested and an
@@ -183,8 +186,8 @@ def read(page, name):
         return (prop.get("select") or {}).get("name")
     if kind == "date":
         return (prop.get("date") or {}).get("start")
-    if kind == "url":
-        return prop.get("url")
+    if kind in ("url", "email"):
+        return prop.get(kind)
     if kind == "files":
         return [f.get("name") for f in prop.get("files") or []]
     return None
@@ -283,6 +286,8 @@ def _owner_value(column, value):
     """The Notion property value for an owner column; empty clears it."""
     if column == "portal_url":
         return {"url": value or None}
+    if column == "apply_email":
+        return {"email": value or None}
     return _text(value) if value else {"rich_text": []}
 
 
@@ -454,7 +459,8 @@ def _page_for(cfg, record):
 def save_owner_fields(record, values):
     """The owner saved the portal link and/or notes on the Send step.
 
-    `values` maps tracker columns (`portal_url`, `my_notes`) to their new text;
+    `values` maps tracker columns (`portal_url`, `apply_email`, `my_notes`) to
+    their new text;
     an empty string clears the property. Returns "updated", or None when not
     configured.
     """

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import apply_email  # noqa: E402
 import jobs_md  # noqa: E402
 import postings  # noqa: E402
 
@@ -156,4 +157,7 @@ def job_payload(url):
         # only its body is withheld.
         body = ""
     row["description"] = body or row.get("description", "")
+    # Read from the body on every open rather than stored: it is one regex pass
+    # over one posting, and improving the extractor then fixes every old row.
+    row["emails"] = apply_email.extract(row["description"])
     return row

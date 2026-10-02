@@ -220,7 +220,9 @@ def run_route(path):
     return match.group("id"), match.group("action")
 
 
-OWNER_LIMITS = {"portal_url": 2000, "my_notes": 2000}   # Notion's text-object cap
+OWNER_LIMITS = {"portal_url": 2000, "apply_email": 254,   # RFC 5321 path limit
+                "my_notes": 2000}                         # Notion's text-object cap
+EMAIL_SHAPE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 def owner_values(payload):
@@ -232,12 +234,14 @@ def owner_values(payload):
         value = payload[column]
         if not isinstance(value, str):
             return None, "%s must be a string" % column
-        value = value.strip() if column == "portal_url" else value.rstrip()
+        value = value.rstrip() if column == "my_notes" else value.strip()
         if len(value) > limit:
             return None, "%s is longer than %d characters" % (column, limit)
         if (column == "portal_url" and value
                 and urlsplit(value).scheme not in ("http", "https")):
             return None, "the portal link must start with http:// or https://"
+        if column == "apply_email" and value and not EMAIL_SHAPE.fullmatch(value):
+            return None, "the application email is not an email address"
         values[column] = value
     if not values:
         return None, "nothing to save"
@@ -562,7 +566,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(502, json.dumps({"error": "Notion: %s" % exc}))
             body = {"notion": synced, "tracker": docs.save_owner_fields(record, values),
                     **values}
-            activity.emit("board", "saved portal/notes: %s - %s (Notion %s, tracker %s)"
+            activity.emit("board", "saved portal/email/notes: %s - %s (Notion %s, tracker %s)"
                           % (record["company"], record["role"], synced or "off",
                              body["tracker"]), run_id=run_id)
             return self._send(200, json.dumps(body, ensure_ascii=False))

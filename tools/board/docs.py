@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover
     fcntl = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import apply_email  # noqa: E402
 import jobs_md  # noqa: E402
 
 from . import activity, cover_blocks, run_guard, run_registry, templates
@@ -36,13 +37,16 @@ APPLICATIONS = ROOT / "documents" / "applications"
 PROFILE = ROOT / ".claude" / "skills" / "job-application-assistant" / "01-candidate-profile.md"
 CANONICAL_HEADER = (
     "date,company,sector,role,role_type,channel,status,contact_person,"
-    "fit_rating,notes,cv_file,cover_letter_file,source,deadline,portal_url,my_notes"
+    "fit_rating,notes,cv_file,cover_letter_file,source,deadline,portal_url,my_notes,"
+    "apply_email"
 ).split(",")
 # The owner's own columns, edited on the Send step and mirrored to Notion:
-# where the employer's candidate portal lives, and free-text notes. They are
+# where the employer's candidate portal lives, or the address an emailed
+# application goes to (prefilled from the posting), and free-text notes. They are
 # kept apart from `notes`, which /outcome and /gmail-sync read as a dated log of
 # contact with the employer.
-OWNER_COLUMNS = {"portal_url": "Application Portal", "my_notes": "My Notes"}
+OWNER_COLUMNS = {"portal_url": "Application Portal", "apply_email": "Application Email",
+                 "my_notes": "My Notes"}
 FINAL_STATUSES = {
     "hired", "rejected", "no_response", "offer_declined", "withdrawn",
     "no response", "offer declined",
@@ -923,6 +927,7 @@ def merge_tracker(record, brief=None):
         "fit_rating": fit.get("overall", ""), "notes": "",
         "cv_file": "", "cover_letter_file": "",
         "source": record["job_url"], "deadline": meta.get("deadline") or "",
+        "apply_email": _posting_email(record),
     }
     kinds = doc_kinds(record)
     columns = {"cv": "cv_file", "cover": "cover_letter_file"}
@@ -962,6 +967,9 @@ def merge_tracker(record, brief=None):
                 row[indexes[key]] = str(values[key])
             if values["deadline"]:
                 row[indexes["deadline"]] = values["deadline"]
+            # Prefill only: an address the owner typed or Notion holds wins.
+            if values["apply_email"] and not row[indexes["apply_email"]].strip():
+                row[indexes["apply_email"]] = values["apply_email"]
             note = row[indexes["notes"]].strip()
             row[indexes["notes"]] = note + ("; " if note else "") + "redrafted"
             if old_status == "drafted":
@@ -972,6 +980,15 @@ def merge_tracker(record, brief=None):
             action = "appended"
         _write_tracker(header, rows)
     return action
+
+
+def _posting_email(record):
+    """The posting's application address, or "" - read from the run's posting.md."""
+    try:
+        text = (run_registry.run_dir(record["id"]) / "posting.md").read_text(encoding="utf-8")
+    except (KeyError, OSError):
+        return ""
+    return apply_email.best(text)
 
 
 def _upgrade_header(header, rows):
@@ -1025,7 +1042,7 @@ def tracker_statuses():
 
 
 def save_owner_fields(record, values):
-    """Write the owner columns (`portal_url`, `my_notes`) on this application's row.
+    """Write the owner columns (`OWNER_COLUMNS`) on this application's row.
 
     `values` holds only the columns to change. Returns "updated", "unchanged"
     or "missing" (no tracker row for this company and role yet).

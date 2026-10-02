@@ -334,7 +334,7 @@ const scoreTitle=j=>({
 // Full posting bodies live in sidecars and are not in the list payload - every
 // row of it goes to the browser on every reload. The excerpt paints instantly;
 // the body arrives from /api/job and is cached so re-selecting a row is free.
-const POSTING_CACHE=new Map();
+const POSTING_CACHE=new Map(),EMAIL_CACHE=new Map();
 function postingText(j){
   if(POSTING_CACHE.has(j.url))return POSTING_CACHE.get(j.url);
   if(j.description)return j.description;
@@ -345,13 +345,14 @@ async function loadPosting(j){
   if(!j||!j.has_posting||POSTING_CACHE.has(j.url))return;
   try{
     const full=await(await fetch("/api/job?t="+T+"&url="+encodeURIComponent(j.url))).json();
-    POSTING_CACHE.set(j.url,full.description||"");
+    POSTING_CACHE.set(j.url,full.description||"");EMAIL_CACHE.set(j.url,full.emails||[]);
   }catch(error){return}
   // Only repaint when the row is still the selected one: a fast arrow-key walk
   // down the list would otherwise drop an old response into the new row.
   if(selectedJob()?.url===j.url){
     const box=el("postingbody");
     if(box){box.textContent=POSTING_CACHE.get(j.url);box.classList.remove("postingempty")}
+    const mail=el("emailbox");if(mail)mail.outerHTML=emailBox(j);
   }
 }
 
@@ -380,6 +381,16 @@ function postedText(j){
   const d=new Date(raw.slice(0,10)+"T12:00:00");
   return d.toLocaleDateString("en-GB",{day:"numeric",month:"short",...(d.getFullYear()!==new Date().getFullYear()?{year:"numeric"}:{})});
 }
+// Addresses the posting names, read server-side from the full body: the one
+// to send the application to first, then named contacts. Empty until loaded.
+function emailBox(j){
+  const emails=EMAIL_CACHE.get(j.url)||[];
+  if(!emails.length)return '<div id="emailbox" hidden></div>';
+  const apply=emails.some(e=>e.apply);
+  return `<div id="emailbox" class="emailbox"><div class="sectionhead">${apply?"Apply by email":"Contact"}</div>${emails.map(e=>`<div class="emailrow">
+    <div class="emailline"><a href="mailto:${esc(e.email)}">${esc(e.email)}</a>${apply&&!e.apply?'<span class="dim">contact</span>':""}<button class="linkish" data-copy-email="${esc(e.email)}">Copy</button></div>
+    <div class="emailctx" title="${esc(e.context)}">${esc(e.context)}</div></div>`).join("")}</div>`;
+}
 // The stored reason is one "; "-joined line; each clause is its own fact.
 const whyItems=why=>String(why||"").split(/;\s+/).map(s=>s.trim()).filter(Boolean).map(s=>s[0].toUpperCase()+s.slice(1));
 
@@ -393,6 +404,7 @@ function renderJob(){
     <div class="badges"><span class="fitpill ${esc(j.fit||"none")}" title="${esc(scoreTitle(j))}"><span class="fitdot"></span>${esc(fitLabel)}${score!=null?`<span class="fitscore">${esc(score)}</span>`:""}</span><span class="badge">${esc(sourceLabel(j.primary_source||j.portal)||"Source unknown")}</span>${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">Title only</span>':""}</div>
     <div class="posting-link"><a href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener" title="${esc(j.open_url||j.url)}">${esc(postingLinkLabel(j.open_url||j.url))} ↗</a><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button></div></div>
     <div class="whybox"><div class="sectionhead">Why it's here</div>${why.length?`<ul class="whylist">${why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:'<div class="dim">No reason was stored.</div>'}</div>
+    ${emailBox(j)}
     <div class="posting"><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
     <div class="jobactions"><div class="statusbuttons">${markButtons(j)}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
@@ -764,15 +776,17 @@ function renderSend(run){
   const open=postingUrl?`<a class="secondary" href="${esc(postingUrl)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
   const changeUrl=job?`<button class="linkish" data-posting-url="${esc(job.url)}">Change URL</button>`:"";
   const portal=/^https?:\/\//i.test(run.portal_url||"")?`<a class="secondary" href="${esc(run.portal_url)}" target="_blank" rel="noopener">Open portal ↗</a>`:"";
+  const mailto=run.apply_email?`<a class="secondary" href="mailto:${esc(run.apply_email)}?subject=${encodeURIComponent("Application: "+(run.role||""))}">Email ${esc(run.apply_email)} ↗</a>`:"";
   const reveals=kinds.map(kind=>`<button class="secondary" data-reveal="${kind}">Reveal ${kind==="cv"?"CV":"letter"} in Finder</button>`).join("");
   const record=state==="applied"?`<span class="applied-badge">${run.tracker_status==="applied"?"Applied ✓":esc((run.tracker_status||"").replaceAll("_"," "))}${when?" "+esc(when):""}</span>`
     :`<button class="primary" data-applied="${esc(run.id)}">Mark applied</button>`;
   mountApp(run,"send",`<div class="send-shell"><section class="send-main">
     <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Check the PDFs</strong><div class="dim">${review.total?`${review.done} of ${review.total} checks ticked`:"No checks recorded yet"}${checked?"":` · <button class="linkish" data-app-step="review">finish them in Review</button>`}</div></div></div>
-    <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${changeUrl}${portal}${reveals}</div></div></div>
+    <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${changeUrl}${portal}${mailto}${reveals}</div></div></div>
     <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Moves the Notion Stage to Applied, the tracker row, and this job’s board status.</div><div class="title-actions">${record}</div></div></div>
-    <form class="send-step owner-form" id="owner-form" data-run-id="${esc(run.id)}"><span class="stepdot">✎</span><div><strong>Portal link &amp; notes</strong><div class="dim">Where you applied, so you can log in again later. Saved to the tracker and Notion.</div>
+    <form class="send-step owner-form" id="owner-form" data-run-id="${esc(run.id)}"><span class="stepdot">✎</span><div><strong>Portal, email &amp; notes</strong><div class="dim">Where you applied - a portal to log in to again, or the address you emailed. Saved to the tracker and Notion.</div>
       <label class="modal-label" for="owner-portal">Application portal</label><input type="url" id="owner-portal" placeholder="https://…" value="${esc(run.portal_url||"")}">
+      <label class="modal-label" for="owner-email">Application email <span class="dim">(when the posting says to email it)</span></label><input type="email" id="owner-email" placeholder="careers@…" value="${esc(run.apply_email||"")}">
       <label class="modal-label" for="owner-notes">My notes <span class="dim">(optional)</span></label><textarea id="owner-notes" rows="3" placeholder="Login email, reference number, anything to remember…">${esc(run.my_notes||"")}</textarea>
       <div class="title-actions"><button class="secondary" type="submit">Save</button></div></div></form>
     <div class="writing"><div class="label">Published files</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc((run.cv_country||"ch").toUpperCase())}</div></div>
@@ -1395,6 +1409,8 @@ function selectCompanyRow(row){
 const closePopovers=(except=null)=>document.querySelectorAll("details.popover[open],details.app-menu[open]").forEach(node=>{if(node!==except)node.removeAttribute("open")});
 document.addEventListener("click",event=>{
   closePopovers(event.target.closest("details.popover,details.app-menu"));
+  const copyEmail=event.target.closest("[data-copy-email]");
+  if(copyEmail){const address=copyEmail.dataset.copyEmail;return void navigator.clipboard.writeText(address).then(()=>toast("copied "+address),()=>toast("could not copy",{warn:true}))}
   const postingUrl=event.target.closest("[data-posting-url]");if(postingUrl)return void openPostingUrl(JOBS.find(j=>j.url===postingUrl.dataset.postingUrl));
   if(event.target.closest("#posting-url-cancel,#posting-url-close")||event.target===el("posting-url-modal"))return void closePostingUrl();
   if(event.target.closest("#posting-url-reset"))return void savePostingUrl(true);
@@ -1486,7 +1502,7 @@ document.addEventListener("submit",event=>{
   if(event.target.id==="owner-form"){
     event.preventDefault();const form=event.target,runId=form.dataset.runId,button=form.querySelector("button[type=submit]");
     button.disabled=true;
-    postRun("/api/runs/"+encodeURIComponent(runId)+"/owner",{portal_url:el("owner-portal").value,my_notes:el("owner-notes").value}).then(({ok,notion})=>{
+    postRun("/api/runs/"+encodeURIComponent(runId)+"/owner",{portal_url:el("owner-portal").value,apply_email:el("owner-email").value,my_notes:el("owner-notes").value}).then(({ok,notion})=>{
       button.disabled=false;if(!ok)return;
       toast(notion?"Saved · tracker and Notion":"Saved in the tracker (Notion sync is off)",{ms:3000});
       const fresh=RUNS.find(r=>r.id===runId);if(fresh&&VIEW==="send"&&ACTIVE_RUN===runId)openApp(fresh,"send")});return;
