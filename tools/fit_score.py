@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import collectors  # noqa: E402
 import jobs_md  # noqa: E402
 import posting_text  # noqa: E402
 import postings  # noqa: E402
@@ -52,7 +53,7 @@ REGISTRY = ROOT / "job_scraper" / "companies.json"
 # Bumped whenever the formula changes, so `--recompute --stale` can find the
 # rows that were scored under the old one. It is not a schema version: the
 # fields are additive and readers tolerate their absence as always.
-FIT_VERSION = 1
+FIT_VERSION = 3   # 2: posting language, German, gaps; 3: gaps inform only, experience gate
 
 BANDS = ("high", "medium", "low")
 # The ceiling each band puts on a row's sort priority. Owned by jobs_md, which
@@ -378,21 +379,101 @@ def excluded_stack(title, body, profile):
     if term and not first_match(title, counters):
         return term
 
-    # A requirements *section*, not a requirements *line*: postings put
-    # "Requirements:" on its own line and the bullets underneath it, so a
-    # line-by-line search finds the header and the stack in different lines and
-    # never fires. The window is the block a marker introduces.
-    markers = block.get("must_have_markers") or []
+    for region in _must_have_regions(body, profile):
+        term = first_match(region, excluded)
+        if term and not first_match(region, counters):
+            return term
+    return None
+
+
+def _must_have_regions(body, profile):
+    """The text blocks a requirements marker introduces.
+
+    A requirements *section*, not a requirements *line*: postings put
+    "Requirements:" on its own line and the bullets underneath it, so a
+    line-by-line search finds the header and the stack in different lines and
+    never fires. The window is the block a marker introduces.
+    """
+    block = profile["skills"]
     window = block.get("must_have_window", 400)
     body = body or ""
     lowered = body.lower()
-    for marker in markers:
+    for marker in block.get("must_have_markers") or []:
         for match in _TERM_CACHE.setdefault(marker, _term_re(marker)).finditer(lowered):
-            region = body[match.start():match.start() + window]
-            term = first_match(region, excluded)
-            if term and not first_match(region, counters):
-                return term
-    return None
+            yield body[match.start():match.start() + window]
+
+
+def must_have_gaps(body, profile):
+    """(penalty, gaps, reason). Requirements outside your profile, named not punished.
+
+    `skills.gaps` is a short list you curate of things you have not done (a
+    domain, a regulated environment, a language you never used). Most postings
+    list them beside the core stack as wishes, and no employer expects one hire
+    to bring all of them, so by default they only *inform*: the reason names
+    them and `gap_penalty` is 0. Raising it makes them deduct, capped at
+    `gap_max` - P1 holds unless you opt out of it.
+    """
+    block = profile["skills"]
+    terms = block.get("gaps") or []
+    if not terms or not (body or "").strip():
+        return 0, [], None
+    gaps = []
+    for region in _must_have_regions(body, profile):
+        for term in all_matches(region, terms):
+            if term not in gaps:
+                gaps.append(term)
+    if not gaps:
+        return 0, [], None
+    named = ", ".join(gaps[:3])
+    penalty = min(block.get("gap_max", 0), block.get("gap_penalty", 0) * len(gaps))
+    if not penalty:
+        return 0, gaps, "also asks for %s (learnable, not scored)" % named
+    return penalty, gaps, "asks for %s - not in your profile" % named
+
+
+# --------------------------------------------------------------------------
+# Posting language
+#
+# A posting written in German assumes you read and work in German, whether or
+# not it states a level - and the candidate cannot. Measured on the stored
+# postings the ratio below is sharply bimodal (under 0.1 or over 0.9), so the
+# thresholds are not delicate; between them sits the bilingual posting.
+
+_DE_WORDS = frozenset(
+    "der die das und ist nicht mit für auf ein eine einer einen den dem des sie "
+    "wir ihr ihre ihren bei zu von im auch als oder sowie werden wird unsere "
+    "unser unseren du deine dich dir uns sind über zur zum diese dieser kannst "
+    "bist hast".split())
+_EN_WORDS = frozenset(
+    "the and to of for with you we our is are on as be will your this that or "
+    "from at have can who what us an by".split())
+# A title alone is enough when it is a German job title: no English posting
+# calls the role "Entwickler" or "Mitarbeiter".
+_DE_TITLE = re.compile(
+    r"entwickler|ingenieur|mitarbeiter|sachbearbeiter|informatiker|"
+    r"praktikant|werkstudent|fachkraft|spezialist|referent|wissenschaftliche|"
+    r"leiter(?:in)?\b|berater|softwareentwicklung|:in\b|\*in\b", re.I)
+GERMAN_SHARE = 0.6
+MIXED_SHARE = 0.3
+MIN_LANGUAGE_WORDS = 12
+
+
+def posting_language(title, body):
+    """("de" | "mixed" | "en" | None, reason). None when there is too little text."""
+    words = re.findall(r"[a-zäöüß]+", (body or "").lower())
+    de = sum(1 for w in words if w in _DE_WORDS)
+    en = sum(1 for w in words if w in _EN_WORDS)
+    if de + en >= MIN_LANGUAGE_WORDS:
+        share = de / float(de + en)
+        if share >= GERMAN_SHARE:
+            return "de", "posting is written in German"
+        if share >= MIXED_SHARE:
+            return "mixed", "posting is partly written in German"
+        return "en", None
+    match = _DE_TITLE.search(title or "")
+    if match:
+        return "de", 'German job title ("%s")' % match.group(0)
+    return None, None
 
 
 # --------------------------------------------------------------------------
@@ -453,7 +534,9 @@ def company_affinity(name, profile, affinity, tiers, maximum):
         return int(round(maximum * value / 5.0)), "tier %s company (unrated)" % tier
 
     default = affinity.get("default", 2)
-    return int(round(maximum * default / 5.0)), "company not rated yet"
+    # Unrated is the neutral default and says nothing about this posting, so it
+    # gives no reason - it would only push a real one out of the four shown.
+    return int(round(maximum * default / 5.0)), None
 
 
 # --------------------------------------------------------------------------
@@ -508,6 +591,9 @@ def score(title, company, location, body, ctx, german_hard=False):
     comp_pts, comp_reason = company_affinity(
         company, profile, ctx.affinity, ctx.tiers, maxima["company"])
     loc_pts, bucket, loc_reason = location_score(location, profile)
+    gap_pts, gaps, gap_reason = must_have_gaps(body, profile)
+    language, language_reason = posting_language(title, body)
+    german, german_quote = collectors.german_hit(body) if body.strip() else (None, "")
 
     role_pts = min(role_pts, maxima["role"])
     sen_pts = min(sen_pts, maxima["seniority"])
@@ -515,20 +601,33 @@ def score(title, company, location, body, ctx, german_hard=False):
 
     parts = {"role": role_pts, "seniority": sen_pts, "skills": skill_pts,
              "company": comp_pts, "location": loc_pts}
-    raw = sum(parts.values())
+    if gap_pts:
+        parts["gaps"] = -gap_pts
+    raw = max(0, sum(parts.values()))
 
     band = "high" if raw >= bands["high"] else "medium" if raw >= bands["medium"] else "low"
-    reasons = [role_reason, sen_reason, comp_reason, loc_reason]
-    if body.strip():
-        reasons.insert(2, skill_reason)
+    reasons = [role_reason, sen_reason,
+               skill_reason if body.strip() else None, gap_reason,
+               comp_reason, loc_reason]
+    if german == "soft" and language == "en":
+        reasons.insert(0, "German mentioned as a plus")
+    reasons = [r for r in reasons if r]
 
     # Gates. Each can only lower the band, the number is always preserved, and
     # the reason goes to the front - a band never changes silently.
     gates = []
-    if german_hard:
+    if german_hard or german == "hard":
         gates.append(("low", "German stated as a job condition"))
+    elif language == "de":
+        gates.append(("low", language_reason))
+    if language == "mixed":
+        gates.append(("medium", language_reason))
     if role_pts == 0:
         gates.append(("low", "not an engineering or AI role"))
+    # Experience is the other hard line besides language: a bar you cannot
+    # clear is not a stretch application. Which levels count is the profile's.
+    if level in (profile["seniority"].get("gate_levels") or ()):
+        gates.append(("low", "%s - beyond your experience" % sen_reason))
     blocked = excluded_stack(title, body, profile)
     if blocked:
         gates.append(("low", 'built on "%s", which you have excluded' % blocked))
@@ -551,6 +650,7 @@ def score(title, company, location, body, ctx, german_hard=False):
         "fit_version": FIT_VERSION,
         "fit_family": family,
         "fit_seniority": level,
+        "fit_language": language,
     }
 
 

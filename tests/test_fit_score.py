@@ -613,5 +613,103 @@ class EntryIntegrationTest(unittest.TestCase):
         self.assertEqual(fields["fit_evidence"], "title-only")
 
 
+class LanguageAndGapsTest(unittest.TestCase):
+    """A German posting is a German job; a curated gap lowers a row, never buries it."""
+
+    EN = ("Requirements: Python, PyTorch, FastAPI and LLM systems. You will own the "
+          "retrieval pipeline and its evaluation harness end to end. We offer a learning "
+          "budget and you will work with our team on the product that we build for you.")
+    DE = ("Deine Aufgaben: Du entwickelst mit uns Python, PyTorch und LLM Systeme für "
+          "unsere Kunden. Du bist Teil eines Teams, das die Zukunft der KI gestaltet. Wir "
+          "bieten dir eine moderne Umgebung, in der du mit der neuesten Technologie arbeitest "
+          "und dich bei uns weiterentwickeln kannst. Das ist dein Profil: Erfahrung mit RAG.")
+
+    def setUp(self):
+        self.ctx = context(prof=geo_profile())
+
+    def _score(self, title, body):
+        return fit_score.score(title, "Unrated", "Zurich", body, self.ctx)
+
+    def test_a_posting_written_in_german_is_low_even_without_a_stated_level(self):
+        english = self._score("AI Engineer", self.EN)
+        german = self._score("AI Engineer", self.DE)
+        self.assertEqual(english["fit_language"], "en")
+        self.assertEqual(german["fit_language"], "de")
+        self.assertEqual(german["fit"], "low")
+        self.assertEqual(german["fit_reasons"][0], "posting is written in German")
+
+    def test_a_bilingual_posting_is_capped_at_medium(self):
+        result = self._score("AI Engineer", " ".join([self.EN, self.EN, self.DE]))
+        self.assertEqual(result["fit_language"], "mixed")
+        self.assertNotEqual(result["fit"], "high")
+
+    def test_a_german_job_title_marks_a_title_only_row(self):
+        self.assertEqual(fit_score.posting_language("Softwareentwickler (m/w/d)", "")[0], "de")
+        self.assertEqual(fit_score.posting_language("Entwickler:in KI", "")[0], "de")
+        self.assertIsNone(fit_score.posting_language("AI Engineer (m/w/d)", "")[0])
+
+    def test_german_required_inside_an_english_posting_gates(self):
+        result = self._score("AI Engineer", self.EN + " Fluent German is required.")
+        self.assertEqual(result["fit"], "low")
+        self.assertIn("German", result["fit_reasons"][0])
+
+    def test_german_as_a_plus_is_named_but_does_not_gate(self):
+        result = self._score("AI Engineer", self.EN + " Good German is a plus.")
+        self.assertEqual(result["fit"], "high")
+        self.assertEqual(result["fit_reasons"][0], "German mentioned as a plus")
+
+    def _penalising(self, penalty=5, maximum=12):
+        prof = geo_profile()
+        prof["skills"].update(gap_penalty=penalty, gap_max=maximum)
+        return context(prof=prof)
+
+    def test_a_curated_gap_is_named_but_by_default_costs_nothing(self):
+        clean = self._score("AI Engineer", self.EN)
+        gapped = self._score("AI Engineer", self.EN.replace("FastAPI", "FastAPI, FPGA"))
+        self.assertEqual(clean["fit_score"], gapped["fit_score"])
+        self.assertEqual(gapped["fit"], "high")
+        self.assertNotIn("gaps", gapped["fit_parts"])
+        self.assertTrue(any("fpga" in r and "not scored" in r for r in gapped["fit_reasons"]))
+
+    def test_a_gap_penalty_when_opted_into_deducts_and_is_capped(self):
+        ctx = self._penalising()
+        one = fit_score.score("AI Engineer", "Unrated", "Zurich",
+                              self.EN.replace("FastAPI", "FastAPI, FPGA"), ctx)
+        self.assertEqual(one["fit_parts"]["gaps"], -5)
+        self.assertEqual(sum(one["fit_parts"].values()), one["fit_score"])
+        many = fit_score.score("AI Engineer", "Unrated", "Zurich", self.EN.replace(
+            "FastAPI", "FastAPI, FPGA, firmware, embedded, security clearance"), ctx)
+        self.assertEqual(many["fit_parts"]["gaps"], -12)
+
+    def test_a_gap_outside_the_requirements_is_ignored(self):
+        result = fit_score.score("AI Engineer", "Unrated", "Zurich",
+                                 "Our sister team builds FPGA boards. " + self.EN,
+                                 self._penalising())
+        self.assertNotIn("gaps", result["fit_parts"])
+
+    def _gated(self):
+        prof = geo_profile()
+        prof["seniority"]["gate_levels"] = ["three_plus", "senior", "lead"]
+        return context(prof=prof)
+
+    def test_three_years_or_a_senior_title_gates_when_configured(self):
+        ctx = self._gated()
+        three = fit_score.score("AI Engineer", "Unrated", "Zurich",
+                                self.EN + " You have 3+ years of experience.", ctx)
+        self.assertEqual(three["fit"], "low")
+        self.assertIn("beyond your experience", three["fit_reasons"][0])
+        senior = fit_score.score("Senior AI Engineer", "Unrated", "Zurich", self.EN, ctx)
+        self.assertEqual(senior["fit"], "low")
+
+    def test_one_to_two_years_stays_applyable_under_the_gate(self):
+        result = fit_score.score("AI Engineer", "Unrated", "Zurich",
+                                 self.EN + " You have 2+ years of experience.", self._gated())
+        self.assertNotEqual(result["fit"], "low")
+
+    def test_an_unrated_company_gives_no_reason(self):
+        result = self._score("AI Engineer", self.EN)
+        self.assertFalse(any("rated" in reason for reason in result["fit_reasons"]))
+
+
 if __name__ == "__main__":
     unittest.main()

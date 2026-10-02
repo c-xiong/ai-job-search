@@ -162,8 +162,19 @@
     "exclude": [".net", "dotnet", "asp.net", "c#", "php", "sap abap", "abap", "cobol",
                 "delphi", "vb.net", "visual basic", "sharepoint", "salesforce apex"],
     "must_have_markers": ["required", "requirements", "must have", "must-have", "essential",
+                          "ideal candidate", "you bring", "what you bring", "we are looking for",
+                          "who you are", "you should have", "your background",
                           "you have", "we expect", "vorausgesetzt", "erforderlich",
                           "zwingend", "your profile", "qualifications"],
+    "_gaps_comment": [
+      "Requirements you know you do not meet. Unlike exclude, a gap does not gate:",
+      "each one asked for inside a requirements block is named in the row's",
+      "reasons. gap_penalty 0 means it only informs - most of these are wishes",
+      "beside the core stack, and learnable. Raise it to make them deduct (max gap_max)."
+    ],
+    "gaps": ["embedded", "fpga", "firmware", "security clearance"],
+    "gap_penalty": 0,
+    "gap_max": 12,
     "exclude_counter_markers": ["migration", "migrating", "migrate", "legacy", "replace",
                                 "replacing", "modernis", "moderniz", "interoperab",
                                 "integration with", "phase out", "sunset", "away from"]
