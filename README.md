@@ -135,11 +135,19 @@ from Claude Code.
 Useful scripts (all stdlib Python):
 
 ```bash
-python3 tools/fetch_jobs.py --sources ats,linkedin,freehire --dry-run   # what the Fetch button runs
+python3 tools/fetch_jobs.py --sources ats,linkedin,freehire,arbeitnow --dry-run # same pipeline as Fetch
+python3 tools/linkedin_intake.py --email-dir job_scraper/linkedin_emails --dry-run
 python3 tools/fit_score.py --explain <url>                              # why a row got its fit band
 python3 tools/notion_sync.py check|pull|push                            # Notion sync outside the board
 python3 tools/profile_drift.py                                          # profile claims missing from your CV
 ```
+
+The board's LinkedIn inbox supports batch card capture, optional local job-alert
+email intake, and official saved-job synchronization. Configure these in the local
+`job_scraper/scrape_config.json`; authenticated intake stays disabled until setup.
+See [the board guide](BOARD.md#linkedin-inbox-and-optional-automatic-intake) for
+coverage limits and setup. The daily macOS scheduler template under `tools/launchd/`
+uses the same collector as the Fetch button.
 
 ## Privacy: what never leaves your machine
 

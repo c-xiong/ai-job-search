@@ -9,16 +9,19 @@ export const DETAIL_URL =
   "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting"
 
 export function writeError(error: string, code: string): void {
-  process.stderr.write(JSON.stringify({ error, code }) + "\n")
+  process.stderr.write(JSON.stringify({ error, code, request_meta: requestMeta }) + "\n")
 }
 
 const UA = "Mozilla/5.0 (compatible; linkedin-search-cli/1.0)"
+export const requestMeta = { http_attempts: 0, retries: 0 }
+export class RateLimited extends Error {}
 
-/** Fetch HTML with exponential backoff on 429/5xx. Returns "" on a 404. */
+/** Bounded 5xx retries; a 429 stops immediately. Returns "" on a 404. */
 export async function htmlFetch(url: string): Promise<string> {
-  const maxRetries = 6
+  const maxRetries = 2
   let delay = 500
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    requestMeta.http_attempts++
     const response = await fetch(url, {
       headers: {
         "User-Agent": UA,
@@ -29,11 +32,13 @@ export async function htmlFetch(url: string): Promise<string> {
       redirect: "follow",
       signal: AbortSignal.timeout(15000),
     })
-    if (response.status === 429 || response.status >= 500) {
+    if (response.status === 429) throw new RateLimited("HTTP 429: rate limited; no retry")
+    if (response.status >= 500) {
       if (attempt === maxRetries) {
         throw new Error(`Request failed: ${response.status} ${response.statusText}`)
       }
       const jitter = Math.floor(Math.random() * 500)
+      requestMeta.retries++
       await new Promise((r) => setTimeout(r, delay + jitter))
       delay = Math.min(delay * 2, 8000)
       continue
@@ -229,7 +234,7 @@ export function parseJobDetail(html: string, id: string): JobDetail {
   }
 
   const applyMatch = html.match(/class="topcard__link[^"]*"[^>]*href="([^"]+)"/i)
-  const applyUrl = applyMatch ? decodeHtmlEntities(applyMatch[1]).split("?")[0] : null
+  const applyUrl = applyMatch ? decodeHtmlEntities(applyMatch[1]) : null
 
   return {
     id,

@@ -12,6 +12,15 @@ function parsedStderr(stderr: string): { error?: string; code?: string } {
 }
 
 describe("LinkedIn CLI flag validation", () => {
+  test("unknown sort order is rejected before any request", async () => {
+    const result = await runCLI(["search", "-l", LOCATION, "--sort", "oldest"]);
+    expect(result.exitCode).toBe(1);
+    expect(parsedStderr(result.stderr).code).toBe("BAD_ARG");
+  });
+  test("date sort is accepted with offline transport", async () => {
+    const result = await runCLI(["search", "-l", LOCATION, "--sort", "date"]);
+    expect(result.exitCode).toBe(0);
+  });
   describe("--jobage NaN validation", () => {
     test("non-numeric string exits 1 with BAD_ARG", async () => {
       const result = await runCLI(["search", "-l", LOCATION, "--jobage", "foo"]);

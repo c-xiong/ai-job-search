@@ -206,3 +206,21 @@ a.open{color:var(--selbar);text-decoration:none;font-size:12px;white-space:nowra
 .owner-form>div{flex:1;min-width:0}.owner-form .modal-label{margin:12px 0 5px}.owner-form input,.owner-form textarea{display:block;width:100%;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);padding:8px 10px;font:inherit;font-size:13px;outline:none}.owner-form textarea{resize:vertical;min-height:64px}.owner-form input:focus,.owner-form textarea:focus{border-color:var(--selbar);box-shadow:0 0 0 3px color-mix(in srgb,var(--selbar) 18%,transparent)}
 #toastmsg.toastlink{cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .add-modal input[type=url],.add-modal input[type=text]{display:block;width:100%;border:1px solid var(--line,#d8d8d8);border-radius:8px;background:var(--bg,#f8f8f8);color:var(--text,#222);font:14px/1.4 ui-sans-serif,-apple-system,"SF Pro Text",Inter,system-ui,sans-serif;padding:9px 12px;margin-bottom:12px;outline:none}.add-modal input:focus{border-color:var(--selbar,#3b6fd4);box-shadow:0 0 0 3px color-mix(in srgb,var(--selbar,#3b6fd4) 18%,transparent)}.add-modal #add-apply-url{margin-bottom:0}.add-modal .modal-label .dim{font-weight:400;color:var(--dim,#666)}.add-modal textarea{min-height:120px}.add-details{margin-top:6px}.add-details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--dim,#666);padding:4px 0}.add-details-body{padding-top:8px}.add-status{min-height:18px;margin-top:10px;font-size:12px;color:var(--dim,#666)}.add-status.warn{color:var(--warn)}.add-modal.busy #add-submit{opacity:.6;pointer-events:none}.add-bookmarklet{margin-top:14px;padding-top:12px;border-top:1px solid var(--line,#d8d8d8);font-size:11px;color:var(--dim,#666)}.add-bookmarklet a{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:1px 8px;background:var(--chip);color:var(--text);text-decoration:none;cursor:grab;font-weight:600}
+/* Source capture and the durable LinkedIn intake queue. */
+.company-capture,.inbox-capture{margin:0 0 14px;font-size:13px}
+.company-capture{padding:0 24px}
+.inbox-main{max-width:1200px}
+.inbox-main>p,.inbox-main>.inbox-controls{margin-left:24px;margin-right:24px}
+.inbox-controls{display:flex;align-items:end;gap:14px;margin-top:18px}
+.inbox-controls label{display:flex;align-items:center;gap:8px}
+.inbox-controls input{width:65px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;outline:none}
+.inbox-controls input:focus{border-color:var(--selbar);box-shadow:0 0 0 3px color-mix(in srgb,var(--selbar) 18%,transparent)}
+.inbox-main a{color:var(--selbar);text-underline-offset:3px}
+.inbox-main a:hover{color:var(--text)}
+.inbox-capture a,.company-capture a{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:var(--chip);color:var(--text);text-decoration:none;cursor:grab;font-weight:600}
+.inbox-counts{font-size:13px;line-height:1.6}
+.inbox-table{width:100%;border-collapse:collapse;font-size:13px}
+.inbox-table th,.inbox-table td{padding:12px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+.inbox-table td:first-child{width:30%}.inbox-table td:nth-child(3){width:25%}
+.inbox-table .dim{font-size:12px;max-width:300px;white-space:normal}
+.inbox-table .linkish{display:block;margin-top:8px}

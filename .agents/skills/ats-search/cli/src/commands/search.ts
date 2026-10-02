@@ -288,7 +288,7 @@ export async function runSearch(opts: SearchOpts, get: Transport = transport()):
     // The countries travel to the adapter so a vendor that can filter
     // server-side (Workday's country facet) fetches pages, not the whole world.
     const board = hit ? hit.board : await adapter.fetchBoard(company.token!, get, { countries: cfg.allowed_countries })
-    if (!hit && SUCCESS.has(board.status)) putCache(company, board)
+    if (!opts.noWrite && !hit && SUCCESS.has(board.status)) putCache(company, board)
     requests += hit ? 0 : board.requests
 
     const outcome = applyFilters(board.postings, cfg, { jobageDays: opts.jobage, today })

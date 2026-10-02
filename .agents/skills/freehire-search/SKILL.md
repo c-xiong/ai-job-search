@@ -190,7 +190,7 @@ dictionaries never guess). So:
 - `date` is the posting date (`posted_at`); it may be `null` for undated postings.
 - Facet values are controlled vocabularies. Use `/api/v1/jobs/facets` to see the
   live values (with counts) for a query before filtering.
-- The API retries 429/5xx with exponential backoff; an unreachable API exits
+- The API stops immediately on 429 and retries 5xx at most twice; an unreachable API exits
   non-zero with a clear message (best-effort service, see the dependency note above).
 - `search` calls `/api/v1/agent/jobs/search` (public, like the rest). A self-hosted
   instance older than that endpoint answers 404, and the CLI reports it as an error

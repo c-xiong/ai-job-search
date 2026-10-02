@@ -110,6 +110,17 @@ job_scraper/fit_calibration.json
 # Transient state for the board's Fetch button: a pid lock and a status file
 # whose log names the companies being fetched.
 job_scraper/fetch_status.json
+# Query outcomes and personalized recommendation intake (local only).
+job_scraper/collection_state.json
+job_scraper/collection_state.json.*.tmp
+job_scraper/linkedin_inbox.json
+job_scraper/linkedin_inbox.json.*.tmp
+job_scraper/linkedin_intake_state.json
+job_scraper/linkedin_intake_state.json.tmp
+job_scraper/linkedin_emails/
+job_scraper/.linkedin-inbox.lock
+job_scraper/.linkedin-process.lock
+job_scraper/.linkedin-intake.lock
 # The board's structured activity log: every command run, with the companies
 # fetched and the files written. Same privacy class as scrape.log above.
 job_scraper/activity.jsonl

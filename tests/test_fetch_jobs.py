@@ -622,7 +622,8 @@ class LostUpdateTest(unittest.TestCase):
             fetch_jobs.fetch(["ats"])  # a second run must not be refused
         finally:
             fetch_jobs.ats_fetch.collect = real_collect
-        self.assertFalse(fetch_jobs.LOCK.exists())
+        with fetch_jobs.RunLock():
+            pass  # flock is released; its informational file may remain.
 
 
 class DetectionStepTest(unittest.TestCase):

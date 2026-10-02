@@ -3,7 +3,7 @@
 // promise that `-q` costs nothing.
 
 import { describe, expect, test } from "bun:test"
-import { writeFileSync, readFileSync } from "fs"
+import { writeFileSync, readFileSync, existsSync } from "fs"
 import { join } from "path"
 import { newSession, parseJSON, runCLI } from "./helpers.ts"
 import type { SearchPayload } from "../src/types.ts"
@@ -200,13 +200,26 @@ describe("the per-company cooldown", () => {
     registry.defaults.min_interval_minutes = 60
     writeFileSync(session.registryPath, JSON.stringify(registry), "utf-8")
 
-    const first = await runCLI(["search", "-c", "Parloa", "--no-write"], {}, session)
+    const first = await runCLI(["search", "-c", "Parloa"], {}, session)
     expect(first.requests.length).toBe(1)
     const second = await runCLI(["search", "-c", "Parloa", "--no-write"], {}, session)
     expect(second.requests.length).toBe(0)
     const payload = parseJSON<SearchPayload>(second)
     expect(payload.meta.companies[0].cached).toBe(true)
     expect(payload.results.length).toBe(parseJSON<SearchPayload>(first).results.length)
+  })
+  test("no-write does not create a board payload cache or advance registry bookkeeping", async () => {
+    const session = newSession()
+    const registry = JSON.parse(readFileSync(session.registryPath, "utf-8"))
+    registry.companies = [registry.companies.find((c: { name: string }) => c.name === "Parloa")]
+    registry.companies[0].name = "Example Employer"
+    writeFileSync(session.registryPath, JSON.stringify(registry), "utf-8")
+    const before = readFileSync(session.registryPath, "utf-8")
+    const result = await runCLI(["search", "-c", "Example Employer", "--no-write"], {}, session)
+    expect(result.exitCode).toBe(0)
+    expect(result.requests.length).toBe(1)
+    expect(existsSync(join(session.dir, "cache", "greenhouse-parloa.json"))).toBe(false)
+    expect(readFileSync(session.registryPath, "utf-8")).toBe(before)
   })
 })
 

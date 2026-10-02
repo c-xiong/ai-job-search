@@ -5,6 +5,21 @@ description: Import personalized LinkedIn job recommendations from the user's si
 
 # LinkedIn Browser Import
 
+## Preferred low-cost path
+
+When the local board is available, use its LinkedIn Inbox and **Capture LinkedIn
+list** bookmarklet first (see `BOARD.md`, "LinkedIn inbox and optional automatic
+intake"). Capture only currently rendered cards, confirm the local preview, then
+process the inbox. This uses deterministic extraction and guest details rather than
+LLM page reading. Repeated captures deduplicate by job ID; incomplete/failed details
+remain pending or retryable. Same company/title is a possible duplicate, not proof.
+Optional `.eml` intake and official `SAVED_JOBS` API sync can populate the same inbox
+after the user configures them. They do not mirror the personalized recommendations.
+
+LinkedIn prohibits scripts that copy its service; a manual click is not permission.
+Do not export session data or automate signed-in navigation. The workflow below is
+the existing interactive fallback when the capture path is unavailable or broken.
+
 Use the browser's existing LinkedIn session to collect jobs the user asks to
 import. This skill reads job pages and updates the local board; it does not
 apply, message people, follow companies, save jobs on LinkedIn, or change account

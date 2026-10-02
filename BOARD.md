@@ -15,7 +15,7 @@ The board uses only the Python standard library and has no build step. It binds 
 page open in your browser cannot drive it. The token lives in `job_scraper/.board-token`
 (mode 0600, gitignored) and survives restarts, so a bookmarked URL keeps working.
 
-It has three views: **Board**, **Companies** and **Applications**.
+It has four views: **Board**, **LinkedIn Inbox**, **Companies** and **Applications**.
 
 ## Board: collect and triage
 
@@ -27,6 +27,14 @@ Under the hood this is `tools/fetch_jobs.py`, which you can also run from a term
 | `ats` | Your companies' own boards (Greenhouse, Ashby, Lever, Personio, Workday; SmartRecruiters opt-in) | Only the companies in `job_scraper/companies.json`. Registry and vendor details: [`ats-search/SKILL.md`](.agents/skills/ats-search/SKILL.md) |
 | `linkedin` | LinkedIn's public guest job search | Personal use only. Keep volume low; `detail` fetches are capped per run |
 | `freehire` | freehire.me public API | Structured facets, e.g. `--country DE,CH,AT` |
+| `arbeitnow` | Published Arbeitnow job-board API | Bounded pages, local geography/title filters and full descriptions |
+
+LinkedIn searches use date order and retain a seven-day lookback. Queries and their
+optional pages rotate within a shared 12-call keyword-search budget. Jobs already on
+the board with missing LinkedIn descriptions remain eligible for bounded backfill.
+Source failures and deferred work appear in the fetch summary; a failed query does
+not count as a successful empty search. Configuration is local in
+`job_scraper/scrape_config.json` (copy its `.example.json` twin for a new checkout).
 
 Every new row passes through the same merge. That step:
 
@@ -68,11 +76,66 @@ the same job. **Use original link** restores the automatically selected source l
   page, ATS links through `ats-search detail`, anything else through a plain fetch.
 - **Bookmarklet:** drag **`+ JobFlow`** from the Add job dialog to your bookmarks bar.
   Clicking it on any job page opens the dialog already filled in.
-- **LinkedIn "recommended for you"** is only visible when you are signed in. Ask Claude
-  Code to run the `linkedin-browser-import` skill with Claude in Chrome. It reads the list
-  as text, opens only jobs the board does not already have (25 detail pages at most by
-  default), and imports them through `tools/import_linkedin_browser.py`. It never handles
-  your LinkedIn credentials, and never applies, messages or saves anything on LinkedIn.
+- **LinkedIn "recommended for you"** is only visible when you are signed in. Use the
+  LinkedIn inbox's capture flow below to import rendered cards in a batch. The
+  `linkedin-browser-import` skill remains an interactive fallback when capture fails.
+
+### LinkedIn inbox and optional automatic intake
+
+The LinkedIn inbox stores captured cards separately from the board. Capture adds no
+job application or account action. Processing reads guest posting details, records
+external apply URLs when available, screens requirements, and imports through the
+existing merge. Failed details remain retryable; jobs with incomplete evidence are
+not presented as screened survivors. Import and deterministic fit scoring use no LLM.
+
+Use **Capture LinkedIn list** on a signed-in LinkedIn Jobs page. It captures currently
+rendered cards, then opens a local preview. Confirm the preview to add cards. Scroll
+and repeat to capture more; repeated IDs are deduplicated. Paste captured card JSON
+into the same preview if a bookmarklet is blocked. Click **Process inbox** to import
+a bounded batch. Same company/title is a possible duplicate, not an exact-ID match.
+
+LinkedIn prohibits scripts that copy or automate its service. Manual triggering and
+small budgets do not create permission. The board never reads cookies, exports your
+session, or automates signed-in navigation. [LinkedIn policy](https://www.linkedin.com/help/linkedin/answer/a1341387/).
+
+For automatic intake, configure either or both options in the local scrape config:
+
+- `linkedin_intake.email`: set `enabled: true`, choose `directory` (default
+  `job_scraper/linkedin_emails`) and `max_messages`. Have your mail client export or
+  deliver job-alert/recommendation messages there as `.eml` files. The collector reads
+  that directory only, ignores attachments and symlinks, and deduplicates message
+  content and job IDs. This does not connect to a mailbox. It covers emailed jobs,
+  which may differ from the recommendations on the website.
+- `linkedin_intake.saved_jobs`: eligible Switzerland/EEA members can provision the
+  official Member Portability API and authorize their own token. Set `enabled: true`
+  and supply the token through the environment variable named by `token_env`
+  (default `LINKEDIN_PORTABILITY_TOKEN`). Never put the token in scrape config. This
+  fetches `SAVED_JOBS` only, in bounded resumable pages; it does not expose the
+  recommendation list. Account access, response fields and snapshot freshness need
+  verification after setup. [Official setup](https://learn.microsoft.com/en-us/linkedin/dma/member-data-portability/member-data-portability-member/).
+
+Set `linkedin_inbox.auto_process: true` and `process_limit: 5` to process a small
+inbox batch during Fetch or scheduled collection. Inbox details share the existing
+LinkedIn detail budget. Both intake options are disabled in the public example until
+configured. Inbox, message files, checkpoints and credentials stay local.
+
+Preview optional intake from the terminal:
+
+```bash
+python3 tools/linkedin_intake.py --email-dir job_scraper/linkedin_emails --dry-run
+python3 tools/linkedin_intake.py --saved-jobs --dry-run
+```
+
+Check for an existing job-collection LaunchAgent before installing another schedule;
+keep one scheduled trigger for this pipeline to avoid duplicate fetches. Source and
+budget changes apply the next time the existing schedule invokes the collector.
+
+To enable daily macOS collection when no collector schedule is installed, customize and install
+`tools/launchd/com.aijobsearch.scrape.plist` using the commands in that file. It runs
+`tools/fetch_jobs.py`, with the same sources, budgets and locks as the board. If using
+the saved-job API, ensure the token is available to the scheduled process through
+your own secure environment setup; launchd does not inherit an interactive shell's
+exported variables. The build does not install a scheduler or provision OAuth access.
 
 ## Companies: watch your target list
 
@@ -81,6 +144,13 @@ board on every fetch. Detection that fails is retried on later fetches (backoff 
 days), and then the company moves to **Needs you** so you can supply the board URL yourself.
 Companies are grouped into **Needs you**, **Finding** and **Watching**, with *Can't watch
 yet*, *Not watched* and *Paused* folded away.
+
+Use **Follow company** on a job to reuse an existing registry entry or add its employer.
+Supply a careers page if the posting has no recognized ATS or employer careers link.
+Aggregator posting URLs are not used as employer domains. Automatically extracted ATS
+links are candidates until identity is verified; they are never labeled human-confirmed.
+The Add company bookmarklet opens a local preview for explicit confirmation before
+adding a careers page and resolving its board.
 
 Pages that are not on a supported ATS are not watched. That is a deliberate scope limit,
 not a missing feature.

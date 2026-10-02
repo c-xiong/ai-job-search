@@ -190,6 +190,16 @@ class LinkedInBrowserImportTest(unittest.TestCase):
                          ["https://www.linkedin.com/jobs/view/5000000002"])
         self.assertFalse(jobs_md.SEEN.exists())
 
+    def test_check_keeps_capture_location_posted_and_badges(self):
+        result = linkedin_import.check_cards({}, [{
+            "linkedin_url": "https://www.linkedin.com/jobs/view/4000000001",
+            "title": "Software Engineer", "company": "Invented Example Works",
+            "location": "Berlin, Germany", "posted": "2026-01-01",
+            "badges": ["Easy Apply"]}], aliases={})
+        card = result["new"][0]
+        self.assertEqual((card["location"], card["posted"], card["badges"]),
+                         ("Berlin, Germany", "2026-01-01", ["Easy Apply"]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,6 +47,10 @@ describe("decodeHtmlEntities (via parseJobCards)", () => {
 });
 
 describe("decodeHtmlEntities (via parseJobDetail)", () => {
+  test("external application query parameters are preserved", () => {
+    const job = parseJobDetail('<a class="topcard__link" href="https://careers.example.test/apply?jobId=123&amp;lang=en">Apply</a>', "123456");
+    expect(job.applyUrl).toBe("https://careers.example.test/apply?jobId=123&lang=en");
+  });
   test("decodes hex entities inside the job title", () => {
     const html = `<h1 class="topcard__title">Se&#xF1;or Engineer</h1>`;
     const job = parseJobDetail(html, "999");
