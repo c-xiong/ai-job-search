@@ -107,6 +107,16 @@ class MinimalFlowTest(SupervisorCase):
 class ScopeTest(SupervisorCase):
     """FLOW-2: a scope is enforced by the supervisor and the allowlist."""
 
+    def test_employer_research_receives_posting_location_not_cv_country(self):
+        record = {"role": "Engineer", "company": "Acme", "job_url": "https://example.test/job",
+                  "job_location": "Munich, Germany", "cv_country": "CH"}
+        prompt = self.supervisor._header(record, "DRAFT", ["Shared rules"])
+        self.assertIn("Posting location (board metadata): Munich, Germany", prompt)
+        self.assertNotIn("CH", prompt)
+        record.pop("job_location")
+        self.assertIn("Posting location (board metadata): unknown",
+                      self.supervisor._header(record, "DRAFT", ["Shared rules"]))
+
     def test_a_cover_only_run_never_drafts_builds_or_publishes_a_cv(self):
         run_id, phase = self.run_to_end(scope="cover")
         self.assertEqual(phase, "done", run_registry.get(run_id).get("error"))
@@ -142,6 +152,9 @@ class ScopeTest(SupervisorCase):
         self.assertIn("developing NLP pipelines and machine learning models in Python", prompt)
         self.assertIn("canonical preamble unchanged", prompt)
         self.assertIn("Obey every COVER_EXCLUSIVE group", prompt)
+        self.assertIn("Use live web search and open official", prompt)
+        self.assertIn("% CONTACT_RESEARCH", prompt)
+        self.assertIn("absence from the posting is not a failed search", prompt)
         self.assertNotIn("280 body words", prompt)
         self.assertNotIn("about 47 words", prompt)
 

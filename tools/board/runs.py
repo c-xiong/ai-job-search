@@ -68,7 +68,7 @@ import jobs_md  # noqa: E402
 import posting_text  # noqa: E402
 import postings  # noqa: E402
 
-from . import (activity, checkpoint, docs, notion, run_guard, run_proc,  # noqa: E402
+from . import (activity, checkpoint, docs, notion, providers, run_guard, run_proc,  # noqa: E402
                run_registry, templates)
 from . import review as review_marks  # noqa: E402
 from .run_guard import PreflightError, preflight  # noqa: F401,E402
@@ -82,6 +82,10 @@ from .run_registry import (  # noqa: F401,E402
     reserved, run_dir, runs_lock, session_spent, slugify, spent_today, state_dir,
     transition, update,
 )
+
+def _activity_source(run_id):
+    return (get(run_id) or {}).get("provider", "claude")
+
 
 HERE = Path(__file__).resolve().parent
 WRAPPER = HERE / "run_wrapper.py"
@@ -300,6 +304,10 @@ class Supervisor:
                     "cv" in docs.doc_kinds({"scope": scope})
                     and _resolve_base_cv(base_cv) != parent_base):
                 return 400, {"error": "say what should change"}
+        try:
+            provider, execution = providers.selection(payload, settings, parent)
+        except (ValueError, TypeError, KeyError) as exc:
+            return 400, {"error": str(exc)}
         # Which document a revision edits; the others are carried over as they
         # are, so the revised version still holds the complete document set.
         edit = payload.get("edit")
@@ -327,12 +335,15 @@ class Supervisor:
             else:
                 budget = run_registry.stage_budget(settings, kind)
         worst_case = round(sum(budget.values()), 4)
-        needs_model = worst_case > 0
+        needs_model = bool(budget)
         if needs_model:
             try:
-                preflight()
+                if provider == "codex":
+                    execution.update(providers.preflight(execution))
+                else:
+                    preflight()
             except PreflightError as exc:
-                activity.emit("claude", "preflight refused a run: %s" % exc, level="error")
+                activity.emit(provider, "preflight refused a run: %s" % exc, level="error")
                 return 503, {"error": "preflight failed: %s" % exc}
         slug = slugify(company, role)
 
@@ -355,7 +366,7 @@ class Supervisor:
                 application_id = (lineage.get("application_id")
                                   or (parent.get("application_id") or parent["id"]
                                       if parent else None))
-                if needs_model:
+                if needs_model and provider == "claude":
                     spent = (run_registry.application_spent(application_id, data)
                              if application_id else 0.0)
                     if spent + worst_case > settings["session_budget_usd"]:
@@ -368,7 +379,7 @@ class Supervisor:
                                                  settings["session_budget_usd"])}
                 committed = run_registry.reserved(data)
                 remaining = settings["daily_budget_usd"] - spent_today(data) - committed
-                if needs_model and remaining < worst_case:
+                if needs_model and provider == "claude" and remaining < worst_case:
                     return 429, {"error": "today's budget has $%.2f left once the %d run(s) "
                                           "already in flight are counted, and this run could "
                                           "cost about $%.2f. Raise daily_budget_usd in "
@@ -382,6 +393,7 @@ class Supervisor:
                 record = {
                     "id": run_id,
                     "pipeline": 2,
+                    "provider": provider, "execution": execution,
                     "application_id": application_id or run_id,
                     "attempt": int(lineage.get("attempt") or 1),
                     "retry_of": lineage.get("retry_of"),
@@ -390,6 +402,7 @@ class Supervisor:
                     "job_url": job_url,
                     "company": company,
                     "role": role,
+                    "job_location": entry.get("location") or (parent or {}).get("job_location"),
                     "slug": slug,
                     "kind": kind,
                     "parent": parent.get("id") if parent else None,
@@ -415,8 +428,8 @@ class Supervisor:
                                 {"cv": "cv/main_%s%s" % (slug, cv_ext),
                                  "cover": "cover_letters/cover_%s%s" % (slug, cover_ext)}),
                     "artefacts": {},
-                    "budget_usd": budget,
-                    "cost": {"total_usd": 0.0},
+                    "budget_usd": budget if provider == "claude" else {},
+                    "cost": {"total_usd": 0.0 if provider == "claude" else None},
                     "usage": [],
                 }
                 data["runs"].append(record)
@@ -440,7 +453,7 @@ class Supervisor:
             self._cv.notify_all()
 
         self.ensure_worker()
-        activity.emit("claude", "queued %s - %s at %s (position %d)"
+        activity.emit(provider, "queued %s - %s at %s (position %d)"
                       % (run_id, role, company, position), run_id=run_id)
         return 202, {"run_id": run_id, "position": position, "phase": "queued",
                      "targets": record["targets"]}
@@ -500,6 +513,8 @@ class Supervisor:
                 pass
         body = {"job_url": source["job_url"], "company": source["company"],
                 "role": source["role"], "kind": kind, "parent": source.get("parent"),
+                "provider": payload.get("provider") if payload.get("provider") is not None
+                else source.get("provider", "claude"),
                 "note": source.get("note") or "",
                 "scope": payload.get("scope") if payload.get("scope") in
                 docs.doc_kinds(source) else (source.get("scope") or "both"),
@@ -515,7 +530,7 @@ class Supervisor:
                              "attempt": other.get("attempt", 2), "existing": True}
         return code, answer
 
-    def retry(self, run_id):
+    def retry(self, run_id, options=None):
         """`Regenerate`: a fresh, linked attempt. Keeps only the saved posting.
 
         A finished run can be regenerated too: the new attempt re-reads the
@@ -524,6 +539,7 @@ class Supervisor:
         failure evidence remain an honest record. Nothing already published is
         touched until the new attempt publishes its own checked version.
         """
+        options = options or {}
         failed = get(run_id)
         if failed is None:
             return 404, {"error": "unknown run"}
@@ -544,6 +560,8 @@ class Supervisor:
         payload = {
             "job_url": failed["job_url"], "company": failed["company"],
             "role": failed["role"], "kind": "apply",
+            "provider": options.get("provider") if options.get("provider") is not None
+            else failed.get("provider", "claude"),
             "note": failed.get("note") or "", "scope": failed.get("scope") or "both",
             "remember": failed.get("remember") or "",
             "base_cv": failed.get("base_cv") or "auto",
@@ -599,7 +617,7 @@ class Supervisor:
             active.cancel()
         if not moved:
             return 409, {"error": "run is already %s" % (get(run_id) or {}).get("phase")}
-        activity.emit("claude", "cancel requested for %s" % run_id, level="warn", run_id=run_id)
+        activity.emit(_activity_source(run_id), "cancel requested for %s" % run_id, level="warn", run_id=run_id)
         return 200, {"ok": True}
 
     def kill(self, run_id):
@@ -613,12 +631,12 @@ class Supervisor:
         owner = run_registry.board_alive(record)
         if owner is True:
             update(run_id, phase="drafting", error=None)
-            activity.emit("claude", "%s belongs to a board that is still running; not "
+            activity.emit(_activity_source(run_id), "%s belongs to a board that is still running; not "
                                     "killing it" % run_id, level="warn", run_id=run_id)
             return 409, {"error": "this run belongs to another board that is still "
                                   "running; stop that board instead"}
         if owner is None:
-            activity.emit("claude", "%s: cannot establish which board owns this run; "
+            activity.emit(_activity_source(run_id), "%s: cannot establish which board owns this run; "
                                     "nothing signalled" % run_id, level="warn", run_id=run_id)
             return 409, {"error": "cannot establish which board owns this run, so nothing "
                                   "was signalled. If no other board is running, try again "
@@ -628,17 +646,17 @@ class Supervisor:
                 self._settle(run_id, "failed",
                              "the orphaned process is gone (or is no longer identifiable "
                              "as this run); nothing was signalled")
-                activity.emit("claude", "%s: orphan already gone, nothing signalled" % run_id,
+                activity.emit(_activity_source(run_id), "%s: orphan already gone, nothing signalled" % run_id,
                               level="warn", run_id=run_id)
                 return 200, {"ok": True, "signals": []}
-            activity.emit("claude", "%s: could not confirm the orphan's identity just now; "
+            activity.emit(_activity_source(run_id), "%s: could not confirm the orphan's identity just now; "
                                     "nothing signalled" % run_id, level="warn", run_id=run_id)
             return 409, {"error": "could not confirm that process is still this run - "
                                   "nothing was signalled. Try again in a moment."}
         did = run_proc.terminate(record.get("pgid"), record.get("pid"))
         self._settle(run_id, "failed", "killed as an orphan (%s)"
                      % (", ".join(did) or "already gone"))
-        activity.emit("claude", "killed orphan %s (%s)"
+        activity.emit(_activity_source(run_id), "killed orphan %s (%s)"
                       % (run_id, ", ".join(did) or "already gone"), level="warn", run_id=run_id)
         return 200, {"ok": True, "signals": did}
 
@@ -693,18 +711,18 @@ class Supervisor:
             if changed:
                 _store(data)
         if adopted:
-            activity.emit("claude", "startup: %d run(s) still have a live model process - "
+            activity.emit("board", "startup: %d run(s) still have a live model process - "
                                     "kill them from the run panel before starting another"
                           % len(adopted), level="warn", detail=adopted)
         if restored:
-            activity.emit("claude", "startup: %d approved run(s) were re-opened for "
+            activity.emit("board", "startup: %d approved run(s) were re-opened for "
                                     "Continue" % len(restored), level="warn", detail=restored)
         if interrupted:
-            activity.emit("claude", "startup: %d interrupted run(s) can be continued from "
+            activity.emit("board", "startup: %d interrupted run(s) can be continued from "
                                     "their checkpoints; nothing was restarted automatically"
                           % len(interrupted), level="warn", detail=interrupted)
         if skipped:
-            activity.emit("claude", "startup: %d run(s) belong to another board that is "
+            activity.emit("board", "startup: %d run(s) belong to another board that is "
                                     "still running; left alone" % skipped)
         return adopted
 
@@ -740,8 +758,11 @@ class Supervisor:
             "runs": runs,
             "queue": queued,
             "queue_depth": settings["queue_depth"],
+            "default_provider": settings.get("provider", "claude"),
             "ledger": {"spent_today_usd": spent_today(data),
                        "reserved_usd": run_registry.reserved(data),
+                       "unknown_cost_runs": sum(1 for r in data["runs"]
+                                                if r.get("usage") and (r.get("cost") or {}).get("total_usd") is None),
                        "daily_budget_usd": settings["daily_budget_usd"]},
             "budget_usd": settings["budget_usd"],
         }
@@ -790,7 +811,7 @@ class Supervisor:
                 self._pipeline(run_id)
             except Exception as exc:  # a crashed pipeline must not stop the queue
                 self._settle(run_id, "failed", "%s: %s" % (type(exc).__name__, exc))
-                activity.emit("claude", "run %s failed: %s: %s"
+                activity.emit(_activity_source(run_id), "run %s failed: %s: %s"
                               % (run_id, type(exc).__name__, exc), level="error", run_id=run_id)
             finally:
                 self._current = None
@@ -808,7 +829,7 @@ class Supervisor:
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
-                activity.emit("claude", "waiting for the pipeline lock - another run owns it",
+                activity.emit(_activity_source(run_id), "waiting for the pipeline lock - another run owns it",
                               level="warn")
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             yield
@@ -838,7 +859,8 @@ class Supervisor:
 
     def _attempt(self, record):
         run_id = record["id"]
-        settings = config()
+        settings = dict(config(), **{k: v for k, v in record.get("execution", {}).items()
+                                     if k in ("automated_review", "inspection_enabled", "timeout_s")})
         kinds = docs.doc_kinds(record)
         review, inspection = _check_modes(settings)
         manifest = None
@@ -933,7 +955,7 @@ class Supervisor:
     def _ensure_reservation(self, record, settings):
         """A Continue admitted as mechanical-only must re-admit before a model pass."""
         current = get(record["id"]) or record
-        if current.get("budget_usd"):
+        if current.get("provider") == "codex" or current.get("budget_usd"):
             return
         budget = run_registry.stage_budget(settings, current.get("kind") or "apply")
         with runs_lock():
@@ -993,7 +1015,7 @@ class Supervisor:
                                                 ext["cv"])
             else:
                 items = [("source", "the run it continues no longer exists")]
-            activity.emit("claude", "%s adopted from %s: %s"
+            activity.emit(_activity_source(run_id), "%s adopted from %s: %s"
                           % (run_id, source_id,
                              "; ".join("%s %s" % item for item in items) or "nothing"),
                           run_id=run_id)
@@ -1005,7 +1027,7 @@ class Supervisor:
         the supervisor checkpointed it. Adopt only with this attempt's evidence:
         the source's guard log shows the write and the bytes differ from its seed.
         """
-        approved = checkpoint.hook_approved_writes(source_id)
+        approved = checkpoint.approved_writes(source_id)
         for kind in kinds:
             if kind in manifest["docs"]:
                 continue
@@ -1182,7 +1204,7 @@ class Supervisor:
                                          "sha256": checkpoint.sha256(target),
                                          "origin": origin, "at": checkpoint.now()}
         checkpoint.save(run_id, manifest)
-        activity.emit("claude", "%s posting saved from %s" % (run_id, origin), run_id=run_id)
+        activity.emit(_activity_source(run_id), "%s posting saved from %s" % (run_id, origin), run_id=run_id)
 
     # -- stage: draft --------------------------------------------------------
 
@@ -1272,7 +1294,7 @@ class Supervisor:
             manifest["issues"].append("draft not adopted - " + item)
         checkpoint.save(run_id, manifest)
         if adopted:
-            activity.emit("claude", "%s saved draft: %s" % (run_id, docs.doc_phrase(adopted)),
+            activity.emit(_activity_source(run_id), "%s saved draft: %s" % (run_id, docs.doc_phrase(adopted)),
                           run_id=run_id)
         if brief and brief.get("hard_conflicts") and not record.get("proceed_on_conflict") \
                 and not adopted:
@@ -1484,7 +1506,7 @@ class Supervisor:
                               budget, timeout, targets=targets)
         except RunFailure as exc:
             failure = exc
-        approved = job.allowed_writes() if job else checkpoint.hook_approved_writes(run_id)
+        approved = job.allowed_writes() if job else checkpoint.approved_writes(run_id)
         changed = []
         for kind, path in paths.items():
             if checkpoint.sha256(path) == checkpoint.sha256(history[kind]):
@@ -1632,9 +1654,9 @@ class Supervisor:
         pdfs = {k: checkpoint.absolute(manifest["docs"][k]["pdf"]["path"]) for k in kinds}
         stream_path = run_dir(run_id) / "stream.jsonl"
         offset = stream_path.stat().st_size if stream_path.exists() else 0
-        failure = None
+        failure, inspection_job = None, None
         try:
-            self._spawn(record, "pass_c", "inspect PDFs",
+            inspection_job = self._spawn(record, "pass_c", "inspect PDFs",
                         lambda nonce: self._prompt_c(record, pdfs, nonce),
                         settings["budget_usd"]["pass_c"], settings["timeout_s"]["pass_c"],
                         targets=[inspect_path])
@@ -1642,7 +1664,10 @@ class Supervisor:
             failure = exc
         payload, problem = self._read_json(run_id, "inspect.json")
         proven, verdicts, evidence = docs.judge_inspection(
-            pdfs, None if problem else payload, failure is None, stream_path, offset)
+            pdfs, None if problem else payload, failure is None, stream_path, offset,
+            attached_pdf_hashes=(inspection_job.request.pdf_hashes if inspection_job and
+                                 record.get("provider") == "codex" else
+                                 {} if record.get("provider") == "codex" else None))
         issues = []
         for kind, (state, detail, mine) in verdicts.items():
             checkpoint.record_check(manifest, "visual_" + kind, state,
@@ -1744,7 +1769,7 @@ class Supervisor:
                           manifest.get("brief"))
         update(run_id, artefacts=artefacts,
                tailoring_notes=(manifest.get("tailoring_notes") or [])[:8])
-        activity.emit("claude", "%s published %s (tracker %s)"
+        activity.emit(_activity_source(run_id), "%s published %s (tracker %s)"
                       % (run_id, docs.doc_phrase(kinds), action), run_id=run_id)
 
     def _write_verify(self, record, manifest, kinds, toolchains, inspection, review=True):
@@ -1799,6 +1824,61 @@ class Supervisor:
 
     # -- spawning ------------------------------------------------------------
 
+    def _spawn_codex(self, record, stage, label, prompt_builder, timeout, targets):
+        run_id = record["id"]
+        execution = record["execution"]
+        current = get(run_id) or record
+        if len(current.get("usage", [])) >= execution["max_passes"]:
+            raise RunFailure("Codex attempt reached its model-pass limit", code="budget_cap",
+                             model_started=False)
+        providers.preflight(execution)
+        nonce = run_guard.new_nonce()
+        # Reuse target/master/symlink validation, never Claude's hook evidence.
+        run_guard.write_allowlist(run_id, targets=targets, nonce=nonce, whole_run_dir=False)
+        request = providers.CodexRequest(record, stage, prompt_builder(nonce), targets, nonce)
+        job = None
+        try:
+            argv = providers.command(execution, request.workspace, request.schema_path,
+                                     request.images)
+            env = dict(os.environ)
+            env.update({"JOBFLOW_RUN": "1", "JOBFLOW_RUN_ID": run_id,
+                        "JOBFLOW_RUN_DIR": str(run_dir(run_id)), "JOBFLOW_STAGE": stage})
+            spec_path = state_dir(run_id) / ("spec-%s.json" % nonce)
+            jobs_md.write_json_atomic(spec_path, {
+                "run_id": run_id, "argv": argv, "cwd": str(request.workspace),
+                "stdin_path": str(request.prompt_path),
+                "registry": str(run_registry.REGISTRY), "runs_lock": str(run_registry.RUNS_LOCK),
+                "model_lock": str(run_registry.MODEL_LOCK),
+                "unset_env": ["OPENAI_API_KEY", "CODEX_API_KEY"],
+                "env": {k: v for k, v in env.items() if k.startswith("JOBFLOW_")},
+            })
+            job = providers.CodexPass(
+                run_id, "%s (%s)" % (stage, label),
+                [sys.executable, str(WRAPPER), "--spec", str(spec_path)], env, None,
+                execution["timeout_s"].get(stage, timeout), nonce,
+                state_dir(run_id) / ("unused-%s" % nonce), model_argv=argv,
+                cancelled=lambda: run_id in self._cancelled or self._stopping.is_set(),
+                admission=self._admission, request=request)
+            self._active = job
+            job.run(expected_writes=[checkpoint.rel(t) for t in targets])
+            update(run_id, session_id=job.session_id)
+            return job
+        except RunFailure as exc:
+            exc.pass_job = job
+            raise
+        finally:
+            self._active = None
+            if job is not None:
+                usage = dict(job.usage(), stage=stage)
+                with runs_lock():
+                    data = load()
+                    for run in data["runs"]:
+                        if run["id"] == run_id:
+                            run.update(pid=None, pgid=None, exit_code=job.exit_code)
+                            run.setdefault("usage", []).append(usage)
+                    _store(data)
+            request.close()
+
     def _spawn(self, record, stage, label, prompt_builder, budget, timeout, targets=()):
         """Preflight, allowlist, spawn one fresh session, stream. Returns the `Pass`.
 
@@ -1807,6 +1887,8 @@ class Supervisor:
         hands it. The allowlist names the exact files the pass may write.
         """
         run_id = record["id"]
+        if record.get("provider") == "codex":
+            return self._spawn_codex(record, stage, label, prompt_builder, timeout, targets)
         current = get(run_id) or record
         cap_total = sum((Decimal(str(v or 0)) for v in
                          (current.get("budget_usd") or {}).values()), Decimal(0))
@@ -1823,7 +1905,7 @@ class Supervisor:
                              % (spent, cap_total, stage),
                              code="budget_cap", model_started=False)
         budget = float(pass_budget)
-        preflight()
+        preflight(record.get("execution", {}).get("binary"))
 
         nonce = run_guard.new_nonce()
         allowlist = run_guard.write_allowlist(run_id, targets=targets, nonce=nonce,
@@ -1836,13 +1918,15 @@ class Supervisor:
         # The session uuid goes first (it is also this pass's process identity,
         # and `ps` truncates long command lines); the prompt goes last, after the
         # variadic `--allowedTools`.
-        argv = [settings["claude_bin"], "--session-id", session,
+        argv = [record.get("execution", {}).get("binary", settings["claude_bin"]), "--session-id", session,
                 "--output-format", "stream-json", "--verbose",
                 "--permission-mode", "acceptEdits",
                 "--settings", str(run_guard.SETTINGS),
                 "--max-budget-usd", "%.2f" % float(budget),
                 "--allowedTools", ",".join(ALLOWED_TOOLS),
                 "-p", prompt_builder(nonce)]
+        if record.get("execution", {}).get("model"):
+            argv[1:1] = ["--model", record["execution"]["model"]]
         update(run_id, session_id=session)
 
         env = dict(os.environ)
@@ -1941,12 +2025,12 @@ class Supervisor:
         if not transition(run_id, "done", ACTIVE_PHASES,
                           ended_at=datetime.now().isoformat(timespec="seconds"),
                           artefacts=produced, error=None):
-            activity.emit("claude", "%s finished but is %s; leaving it there"
+            activity.emit(_activity_source(run_id), "%s finished but is %s; leaving it there"
                           % (run_id, (get(run_id) or {}).get("phase")),
                           level="warn", run_id=run_id)
             return
         self._cancelled.discard(run_id)
-        activity.emit("claude", "%s done - %s" % (run_id, ", ".join(sorted(
+        activity.emit(_activity_source(run_id), "%s done - %s" % (run_id, ", ".join(sorted(
             str(v) for v in produced.values()))), run_id=run_id)
 
     def _fail(self, run_id, failure):
@@ -1968,7 +2052,7 @@ class Supervisor:
             self._cancelled.discard(run_id)
             return
         self._cancelled.discard(run_id)
-        activity.emit("claude", "%s %s: %s" % (run_id, phase, message),
+        activity.emit(_activity_source(run_id), "%s %s: %s" % (run_id, phase, message),
                       level="error" if phase == "failed" else "warn", run_id=run_id)
 
     def _read_json(self, run_id, name):
@@ -2010,6 +2094,12 @@ class Supervisor:
     # project paragraphs. The base holds the fixed prose and evidence limits;
     # only role motivation, the closing and formal details are customised.
     COVER_RULES = (
+        "Mandatory employer contact research: follow Shared rules in `.claude/commands/apply.md`. "
+        "Use live web search and open official local office/contact/Impressum pages before "
+        "drafting a cover letter; absence from the posting is not a failed search. "
+        "Include verified recipient details and record queries, opened URLs and omissions "
+        "in `%% CONTACT_RESEARCH` source comments. Review/fix may reuse a supported record; "
+        "otherwise research first. Never infer employer location from the CV country.\n"
         "Letter rules: assemble the fixed COVER_LIBRARY_V1 in the canonical cover base. "
         "Its TAILORING RULES, evidence boundaries and DO NOT CLAIM list bind every pass.\n"
         "- The letter must not read as a CV recap. The owner has already chosen the level "
@@ -2102,6 +2192,8 @@ class Supervisor:
         "functions. Resolve all placeholders.\n" % docs.COVER_MAX_WORDS)
 
     def _canary(self, record, nonce):
+        if record.get("provider") == "codex":
+            return ""
         return self.CANARY.format(
             probe=run_dir(record["id"]) / run_guard.probe_name(nonce))
 
@@ -2110,9 +2202,10 @@ class Supervisor:
                 "Rules: read only these sections of `.claude/commands/apply.md`: %s. "
                 "Skip every other section and every other command or skill file unless "
                 "named below.\n"
-                "Application: %s at %s. Posting URL (reference only): %s\n\n"
+                "Application: %s at %s. Posting URL (reference only): %s\n"
+                "Posting location (board metadata): %s\n\n"
                 % (stage, ", ".join("\"%s\"" % s for s in sections), record["role"],
-                   record["company"], record["job_url"]))
+                   record["company"], record["job_url"], record.get("job_location") or "unknown"))
 
     def _inputs(self, record, manifest, cover=False, brief=True):
         root = run_registry.ROOT

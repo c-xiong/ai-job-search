@@ -6,6 +6,7 @@ This module never invokes a shell.
 """
 
 import csv
+import hashlib
 import json
 import os
 import re
@@ -602,7 +603,8 @@ def read_evidence(stream_path, pdfs, offset=0):
     return successful
 
 
-def judge_inspection(pdfs, payload, normal_success, stream_path, stream_offset=0):
+def judge_inspection(pdfs, payload, normal_success, stream_path, stream_offset=0,
+                     attached_pdf_hashes=None):
     """Per-document visual verdicts, and whether the inspection is proven.
 
     Proven means: the inspection file is valid, the pass ended normally, and
@@ -612,7 +614,14 @@ def judge_inspection(pdfs, payload, normal_success, stream_path, stream_offset=0
     nothing and every document stays `unverified`.
     """
     problems = validate_inspect(payload)
-    evidence = read_evidence(stream_path, pdfs, stream_offset)
+    if attached_pdf_hashes is None:
+        evidence = read_evidence(stream_path, pdfs, stream_offset)
+    else:
+        # Supplied by the supervisor's successful Codex invocation, never by
+        # inspect.json. Every page was attached and its source hash rechecked.
+        evidence = {str(Path(path).resolve()) for path in pdfs.values()
+                    if Path(path).is_file() and attached_pdf_hashes.get(str(Path(path).resolve()))
+                    == hashlib.sha256(Path(path).read_bytes()).hexdigest()}
     wanted = {str(Path(path).resolve()) for path in pdfs.values()}
     proven = not problems and normal_success and evidence == wanted
     verdicts = {}

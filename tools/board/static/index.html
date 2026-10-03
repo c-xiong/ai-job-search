@@ -27,10 +27,6 @@
   <main class="workspace" id="workspace">
     <div class="centre" id="centre">
       <section class="panel board-panel" id="board-panel">
-        <div class="panelhead">
-          <span class="label">Board</span><span class="count" id="count"></span><span class="spacer"></span>
-          <label class="search"><span>⌕</span><input type="search" id="q" placeholder="search role, company…"></label>
-        </div>
         <div class="fetch-toolbar">
           <div class="fetch-group">
             <button class="primary" id="fetch">Fetch new jobs</button>
@@ -57,6 +53,7 @@
           <button class="secondary" id="add-job" title="Add a job you found yourself">Add job</button>
           <div class="fetch-feedback" role="status" aria-live="polite"><span id="collectlog">Ready to fetch</span><span id="collectlast" class="dim"></span></div>
           <button class="linkish" id="show-new" hidden>Show them</button>
+          <label class="search board-search"><span aria-hidden="true">⌕</span><input type="search" id="q" aria-label="Search role or company" placeholder="search role, company…"></label>
         </div>
         <div class="chips" id="chips"></div>
         <div class="filterbar" id="filterbar">

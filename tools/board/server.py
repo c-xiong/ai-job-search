@@ -687,13 +687,14 @@ class Handler(BaseHTTPRequestHandler):
                 code, body = supervisor.restore(run_id)
             elif action == "retry":
                 # "Regenerate": a fresh attempt that keeps only the saved posting.
-                code, body = supervisor.retry(run_id)
+                code, body = supervisor.retry(run_id, {"provider": payload.get("provider")})
             elif action == "continue":
                 # Resume from the saved checkpoint; `proceed` is the owner's
                 # explicit override of a surfaced hard conflict.
                 code, body = supervisor.continue_run(run_id, {
                     "proceed": payload.get("proceed") is True,
-                    "scope": payload.get("scope"), "base_cv": payload.get("base_cv")})
+                    "scope": payload.get("scope"), "base_cv": payload.get("base_cv"),
+                    "provider": payload.get("provider")})
             else:
                 code, body = supervisor.kill(run_id)
             return self._send(code, json.dumps(body, ensure_ascii=False))

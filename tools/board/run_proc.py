@@ -113,6 +113,9 @@ class RunFailure(Exception):
 class Pass:
     """One `claude -p` process: spawn it, read its stream, account for it."""
 
+    provider = "claude"
+    requires_canary = True
+
     def __init__(self, run_id, label, argv, env, budget, timeout, nonce,
                  hook_log, model_argv=None, cancelled=None, admission=None):
         self.run_id = run_id
@@ -190,7 +193,7 @@ class Pass:
         directory.mkdir(parents=True, exist_ok=True)
         stream_path = directory / "stream.jsonl"
 
-        activity.emit("claude", "%s starting - %ds wall clock" %
+        activity.emit(self.provider, "%s starting - %ds wall clock" %
                       (self.label, self.timeout),
                       cmd=" ".join(self._reportable_argv()), run_id=self.run_id)
 
@@ -241,17 +244,18 @@ class Pass:
 
         self.exit_code = proc.returncode
         self.elapsed_ms = timer.ms
-        self._refresh_canary()
+        if self.requires_canary:
+            self._refresh_canary()
         tail = [line for line in stderr_tail if line.strip()]
 
         # Before any verdict: the money is spent either way, and a ledger that
         # only counts successes admits the next run against money already gone.
-        if self.result is not None:
+        if self.result is not None and self.provider == "claude":
             self.cost = float(self.result.get("total_cost_usd") or 0.0)
             run_registry.debit(self.cost, self.run_id)
 
         self._report_drift(before, expected_writes)
-        activity.emit("claude", "%s ended - %s" %
+        activity.emit(self.provider, "%s ended - %s" %
                       (self.label, (self.result or {}).get("subtype", "no result event")),
                       level="info" if self.exit_code == 0 else "error",
                       cmd=" ".join(self._reportable_argv()),
@@ -278,13 +282,19 @@ class Pass:
         quota = any(token in provider_lower for token in
                     ("out_of_credits", "session limit", "usage limit", "credit balance",
                      "weekly limit", "quota"))
-        if quota or provider_status == 429 or any(token in provider_lower for token in
-                                                  ("rate limit", "rate_limit", "overloaded")):
+        rejected = bool((self.result or {}).get("is_error") or self.exit_code != 0
+                        or self.rate_limit_type or provider_status)
+        if rejected and (quota or provider_status == 429 or any(token in provider_lower for token in
+                                                  ("rate limit", "rate_limit", "overloaded"))):
             message = provider_text.strip() or "The model provider rejected this run (HTTP 429)."
             raise RunFailure(message[:500],
                              code="quota_exhausted" if quota else "rate_limited",
                              retryable=True, model_started=False)
-        if self.canary_failed or not self.canary_seen:
+        if rejected and self.provider == "codex" and any(
+                token in provider_lower for token in ("authentication", "unauthorized", "login", "401")):
+            raise RunFailure(provider_text[:500] or "Codex authentication failed", code="authentication",
+                             model_started=False)
+        if self.requires_canary and (self.canary_failed or not self.canary_seen):
             raise RunFailure(
                 "this pass's canary write was never refused, so the PreToolUse hook cannot "
                 "be shown to have been enforcing during it. The run was killed rather than "
@@ -403,7 +413,7 @@ class Pass:
                 continue
             new.append(path)
         if new:
-            activity.emit("claude", "%s changed %d path(s) it was not allowed to write - "
+            activity.emit(self.provider, "%s changed %d path(s) it was not allowed to write - "
                                     "the write guard may have regressed"
                                     % (self.label, len(new)),
                           level="warn", run_id=self.run_id, detail=new[:20])
@@ -415,9 +425,9 @@ class Pass:
         started = time.monotonic()
         while not self._done.wait(0.5):
             elapsed = time.monotonic() - started
-            if not self.canary_seen:
+            if self.requires_canary and not self.canary_seen:
                 self._refresh_canary()
-            if not self.canary_seen and elapsed > canary_timeout:
+            if self.requires_canary and not self.canary_seen and elapsed > canary_timeout:
                 self.canary_failed = True
                 self.cancel()
                 return
@@ -470,7 +480,7 @@ class Pass:
         target = (payload.get("file_path") or payload.get("notebook_path")
                   or payload.get("command") or payload.get("description")
                   or payload.get("query") or payload.get("url") or "")
-        activity.emit("claude", ("%s %s" % (name, str(target)[:160])).strip(),
+        activity.emit(self.provider, ("%s %s" % (name, str(target)[:160])).strip(),
                       run_id=self.run_id)
         if name == "Task" and self._on_task:
             self._on_task()

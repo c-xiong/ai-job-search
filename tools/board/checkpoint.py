@@ -541,6 +541,27 @@ def hook_approved_writes(run_id):
     return approved
 
 
+def approved_writes(run_id):
+    """Provider-specific provenance, retaining the legacy Claude hook contract."""
+    record = run_registry.get(run_id) or {}
+    if record.get("provider") != "codex":
+        return hook_approved_writes(run_id)
+    approved = set()
+    for path in run_registry.state_dir(run_id).glob("codex-*.json"):
+        try:
+            evidence = json.loads(path.read_text(encoding="utf-8"))
+            if (evidence.get("provider") != "codex"
+                    or evidence.get("policy") != "codex-structured-readonly-v1"
+                    or path.stem != "codex-" + evidence.get("response_id", "")):
+                continue
+            for target, digest in evidence.get("outputs", {}).items():
+                if Path(target).is_file() and sha256(target) == digest:
+                    approved.add(os.path.realpath(target))
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return approved
+
+
 def _copy_into(source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_name(target.name + ".adopt-%d" % os.getpid())
@@ -635,7 +656,7 @@ def adopt_legacy(new_manifest, new_id, record, kinds, ext):
     except (OSError, ValueError, AttributeError):
         pass
 
-    approved = hook_approved_writes(run_id)
+    approved = approved_writes(run_id)
     started = _epoch(record.get("started_at"))
     ended = _epoch(record.get("ended_at"))
     # Attempts that continue this very run are not "later writers": they are

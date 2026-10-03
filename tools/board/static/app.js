@@ -236,7 +236,12 @@ const COUNTRIES=[["ch","Country: CH"],["de","Country: DE"]];
 const AI_TITLE=/\b(machine learning|ml engineer|ml scientist|data scientist|ai|artificial intelligence|llm|nlp|generative ai)\b/i;
 const variantOptions=url=>{const title=(JOBS.find(j=>j.url===url)||{}).title||"",pick=AI_TITLE.test(title)?"ai":"sde";
   return [["sde","CV: SDE"],["ai","CV: AI"]].map(([value,label])=>`<option value="${value}" ${pick===value?"selected":""}>${label}</option>`).join("")};
-const generatePicker=url=>`<div class="generate-picker"><select data-gen-scope aria-label="Documents">${scopeOptions("both")}</select><select data-gen-base aria-label="CV variant">${variantOptions(url)}</select><select data-gen-country aria-label="Work-authorisation line">${COUNTRIES.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div><button class="primary tailor" data-tailor="${esc(url)}">Generate</button>`;
+let DEFAULT_PROVIDER="claude";
+const ENGINE_NAMES={claude:"Claude Code",codex:"Codex"};
+const ENGINE_CHOICES=new Map();
+const enginePicker=(key,selected=DEFAULT_PROVIDER)=>`<label class="engine-picker">Engine <select data-engine="${esc(key)}" aria-label="Engine">${Object.entries(ENGINE_NAMES).map(([value,label])=>`<option value="${value}" ${value===(ENGINE_CHOICES.get(key)||selected)?"selected":""}>${label}</option>`).join("")}</select></label>`;
+const chosenEngine=(key,run)=>ENGINE_CHOICES.get(key)||(run?(run.provider||"claude"):DEFAULT_PROVIDER);
+const generatePicker=url=>`<div class="generate-picker">${enginePicker("generate")}<select data-gen-scope aria-label="Documents">${scopeOptions("both")}</select><select data-gen-base aria-label="CV variant">${variantOptions(url)}</select><select data-gen-country aria-label="Work-authorisation line">${COUNTRIES.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div><button class="primary tailor" data-tailor="${esc(url)}">Generate</button>`;
 const DRAFT_LABEL={both:"Draft CV + cover letter",cv:"Draft CV",cover:"Draft cover letter"};
 const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and audits every factual claim."],
   cv:["Draft CV","Tailors the CV and audits every factual claim."],
@@ -292,11 +297,9 @@ function render(){
     <td class="co">${esc(j.location)}</td><td class="co" title="${esc(j.posted)}">${esc(postedLabel(j))}</td>
     <td class="co foundcell" title="${esc(foundTitle(j))}">${isNewArrival(j)?'<span class="newdot" aria-label="new in the latest fetch"></span>':""}${esc(foundAt(j).slice(5,10))}</td>
     <td><select data-url="${esc(j.url)}">${statusChoices(j).map(s=>`<option value="${esc(s)}" ${s===j.status?"selected":""}>${esc(s)}</option>`).join("")}</select></td></tr>`).join("");
-  const fresh=JOBS.filter(isNewArrival).length;
   el("empty").hidden=rows.length>0;
   el("empty").textContent=rows.length||facetsAreDefault()?"Nothing here."
     :"No job matches these filters. Reset them to see the rest of the board.";
-  el("count").textContent=`${rows.length} shown · ${JOBS.length} total${fresh?` · ${fresh} new`:""}`;
   renderJob();document.querySelector("tr.sel")?.scrollIntoView({block:"nearest"});
 }
 // "Found" is when the row reached the board, which is not when it was posted:
@@ -559,7 +562,7 @@ function renderRuns(){
 }
 async function pollRuns(){
   let data;try{const response=await fetch("/api/runs?t="+T);if(!checkAuth(response)||!response.ok)return;data=await response.json()}catch(_){return}
-  const before=JSON.stringify(RUNS.map(r=>[r.id,r.phase]));RUNS=data.runs||[];QUEUE=data.queue||[];LEDGER=data.ledger;BUDGET=data.budget_usd;renderRuns();
+  const before=JSON.stringify(RUNS.map(r=>[r.id,r.phase]));RUNS=data.runs||[];QUEUE=data.queue||[];LEDGER=data.ledger;BUDGET=data.budget_usd;DEFAULT_PROVIDER=data.default_provider||"claude";const engine=document.querySelector('[data-engine="generate"]');if(engine&&!ENGINE_CHOICES.has("generate"))engine.value=DEFAULT_PROVIDER;renderRuns();
   if(JSON.stringify(RUNS.map(r=>[r.id,r.phase]))!==before)render();
   const busy=activeRuns().length>0;if(busy&&!RUNPOLL)RUNPOLL=setInterval(pollRuns,2000);if(!busy&&RUNPOLL){clearInterval(RUNPOLL);RUNPOLL=null}
 }
@@ -590,7 +593,7 @@ async function startTailor(url){
   const scope=pick("scope")||"both",base_cv=pick("base")||"auto",cv_country=pick("country")||"ch";
   const note=await openTextModal({eyebrow:"Generate "+(DRAFT_LABEL[scope]||"").replace(/^Draft /,""),title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Generate"});
   if(note===null)return;
-  const started=await postRun("/api/runs",{job_url:url,kind:"apply",note,scope,base_cv,cv_country});
+  const started=await postRun("/api/runs",{job_url:url,kind:"apply",note,scope,base_cv,cv_country,provider:chosenEngine("generate")});
   // `run_id` on a refusal means this posting already has a run: `postRun` has
   // said so, and the honest next move is to show it rather than leave you to
   // find it in the rail.
@@ -603,11 +606,11 @@ async function startTailor(url){
 }
 
 const DOC_STATE_MARK={"verified":"✓","PDF built":"◐","content checked":"◐","draft saved":"○","missing":"—"};
-const FAILURE_TITLE={quota_exhausted:"Claude usage limit reached",rate_limited:"Claude is rate limiting",budget_cap:"Local run budget reached",
+const FAILURE_TITLE={quota_exhausted:"Model usage limit reached",rate_limited:"Model is rate limiting",budget_cap:"Local run budget reached",
   timeout:"A step ran out of time",hard_conflict:"The posting conflicts with your deal-breakers",missing_input:"An input is missing",
   compile_error:"LaTeX did not compile",verification_failed:"A check did not pass",content_unresolved:"Review findings are unresolved",
-  interrupted:"Interrupted",guard_unverified:"Write guard not proven",provider_rate_limit:"Claude session limit reached"};
-const FAILURE_NEXT={quota_exhausted:"A new session does not reset the allowance. Continue when your usage resets - the saved work is kept.",
+  interrupted:"Interrupted",guard_unverified:"Write guard not proven",provider_rate_limit:"Model session limit reached",invalid_output:"Model output could not be accepted",capability_unavailable:"Required capability unavailable",authentication:"Codex sign-in required"};
+const FAILURE_NEXT={quota_exhausted:"A new session does not reset the allowance. Choose another engine or Continue when your usage resets — the saved work is kept.",
   rate_limited:"Wait a moment, then Continue. Nothing is retried automatically.",
   budget_cap:"Check the run and daily caps in job_scraper/board_config.json, adjust them if needed, then Continue.",
   hard_conflict:"Continue anyway only if you still want these documents.",
@@ -680,11 +683,11 @@ function toggleAppsList(){
   shell.classList.toggle("list-collapsed",appsListCollapsed(VIEW==="preview"?"review":VIEW));
 }
 function attemptTabs(run){
-  const lineage=lineageOf(run);if(lineage.length<2)return "";
+  const lineage=lineageOf(run);
   const numberOf=id=>{const i=lineage.findIndex(r=>r.id===id);return i<0?"?":i+1};
   const attemptMark=r=>r.phase==="done"?"✓":["failed","cancelled"].includes(r.phase)?"✕":RUNNING.includes(r.phase)?"●":"·";
-  const attemptTitle=(r,i)=>`Run ${i+1} of ${lineage.length}${i===lineage.length-1?" · Latest":""} · ${(r.phase||"queued").replaceAll("_"," ")}${r.started_at?" · "+r.started_at.replace("T"," "):""} · ${r.continue_of?"continued from Run "+numberOf(r.continue_of):r.retry_of?"regenerated from scratch after Run "+numberOf(r.retry_of):r.parent?"revised from Run "+numberOf(r.parent):i===0?"first run":"new run"}`;
-  return `<div class="attempts" role="tablist" aria-label="Runs, oldest to newest">${lineage.map((r,i)=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r,i))}"><span class="attempt-mark" aria-hidden="true">${attemptMark(r)}</span>Run ${i+1}${i===lineage.length-1?'<span class="attempt-latest">Latest</span>':""}</button>`).join("")}</div>`;
+  const attemptTitle=(r,i)=>`Run ${i+1} of ${lineage.length}${i===lineage.length-1?" · Latest":""} · ${ENGINE_NAMES[r.provider||"claude"]||"Unknown engine"} · ${(r.phase||"queued").replaceAll("_"," ")}${r.started_at?" · "+r.started_at.replace("T"," "):""} · ${r.continue_of?"continued from Run "+numberOf(r.continue_of):r.retry_of?"regenerated from scratch after Run "+numberOf(r.retry_of):r.parent?"revised from Run "+numberOf(r.parent):i===0?"first run":"new run"}`;
+  return `<div class="attempts" role="tablist" aria-label="Runs, oldest to newest">${lineage.map((r,i)=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r,i))}"><span class="attempt-mark" aria-hidden="true">${attemptMark(r)}</span>Run ${i+1}<span class="attempt-engine">${esc(ENGINE_NAMES[r.provider||"claude"]||"Unknown engine")}</span>${i===lineage.length-1?'<span class="attempt-latest">Latest</span>':""}</button>`).join("")}</div>`;
 }
 // The board row an application was generated from: its own URL, or the
 // first-party posting the row links to.
@@ -745,7 +748,7 @@ function renderTailor(run){
   const previousLog=el("runlog");if(previousLog&&ACTIVE_RUN)RUN_LOG_SCROLL.set(ACTIVE_RUN,previousLog.scrollTop);
   ACTIVE_RUN=run.id;PREV_LOG_PHASE=run.phase;const fit=run.fit||{};
   const kinds=docKinds(run.scope),legacyGate=run.phase==="awaiting_approval";
-  const logs=EV.filter(e=>e.run_id===run.id&&(e.source==="claude"||e.source==="latex"||e.source==="verify")).slice(-100).map(e=>`<div><span>${esc((e.ts||"").slice(11,19))}</span>&nbsp; ${esc(e.cmd?"$ "+e.cmd:e.msg)}</div>`).join("")||"<div>No run-specific activity recorded yet.</div>";
+  const logs=EV.filter(e=>e.run_id===run.id&&(e.source==="claude"||e.source==="codex"||e.source==="latex"||e.source==="verify")).slice(-100).map(e=>`<div><span>${esc((e.ts||"").slice(11,19))}</span>&nbsp; ${esc(e.cmd?"$ "+e.cmd:e.msg)}</div>`).join("")||"<div>No run-specific activity recorded yet.</div>";
   const code=run.failure_code||"";
   const stopped=run.phase==="failed"||run.phase==="cancelled";
   const continuedBy=RUNS.find(r=>r.continue_of===run.id||r.retry_of===run.id);
@@ -756,6 +759,7 @@ function renderTailor(run){
   const fitCard=run.fit?`<div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Earlier fit evaluation — ${esc(fit.verdict||"")}${fit.overall!=null?", "+esc(fit.overall):""}</strong></div></div>`:"";
   const notes=(run.tailoring_notes||[]).map(x=>`<div>${esc(x)}</div>`).join("");
   const actions=[];
+  if(!continuedBy&&(stopped||legacyGate||run.phase==="done"))actions.push(enginePicker(run.id,run.provider||"claude"));
   if(RUNNING.includes(run.phase))actions.push(`<button class="secondary cancelrun" data-run-id="${esc(run.id)}">Cancel run</button>`);
   if((stopped||legacyGate)&&!continuedBy){
     actions.push(`<button class="primary continuerun" data-run-id="${esc(run.id)}">Continue</button>`);
@@ -768,7 +772,7 @@ function renderTailor(run){
     actions.push(`<button class="primary" data-app-step="review">Review the PDFs</button>`);
     if(run.kind==="apply"&&!continuedBy)actions.push(`<button class="secondary retryrun" data-run-id="${esc(run.id)}" data-done="1" title="New attempt from the saved posting, using the current CV master and cover base">Regenerate</button>`);
   }
-  mountApp(run,"log",`<section class="runoutput"><div class="panelhead"><span class="label">Run output</span><span class="dim">stage ${PHASE_STEP[run.phase]||1} of ${STAGE_COUNT}</span><span class="spacer"></span><label class="source"><input type="checkbox" data-run-follow ${RUN_FOLLOW?"checked":""}> follow</label><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
+  mountApp(run,"log",`<section class="runoutput"><div class="panelhead"><span class="label">Run output · ${esc(ENGINE_NAMES[run.provider||"claude"]||"Unknown engine")}</span><span class="dim">${run.provider==="codex"?"Account usage · dollar cost not reported":""}</span><span class="dim">stage ${PHASE_STEP[run.phase]||1} of ${STAGE_COUNT}</span><span class="spacer"></span><label class="source"><input type="checkbox" data-run-follow ${RUN_FOLLOW?"checked":""}> follow</label><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
       ${origin}${fitCard}${progressPanel(run)}${notes?`<div class="whybox"><span class="label">Tailoring choices</span>${notes}</div>`:""}
       ${failure}<div class="runlog" id="runlog">${logs}</div><div class="runfooter"><span class="dim writing-inline">Publishes to ${kinds.map(kind=>esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")).join(" · ")}</span><span class="spacer"></span>${actions.join("")}</div></section>`);
   const runlog=el("runlog");if(RUN_FOLLOW)runlog.scrollTop=runlog.scrollHeight;
@@ -883,7 +887,7 @@ function screeningPanel(v){
   const reqs=s.requirements||[],count=st=>reqs.filter(r=>r.status===st).length;
   const item=r=>`<div class="screen-item ${esc(r.status)}"><div class="screen-req"><span class="screen-tag">${esc(SCREEN_TAG[r.status]||r.status)}</span><strong>${esc(r.requirement)}</strong>${r.priority&&r.priority!=="required"?` <span class="dim">${esc(r.priority)}</span>`:""}</div>${r.evidence?`<div class="screen-evidence">${esc(r.evidence)}</div>`:""}</div>`;
   const open=reqs.filter(r=>r.status!=="documented"),met=reqs.filter(r=>r.status==="documented");
-  const facts=Object.values(s.facts||{}).map(esc).join(" · ");
+  const facts=Object.entries(s.facts||{}).filter(([key])=>key!=="language").map(([,value])=>esc(value)).join(" · ");
   const conflicts=(s.conflicts||[]).map(c=>`<div class="screen-conflict">${esc(c)}</div>`).join("");
   const kw=v.keywords||{},absent=kw.measured===false?null:(kw.absent||[]);
   const terms=absent===null?`<div class="dim">Measured after the CV is built.</div>`:absent.length?`<div class="term-list">${absent.map(t=>`<span class="term">${esc(t)}</span>`).join("")}</div>`:`<div class="dim">Every posting term is on your CV.</div>`;
@@ -909,7 +913,7 @@ function regeneratePanel(run,v){
   const kinds=docKinds(run.scope),hasCv=kinds.includes("cv");
   const variant=hasCv?`<div class="regen-row"><span class="label">CV variant</span><div class="seg">${[["sde","SDE"],["ai","AI"]].map(([value,label])=>`<button type="button" class="chip${v.variant===value?" on":""}" data-variant="${value}" ${v.variant===value?"disabled":""}>${label}</button>`).join("")}</div></div>`:"";
   const docs=kinds.map((kind,i)=>`<label><input type="radio" name="edit" value="${kind}" ${i===(kinds.length>1?1:0)?"checked":""}> ${kind==="cv"?"CV":"Cover letter"}</label>`).join("");
-  return `<form class="regen" id="regen-form">${variant}<div class="regen-row"><span class="label">Regenerate</span><div class="seg">${docs}</div></div><textarea id="regen-note" placeholder="${hasCv?"Optional, e.g. change the CV title to “AI Engineer | LLM Applications”. Leave empty to regenerate from scratch.":"Optional: what should change? Leave empty to regenerate from scratch."}"></textarea><button class="primary" type="submit">Regenerate with Claude</button></form>`;
+  return `<form class="regen" id="regen-form">${enginePicker(run.id,run.provider||"claude")}${variant}<div class="regen-row"><span class="label">Regenerate</span><div class="seg">${docs}</div></div><textarea id="regen-note" placeholder="${hasCv?"Optional, e.g. change the CV title to “AI Engineer | LLM Applications”. Leave empty to regenerate from scratch.":"Optional: what should change? Leave empty to regenerate from scratch."}"></textarea><button class="primary" type="submit">Regenerate</button></form>`;
 }
 
 async function renderRevise(run){
@@ -922,7 +926,7 @@ async function renderRevise(run){
   const versionRows=versions.map((v,i)=>`<div class="version-row ${v.id===run.id?"current":""}" data-version-preview="${esc(v.id)}"><span>v${versions.length-i}</span><strong>${esc((v.ended_at||v.started_at||"").slice(0,16).replace("T"," "))}</strong><span>${esc(v.kind||"apply")}</span>${v.id===run.id?"<em>current</em>":`<span class="spacer"></span><button class="linkish" data-restore-version="${esc(v.id)}">Restore</button>`}</div>`).join("");
   const prefRows=(prefs.preferences||[]).map(p=>`<li>${esc(p)}</li>`).join("")||"<li>No managed standing preferences.</li>";
   if(REVISE_RUN!==run.id)return;   // a slow prefs answer for a view you left
-  mountApp(run,"revise",`<div class="revise-shell"><aside class="versions"><div class="panelhead"><span class="label">Versions</span><span class="spacer"></span><span class="dim">${versions.length}</span></div><div class="version-list">${versionRows}</div><div class="decision-section"><span class="label">Standing preferences · read only</span><ul class="pref-list">${prefRows}</ul><div class="hint">Remove a preference by editing the managed block in the candidate profile.</div></div></aside><section class="revision-current"><div class="panelhead"><span class="label">Current documents</span><span class="spacer"></span><button class="secondary" data-preview="${esc(run.id)}">Open compiled PDFs</button></div><div class="revision-summary"><h1>${esc(run.company)}</h1><h2>${esc(run.role)}</h2><div class="writing">${kinds.map(kind=>`<div>${esc(run.targets?.[kind])}</div>`).join("")}</div><div class="whybox">Every successful revision becomes another immutable source + PDF snapshot. Restore replaces these live files and recompiles them; it never creates a second live document set.</div></div></section><aside class="composer"><div class="panelhead"><span class="label">Revise</span></div><form id="revise-form"><div class="decision-section"><span class="label">Scope</span>${scopeChoices}</div><div class="decision-section"><label class="label" for="revision-note">What should change?</label><textarea id="revision-note" required placeholder="Make the evidence for… more explicit"></textarea><label class="label" for="revision-remember">Standing preference (optional)</label><textarea id="revision-remember" placeholder="Remember this for future applications"></textarea><div class="hint">Only text in this field is written into the managed preference block.</div></div><div class="composer-actions"><button class="primary" type="submit" data-reentry-kind="revise">Revise</button><button class="secondary" type="submit" data-reentry-kind="redraft">Redraft</button><button class="secondary" type="submit" data-reentry-kind="apply">Full re-run</button></div></form></aside></div>`);
+  mountApp(run,"revise",`<div class="revise-shell"><aside class="versions"><div class="panelhead"><span class="label">Versions</span><span class="spacer"></span><span class="dim">${versions.length}</span></div><div class="version-list">${versionRows}</div><div class="decision-section"><span class="label">Standing preferences · read only</span><ul class="pref-list">${prefRows}</ul><div class="hint">Remove a preference by editing the managed block in the candidate profile.</div></div></aside><section class="revision-current"><div class="panelhead"><span class="label">Current documents</span><span class="spacer"></span><button class="secondary" data-preview="${esc(run.id)}">Open compiled PDFs</button></div><div class="revision-summary"><h1>${esc(run.company)}</h1><h2>${esc(run.role)}</h2><div class="writing">${kinds.map(kind=>`<div>${esc(run.targets?.[kind])}</div>`).join("")}</div><div class="whybox">Every successful revision becomes another immutable source + PDF snapshot. Restore replaces these live files and recompiles them; it never creates a second live document set.</div></div></section><aside class="composer"><div class="panelhead"><span class="label">Revise</span></div><form id="revise-form">${enginePicker(run.id,run.provider||"claude")}<div class="decision-section"><span class="label">Scope</span>${scopeChoices}</div><div class="decision-section"><label class="label" for="revision-note">What should change?</label><textarea id="revision-note" required placeholder="Make the evidence for… more explicit"></textarea><label class="label" for="revision-remember">Standing preference (optional)</label><textarea id="revision-remember" placeholder="Remember this for future applications"></textarea><div class="hint">Only text in this field is written into the managed preference block.</div></div><div class="composer-actions"><button class="primary" type="submit" data-reentry-kind="revise">Revise</button><button class="secondary" type="submit" data-reentry-kind="redraft">Redraft</button><button class="secondary" type="submit" data-reentry-kind="apply">Full re-run</button></div></form></aside></div>`);
   openView("revise",[crumbRun(run),{label:"Versions"}],"/app/"+encodeURIComponent(run.id)+"/revise");
 }
 
@@ -1451,7 +1455,7 @@ function renderStrip(){
   el("striptag").textContent=last.source;el("striptag").className="tag "+last.source;el("striptime").textContent=(last.ts||"").slice(11,19);el("stripmsg").textContent=last.cmd?"$ "+last.cmd:last.msg;el("stripdur").textContent=last.ms!=null?(last.ms>=1000?(last.ms/1000).toFixed(2)+" s":last.ms+" ms"):"";
 }
 function renderActivity(){
-  const cats=["all","collect","board","claude","latex","verify","errors"];el("actchips").innerHTML=cats.filter(c=>c==="all"||COUNTS[c]).map(c=>`<button class="chip ${c===actFilter?"on":""}" data-act-filter="${c}">${c}<span class="n">${COUNTS[c]||0}</span></button>`).join("");
+  const cats=["all","collect","board","claude","codex","latex","verify","errors"];el("actchips").innerHTML=cats.filter(c=>c==="all"||COUNTS[c]).map(c=>`<button class="chip ${c===actFilter?"on":""}" data-act-filter="${c}">${c}<span class="n">${COUNTS[c]||0}</span></button>`).join("");
   const rows=EV.filter(e=>actFilter==="all"||actFilter==="errors"&&e.level==="error"||e.source===actFilter);
   el("actlog").innerHTML=rows.map(e=>`<div class="ln ${esc(e.level)}"><span class="t">${esc((e.ts||"").slice(11,19))}</span><span class="s">${esc(e.source)}</span><span class="m">${esc(e.cmd?"$ "+e.cmd:e.msg)}${e.ms!=null?"  "+e.ms+" ms":""}</span></div>`).join("");
   if(el("follow").checked)el("actlog").scrollTop=el("actlog").scrollHeight;
@@ -1563,9 +1567,9 @@ document.addEventListener("click",event=>{
   // An attempt tab keeps you on the step you were on, where that attempt has it.
   const runNode=event.target.closest("[data-run]");if(runNode){const run=RUNS.find(r=>r.id===runNode.dataset.run);if(run)openApp(run,{preview:"review",send:"send",revise:"revise",tailor:"log"}[VIEW]);return}
   const pill=event.target.closest("#runpill");if(pill){const run=RUNS.find(r=>r.id===pill.dataset.run);if(run)openApp(run,"log");return}
-  const cont=event.target.closest(".continuerun");if(cont){cont.disabled=true;const source=cont.dataset.runId;postRun("/api/runs/"+source+"/continue",{proceed:cont.dataset.proceed==="1"}).then(({ok,run_id})=>{if(!ok){cont.disabled=false;return}toast("continuing from the saved checkpoint",{ms:2500});const next=RUNS.find(r=>r.id===run_id);if(next)renderTailor(next)});return}
+  const cont=event.target.closest(".continuerun");if(cont){cont.disabled=true;const source=cont.dataset.runId;postRun("/api/runs/"+source+"/continue",{proceed:cont.dataset.proceed==="1",provider:chosenEngine(source,RUNS.find(r=>r.id===source))}).then(({ok,run_id})=>{if(!ok){cont.disabled=false;return}toast("continuing from the saved checkpoint",{ms:2500});const next=RUNS.find(r=>r.id===run_id);if(next)renderTailor(next)});return}
   const cancel=event.target.closest(".cancelrun");if(cancel){postRun("/api/runs/"+cancel.dataset.runId+"/cancel");return}
-  const retry=event.target.closest(".retryrun");if(retry){if(retry.dataset.done&&!confirm("Regenerate this application from the saved posting with your current CV master and cover base? This attempt stays under its number."))return;retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry").then(({ok})=>{if(!ok){retry.disabled=false;return}toast("regenerating from the saved posting; earlier versions are kept",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
+  const retry=event.target.closest(".retryrun");if(retry){if(retry.dataset.done&&!confirm("Regenerate this application from the saved posting with your current CV master and cover base? This attempt stays under its number."))return;retry.disabled=true;const failed=RUNS.find(r=>r.id===retry.dataset.runId);postRun("/api/runs/"+retry.dataset.runId+"/retry",{provider:chosenEngine(retry.dataset.runId,failed)}).then(({ok})=>{if(!ok){retry.disabled=false;return}toast("regenerating from the saved posting; earlier versions are kept",{ms:2500});const next=RUNS.find(r=>r.retry_of===failed?.id);if(next)renderTailor(next)});return}
   const row=event.target.closest("tr[data-row]");if(row&&!event.target.closest("select")){sel=+row.dataset.row;render()}
 });
 async function postCompany(path,body,method="POST"){
@@ -1607,15 +1611,16 @@ document.addEventListener("submit",event=>{
     event.preventDefault();const run=RUNS.find(r=>r.id===PREVIEW_RUN),note=el("regen-note").value.trim(),edit=new FormData(event.target).get("edit");
     if(!run||!edit)return;
     const button=event.submitter;if(button)button.disabled=true;
-    postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope:run.scope||"both",edit,note}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else if(button)button.disabled=false});return;
+    postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope:run.scope||"both",edit,note,provider:chosenEngine(run.id,run)}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else if(button)button.disabled=false});return;
   }
   if(event.target.id!=="revise-form")return;event.preventDefault();const button=event.submitter,kind=button?.dataset.reentryKind,run=RUNS.find(r=>r.id===REVISE_RUN);if(!run||!kind)return;
   const scope=new FormData(event.target).get("scope")||"both",note=el("revision-note").value.trim(),remember=el("revision-remember").value.trim();
   if(kind!=="apply"&&!note){toast("say what should change",{warn:true});return}
-  button.disabled=true;const body={job_url:run.job_url,kind,note,scope,remember};if(kind!=="apply")body.parent=run.id;
+  button.disabled=true;const body={job_url:run.job_url,kind,note,scope,remember,provider:chosenEngine(run.id,run)};if(kind!=="apply")body.parent=run.id;
   postRun("/api/runs",body).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(ok){toast(kind+" queued",{ms:2500});if(next)openApp(next,"log");else restoreWorkspace()}else button.disabled=false});
 });
 document.addEventListener("change",event=>{
+  if(event.target.matches("[data-engine]")){ENGINE_CHOICES.set(event.target.dataset.engine,event.target.value);return}
   if(event.target.id==="f-fit"||event.target.id==="f-found"||event.target.id==="f-sort"){
     facets[event.target.id.slice(2)]=event.target.value;saveFacets();sel=0;render();return;
   }

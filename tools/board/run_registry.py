@@ -96,6 +96,11 @@ DEFAULT_CONFIG = {
     "canary_timeout_s": 120,
     "queue_depth": 5,
     "claude_bin": "claude",
+    "provider": "claude",
+    "claude_model": None,
+    "codex_bin": "codex",
+    "codex_model": None,
+    "codex_max_passes": 12,
 }
 
 
@@ -272,6 +277,12 @@ def register_process(run_id, pid, pgid, argv, started_at):
                 run["pid"] = pid
                 run["pgid"] = pgid
                 run["argv"] = argv
+                if run.get("provider") == "codex" and "--cd" in argv:
+                    # A provider thread ID is not a process identity. Each Codex
+                    # invocation has a unique working directory in its argv.
+                    run["process_marker"] = argv[argv.index("--cd") + 1]
+                else:
+                    run.pop("process_marker", None)
                 run["proc_started"] = process_start_time(pid)
                 run["process_started_at"] = started_at
                 store(data)
@@ -303,7 +314,7 @@ def debit(amount, run_id=None):
             for run in data["runs"]:
                 if run["id"] == run_id:
                     run.setdefault("cost", {})["total_usd"] = round(
-                        float(run.get("cost", {}).get("total_usd", 0.0)) + amount, 4)
+                        float(run.get("cost", {}).get("total_usd", 0.0) or 0.0) + amount, 4)
         store(data)
         return ledger["spent_usd"]
 
@@ -340,14 +351,14 @@ def reserved(data=None):
             continue
         budget = run.get("budget_usd") or {}
         if run.get("pipeline") == 2 or run.get("kind") in ("revise", "redraft"):
-            spent = float((run.get("cost") or {}).get("total_usd", 0.0))
+            spent = float((run.get("cost") or {}).get("total_usd", 0.0) or 0.0)
             total += max(0.0, sum(float(v or 0) for v in budget.values()) - spent)
             continue
         pass_b = float(budget.get("pass_b", 0.0))
         if run.get("fit"):
             total += pass_b
         else:
-            spent = float((run.get("cost") or {}).get("total_usd", 0.0))
+            spent = float((run.get("cost") or {}).get("total_usd", 0.0) or 0.0)
             total += max(0.0, float(budget.get("pass_a", 0.0)) + pass_b - spent)
     return round(total, 4)
 
@@ -357,7 +368,7 @@ def application_spent(application_id, data=None):
     total = 0.0
     for record in (data or load())["runs"]:
         if (record.get("application_id") or record.get("id")) == application_id:
-            total += float((record.get("cost") or {}).get("total_usd", 0.0))
+            total += float((record.get("cost") or {}).get("total_usd", 0.0) or 0.0)
     return round(total, 4)
 
 
@@ -370,7 +381,7 @@ def session_spent(run):
         record = index.get(cursor)
         if not record:
             break
-        total += float((record.get("cost") or {}).get("total_usd", 0.0))
+        total += float((record.get("cost") or {}).get("total_usd", 0.0) or 0.0)
         cursor = record.get("parent")
     return round(total, 4)
 
@@ -474,7 +485,7 @@ def process_matches(record, strict=True):
     if not process_alive(pid):
         return False
     recorded = record.get("proc_started")
-    marker = record.get("session_id")
+    marker = record.get("process_marker") or record.get("session_id")
     if not recorded and not marker:
         return False
 

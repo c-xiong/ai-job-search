@@ -54,7 +54,7 @@ MAX_MSG = 2000
 # RING lines of ordinary events, and small enough to be free.
 TAIL_BYTES = 512 * 1024
 
-SOURCES = ("collect", "board", "claude", "latex", "verify", "registry", "server")
+SOURCES = ("collect", "board", "claude", "codex", "latex", "verify", "registry", "server")
 LEVELS = ("info", "warn", "error")
 
 _lock = threading.Lock()

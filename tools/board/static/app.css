@@ -64,6 +64,12 @@
 .secondary{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:6px;background:var(--chip);color:var(--text);padding:3px 9px;font-size:12px;cursor:pointer}
 .secondary:hover{border-color:var(--selbar)}.theme-toggle{min-width:84px;justify-content:center}.theme-glyph{font-size:13px;line-height:1;color:var(--dim)}.search{width:210px;display:flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:2px 7px;color:var(--dim)}
 .search input{width:100%;border:0;outline:0;background:transparent;color:var(--text);font-size:12px}.chips{display:flex;gap:5px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line)}
+.board-panel .fetch-toolbar{flex-wrap:wrap}
+.board-panel .fetch-feedback{flex:1 1 160px;overflow-wrap:anywhere}
+.board-panel #add-job{flex:none}
+.board-panel .board-search{flex:1 1 220px;max-width:320px;min-width:0;min-height:32px;margin-left:auto;padding:5px 9px}
+.board-search input{min-width:0}
+.board-search:focus-within{border-color:var(--selbar);box-shadow:0 0 0 2px color-mix(in srgb,var(--selbar) 15%,transparent)}
 .chip{border:1px solid var(--line);background:var(--chip);color:var(--text);border-radius:999px;padding:3px 10px;cursor:pointer;font-size:12px}.chip.on{background:var(--selbar);border-color:var(--selbar);color:#fff}.chip .n{opacity:.65;margin-left:4px}
 /* One compact row under the status chips. Each select names itself ("Any
    fit", "Sort: priority"), so there are no separate labels; a control that is
@@ -208,7 +214,7 @@ a.open{color:var(--selbar);text-decoration:none;font-size:12px;white-space:nowra
 .add-modal input[type=url],.add-modal input[type=text]{display:block;width:100%;border:1px solid var(--line,#d8d8d8);border-radius:8px;background:var(--bg,#f8f8f8);color:var(--text,#222);font:14px/1.4 ui-sans-serif,-apple-system,"SF Pro Text",Inter,system-ui,sans-serif;padding:9px 12px;margin-bottom:12px;outline:none}.add-modal input:focus{border-color:var(--selbar,#3b6fd4);box-shadow:0 0 0 3px color-mix(in srgb,var(--selbar,#3b6fd4) 18%,transparent)}.add-modal #add-apply-url{margin-bottom:0}.add-modal .modal-label .dim{font-weight:400;color:var(--dim,#666)}.add-modal textarea{min-height:120px}.add-details{margin-top:6px}.add-details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--dim,#666);padding:4px 0}.add-details-body{padding-top:8px}.add-status{min-height:18px;margin-top:10px;font-size:12px;color:var(--dim,#666)}.add-status.warn{color:var(--warn)}.add-modal.busy #add-submit{opacity:.6;pointer-events:none}.add-bookmarklet{margin-top:14px;padding-top:12px;border-top:1px solid var(--line,#d8d8d8);font-size:11px;color:var(--dim,#666)}.add-bookmarklet a{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:1px 8px;background:var(--chip);color:var(--text);text-decoration:none;cursor:grab;font-weight:600}
 /* Source capture and the durable LinkedIn intake queue. */
 .company-capture,.inbox-capture{margin:0 0 14px;font-size:13px}
-.company-capture{padding:0 24px}
+.company-capture{padding:16px 24px 0;line-height:1.6}
 .inbox-main{max-width:1200px}
 .inbox-main>p,.inbox-main>.inbox-controls{margin-left:24px;margin-right:24px}
 .inbox-controls{display:flex;align-items:end;gap:14px;margin-top:18px}
@@ -226,3 +232,7 @@ a.open{color:var(--selbar);text-decoration:none;font-size:12px;white-space:nowra
 .inbox-table .linkish{display:block;margin-top:8px}
 
 .applied-toggle{display:inline-flex;align-items:center;gap:10px;cursor:pointer;position:relative}.applied-toggle input{position:absolute;opacity:0;width:40px;height:24px;margin:0}.toggle-track{width:40px;height:24px;border-radius:20px;background:var(--dim);position:relative;pointer-events:none}.toggle-track::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .15s}.applied-toggle input:checked+.toggle-track{background:var(--selbar)}.applied-toggle input:checked+.toggle-track::after{transform:translateX(16px)}.applied-toggle input:focus-visible+.toggle-track{outline:2px solid var(--text);outline-offset:3px}.applied-toggle input:disabled~span{opacity:.6}
+
+.engine-picker{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}.engine-picker select{max-width:145px}
+
+.attempt-engine{margin-left:3px;padding:1px 5px;border:1px solid var(--line);border-radius:4px;font-size:10px;font-weight:400;color:var(--text)}

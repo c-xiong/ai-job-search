@@ -179,9 +179,46 @@ matches its checkpoint hashes and redoes only what is missing, even after a boar
 **Regenerate** starts over from the saved posting and keeps earlier versions. Deleted runs
 go to a trash, and their cost still counts against your budgets.
 
+### Choose an engine
+
+The **Engine** selector offers **Claude Code** (the default) and **Codex** for
+generation, revision, regeneration, and Continue. A failed Claude attempt can
+continue with Codex using its valid checkpoints. The engine is fixed when a run
+is queued; changing it creates a linked attempt. There is no automatic fallback.
+
+Codex requires a current CLI and an existing ChatGPT login (`codex login`). JobFlow
+does not switch to API-key billing. Both engines use the same application rules,
+evidence and templates. Codex receives input snapshots and returns structured
+output; the supervisor validates and writes it. Shell, MCP, plugins and hooks are
+disabled for these Codex passes. Optional visual inspection attaches rendered PDF
+pages and requires `pdftoppm`; the owner's checklist remains manual.
+
+Optional local settings in `job_scraper/board_config.json`:
+
+```json
+{
+  "provider": "claude",
+  "codex_bin": "codex",
+  "codex_model": null,
+  "codex_max_passes": 12
+}
+```
+
+`codex_model: null` uses the CLI default; `claude_model` can also be set explicitly.
+Codex account usage is recorded as tokens, with dollar cost **unknown**, not zero.
+Claude's dollar budgets remain in force for Claude. Codex uses the shared queue,
+timeouts and an attempt-level pass limit; these are not a dollar cap or a promise
+about remaining subscription allowance. User CLI configuration is not loaded for
+Codex pipeline passes; set the model in the board configuration instead.
+
+Run the anonymous provider regressions with
+`python3 -m unittest tests.test_codex_provider tests.test_provider_ui`.
+The opt-in real CLI contract uses the signed-in allowance:
+`JOBFLOW_LIVE_CODEX=1 python3 -m unittest tests.test_live_codex_contract`.
+
 ### Safety and budgets
 
-Each model pass is a fresh, short `claude` session. It gets only the files it needs and a
+Each Claude pass is a fresh, short session. It gets only the files it needs and a
 write allowlist enforced by a hook (`tools/board/guard_write.py`). Your CV master and
 cover-letter bases can never be written, through any path alias.
 
@@ -200,7 +237,7 @@ override them in the gitignored `job_scraper/board_config.json`:
 `session_budget_usd` is cumulative across all attempts of one application, so retrying
 does not get around it.
 
-Each model pass uses the smaller of its configured stage cap and the attempt's remaining
+Each Claude pass uses the smaller of its configured stage cap and the attempt's remaining
 reservation, rounded down to cents. This lets a later pass use the budget still available
 instead of stopping because its full stage cap would exceed the reservation. When less
 than $0.01 remains, the next pass is stopped before model work starts. Daily and cumulative

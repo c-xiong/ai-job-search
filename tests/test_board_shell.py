@@ -216,7 +216,7 @@ class ShellMarkupTest(unittest.TestCase):
                         'closest(".approve")', "Start fit evaluation"):
             self.assertNotIn(removed, self.js)
         self.assertIn('>Generate</button>', self.js)
-        self.assertIn('{job_url:url,kind:"apply",note,scope,base_cv,cv_country}', self.js)
+        self.assertIn('{job_url:url,kind:"apply",note,scope,base_cv,cv_country,provider:chosenEngine("generate")}', self.js)
 
     def test_run_output_can_follow_the_latest_line(self):
         self.assertIn('let RUN_FOLLOW=true;', self.js)
@@ -606,6 +606,7 @@ const build=new Function("ctx",`
   const APP_GROUPS=[],latestApplications=()=>RUNS;
   const appState=r=>RUNNING.includes(r.phase)?"generating":r.phase==="done"?"review":"failed";
   const RUN_LOG_SCROLL=new Map();
+  ${src.slice(src.indexOf('let DEFAULT_PROVIDER='),src.indexOf('const generatePicker='))}
   ${src.slice(start,end)}
   return {renderTailor,setFollow:value=>RUN_FOLLOW=value,active:()=>ACTIVE_RUN,setRuns:v=>RUNS=v};
 `);
@@ -616,6 +617,7 @@ let bad=0;
 const t=(name,cond)=>{if(!cond){bad++;console.log("FAIL  "+name)}};
 
 R.renderTailor(run);
+t("a single legacy run displays its engine",ctx.html.includes('Run 1<span class="attempt-engine">Claude Code</span>'));
 t("the chosen scope shows its target",ctx.html.includes("cover/secret.tex"));
 t("an unselected target stays hidden",!ctx.html.includes("cv/secret.tex"));
 t("three owner-facing stages",ctx.html.includes("stage 2 of 3"));
@@ -650,14 +652,14 @@ R.renderTailor({...failed,id:"run-2",continue_of:"run-1",attempt:2});
 t("the latest attempt shows no redirect note",!ctx.html.includes("Go to the latest"));
 const versions=[
   {...run,id:"v3",attempt:1,phase:"drafting",parent:"v2",started_at:"2026-01-03T10:00:00"},
-  {...run,id:"v2",attempt:1,phase:"done",parent:"v1",started_at:"2026-01-02T10:00:00"},
+  {...run,id:"v2",provider:"codex",attempt:1,phase:"done",parent:"v1",started_at:"2026-01-02T10:00:00"},
   {...run,id:"v1",attempt:1,phase:"done",started_at:"2026-01-01T10:00:00"},
 ];
 R.setRuns(versions);
 R.renderTailor(versions[2]);
 const tabs=ctx.html.match(/<div class="attempts"[\s\S]*?<\/div>/)[0];
 t("duplicate attempt numbers render oldest to newest",tabs.indexOf('data-run="v1"')<tabs.indexOf('data-run="v2"')&&tabs.indexOf('data-run="v2"')<tabs.indexOf('data-run="v3"'));
-t("runs receive distinct chronological numbers",tabs.includes("Run 1</button>")&&tabs.includes("Run 2</button>")&&tabs.includes('Run 3<span class="attempt-latest">Latest</span>'));
+t("runs receive distinct chronological numbers",tabs.includes('Run 1<span class="attempt-engine">Claude Code</span>')&&tabs.includes('Run 2<span class="attempt-engine">Codex</span>')&&tabs.includes('Run 3<span class="attempt-engine">Claude Code</span>'));
 t("only the newest run is marked latest",(tabs.match(/class="attempt-latest"/g)||[]).length===1);
 t("revision tooltips use the same numbering",tabs.includes("revised from Run 2")&&tabs.includes("2026-01-03 10:00:00"));
 t("the latest link ignores duplicate attempt metadata",ctx.html.includes("Go to the latest (Run 3)"));
@@ -1127,6 +1129,7 @@ const build=new Function("ctx",`
   const applicationFor=()=>ctx.existing||null;
   const document={querySelector:selector=>ctx.picks[selector]?{value:ctx.picks[selector]}:null};
   const DRAFT_LABEL={both:"Draft CV + cover letter",cv:"Draft CV",cover:"Draft cover letter"};
+  ${src.slice(src.indexOf('let DEFAULT_PROVIDER='),src.indexOf('const generatePicker='))}
   ${src.slice(start,end)}
   return {startTailor,postRun};
 `);

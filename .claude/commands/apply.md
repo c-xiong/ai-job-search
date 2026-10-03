@@ -24,6 +24,29 @@ interview preparation, application-form drafting, and long process reports.
 `08-application-forms.md`.) An explicit **hard conflict** with the owner's
 deal-breakers is the one thing that stops drafting - see "Stage: draft".
 
+**Mandatory employer contact research (every cover letter).** Before drafting or
+regenerating a cover letter, use live web search and open first-party employer
+pages to verify its recipient details. A posting that omits them is not evidence
+that they cannot be found. Search the employer's offices/contact/careers/legal
+notice (Impressum) pages, prioritising the posting city, then a relevant office or
+legal entity in the posting country. Never substitute a global headquarters in
+another country or infer the employer country from the candidate's CV country.
+Use the posting location supplied by the board when the posting body omits it.
+Verify the postal address and any named hiring contact or recruiting email.
+Include the verified local postal address in the recipient block; use a named
+contact only when the source explicitly associates them with this role or its
+recruiting team. Do not add unrelated sales/support contacts, phone numbers or
+email addresses just to fill the block. If no suitable details can be verified
+after searching and opening relevant official pages, omit those lines and keep a
+generic salutation. Never invent details or leave placeholders.
+Record the queries tried, URLs opened, the selected office and country, verified
+details and reasons for omitted details in LaTeX comments headed
+`% CONTACT_RESEARCH` in the cover source. These comments must not appear in the
+PDF. A later review/fix may reuse this source-backed record for the same employer
+and location; if it is missing or does not support the recipient block, perform
+the research before completing the letter. Network/tool failure must be recorded
+as a failed lookup, never described as a successful search with no results.
+
 **JobFlow standing preferences.** A prompt line beginning `REMEMBER:` authorizes
 one narrowly scoped edit: add that preference inside the single
 `JOBFLOW-PREFS:BEGIN` / `JOBFLOW-PREFS:END` managed block in

@@ -100,6 +100,11 @@ def main(argv=None):
 
     env = dict(os.environ)
     env.update({str(k): str(v) for k, v in (spec.get("env") or {}).items()})
+    for key in spec.get("unset_env", []):
+        env.pop(key, None)
+    if spec.get("stdin_path"):
+        with open(spec["stdin_path"], "rb") as source:
+            os.dup2(source.fileno(), 0)
     cwd = spec.get("cwd")
     if cwd:
         os.chdir(cwd)
