@@ -97,12 +97,14 @@ Last Updated on \today
 
 \newcommand{\currentdate}[1]{{\raggedleft\ralewaymediumfont\fontsize{11pt}{13pt}\selectfont #1\par}}
 
-% Letter content command
-\newcommand{\lettercontent}[1]{\raggedright\letterbodyfont {#1 \\}\mbox{}\\ \normalfont}
+% Paragraph spacing is explicit: empty text lines waste space and can orphan
+% the signature. Keep the established body size and leading unchanged.
+\newcommand{\lettercontent}[1]{{\raggedright\letterbodyfont #1\par}\addvspace{8pt}}
 
-\newcommand{\closing}[1]{\raggedright\letterbodyfont {#1 \\}\mbox{}\\\mbox{}\\ \normalfont}
+% Reserve one blank line for signing and keep the typed name with the closing.
+\newcommand{\closing}[1]{{\raggedright\letterbodyfont #1\par}\nobreak\vspace{14pt}\nopagebreak}
 
-\newcommand{\signature}[1]{\raggedright\letterbodyfont {#1 \\} \normalfont}
+\newcommand{\signature}[1]{{\raggedright\letterbodyfont #1\par}}
 
 % Formal Swiss/German business-letter blocks
 \newcommand{\senderblock}[2]{%

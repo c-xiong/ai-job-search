@@ -50,10 +50,10 @@ vm.runInContext([
   block("function openPostingUrl(","function elapsed("),
   block("function appsByJob(","// The Draft cell:"),
   block("const jobOfRun=","function appHeader("),
-  block("function renderSend(","// Deleting is soft"),
+  block("const SEND_DRAFTS=","// Deleting is soft"),
   block("async function reloadJobs(","function fetchSummary("),
   block('document.addEventListener("click"','el("q").addEventListener'),
-  "globalThis.ui={openPostingUrl,closePostingUrl,savePostingUrl,applicationFor,jobOfRun,renderSend,reloadJobs};"
+  "globalThis.ui={openPostingUrl,closePostingUrl,savePostingUrl,applicationFor,jobOfRun,renderSend,reloadJobs,saveSendForm};"
 ].join("\n"),ctx);
 const tick=()=>new Promise(setImmediate);
 const event=(target,extra={})=>({target,preventDefault(){this.prevented=true},...extra});
@@ -141,7 +141,45 @@ async function staleReload(){
   assert.equal(ctx.JOBS[0].posting_url,preferred);assert.equal(ctx.JOBS[0].url,original);
   assert.equal(ctx.ui.applicationFor(ctx.JOBS[0]),run);
 }
-({editor,applications,replacedRow,staleReload}[process.argv[3]]()).catch(error=>{console.error(error);process.exitCode=1});
+async function sendForm(){
+  ctx.VIEW="send";ctx.ui.renderSend(run);
+  const form=node("owner-form");form.dataset={runId:run.id};
+  const controls=["owner-portal","owner-email","owner-notes","save"].map(node);
+  form.querySelectorAll=()=>controls;
+  node("owner-portal").value="https://example.test/portal";
+  node("owner-email").value="careers@example.test";
+  node("owner-notes").value="Keep my application reference";
+  const toggle=node("owner-applied");toggle.checked=true;
+  listeners.input(event(toggle));
+  assert.equal(requests.length,0,"toggle must not submit");
+  toggle.checked=false;listeners.input(event(toggle));
+  ctx.ui.renderSend(run);assert(!ctx.sendHtml.includes('form="owner-form" checked'));
+  toggle.checked=true;listeners.input(event(toggle));
+  ctx.ui.renderSend(run);
+  assert(ctx.sendHtml.includes('form="owner-form" checked'));
+  assert(ctx.sendHtml.includes("Keep my application reference"));
+  const sent=[];let resolve;
+  ctx.postRun=async(path,body)=>{sent.push({path,body});return new Promise(r=>resolve=r)};
+  const pending=ctx.ui.saveSendForm(form);
+  assert(controls.every(c=>c.disabled));assert(toggle.disabled);
+  await ctx.ui.saveSendForm(form);assert.equal(sent.length,1,"duplicate save ignored");
+  resolve({ok:false});await pending;
+  assert(controls.every(c=>!c.disabled));assert(!toggle.disabled);
+  ctx.ui.renderSend(run);assert(ctx.sendHtml.includes("Keep my application reference"));
+  ctx.postRun=async()=>{throw new Error("offline")};await ctx.ui.saveSendForm(form);
+  assert(!toggle.disabled);assert(messages.at(-1).includes("entries are kept"));
+  ctx.ui.renderSend(run);assert(ctx.sendHtml.includes("careers@example.test"));
+  ctx.openApp=()=>{};ctx.reloadJobs=async()=>{};
+  ctx.postRun=async(path,body)=>{sent.push({path,body});Object.assign(run,body);return {ok:true}};
+  await ctx.ui.saveSendForm(form);
+  assert.equal(sent.at(-1).path,"/api/runs/r1/owner");
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).body)),{
+    portal_url:"https://example.test/portal",apply_email:"careers@example.test",
+    my_notes:"Keep my application reference",mark_applied:true});
+  run.my_notes="Saved remotely";ctx.ui.renderSend(run);
+  assert(ctx.sendHtml.includes("Saved remotely"),"success clears local draft");
+}
+({editor,applications,replacedRow,staleReload,sendForm}[process.argv[3]]()).catch(error=>{console.error(error);process.exitCode=1});
 """
 
 
@@ -170,3 +208,6 @@ class PostingUrlBrowserTest(unittest.TestCase):
 
     def test_overlapping_reload_retries_instead_of_restoring_stale_url(self):
         self.probe("staleReload")
+
+    def test_send_toggle_defers_save_and_preserves_inputs_on_failure(self):
+        self.probe("sendForm")

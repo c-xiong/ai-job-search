@@ -712,7 +712,18 @@ def _compile_with(record, keywords):
     return pdfs, verify, snapshot
 
 
+def require_cover_page_limit(pdf):
+    """The rendered cover must fit before any finished copy is replaced."""
+    pages, expected = pdf_pages(pdf), expected_pages("cover")
+    if pages != expected:
+        raise DocumentError("cover letter has %d pages; exactly %d required. "
+                            "Draft kept; shorten optional evidence or tailored prose "
+                            "and rebuild before publishing." % (pages, expected))
+
+
 def snapshot_record(record, pdfs):
+    if "cover" in pdfs:
+        require_cover_page_limit(pdfs["cover"])
     target = run_registry.run_dir(record["id"])
     target.mkdir(parents=True, exist_ok=True)
     artefacts = {}
@@ -763,6 +774,8 @@ def submission_copy(record, kind, pdf):
     (`<First>_<Last>_Cover_Letter_<Company>.pdf`). Refreshed whenever its bytes
     differ from `pdf`.
     """
+    if kind == "cover":
+        require_cover_page_limit(pdf)
     parts = [candidate_name(), SUBMIT_LABELS[kind]]
     if kind == "cover":
         parts.append(record.get("company"))
@@ -785,6 +798,8 @@ def publish_document(record, kind, source, pdf):
     this is the one supervisor path that does.
     """
     from . import checkpoint
+    if kind == "cover":
+        require_cover_page_limit(pdf)
     target = assert_writable(_root() / record["targets"][kind], "live %s source" % kind)
     try:
         run_guard.reject_symlinks(target, "live %s source" % kind)
@@ -1041,7 +1056,7 @@ def tracker_statuses():
             for key, r in tracker_rows().items()}
 
 
-def save_owner_fields(record, values):
+def save_owner_fields(record, values, mark_applied=False):
     """Write the owner columns (`OWNER_COLUMNS`) on this application's row.
 
     `values` holds only the columns to change. Returns "updated", "unchanged"
@@ -1065,6 +1080,9 @@ def save_owner_fields(record, values):
         for name, value in values.items():
             if name in OWNER_COLUMNS and match[ix[name]] != value:
                 match[ix[name]], changed = value, True
+        if mark_applied and match[ix["status"]].strip() == "drafted":
+            match[ix["status"]], match[ix["date"]] = "applied", date.today().isoformat()
+            changed = True
         if not changed:
             return "unchanged"
         _write_tracker(header, rows)

@@ -641,7 +641,14 @@ let APPS_Q="",APPS_SHOW_APPLIED=false,APPS_REVIEW_LIST=false;
 function lineageOf(run){
   const family=new Map([[run.id,run]]);RUNS.filter(r=>(r.application_id||r.id)===(run.application_id||run.id)).forEach(r=>family.set(r.id,r));
   for(let grew=true;grew;){grew=false;RUNS.forEach(r=>{if(!family.has(r.id)&&(family.has(r.continue_of)||family.has(r.retry_of))){family.set(r.id,r);grew=true}})}
-  return [...family.values()].sort((a,b)=>(a.attempt||1)-(b.attempt||1));
+  // Revision runs may all carry attempt=1; display their creation order instead.
+  return [...family.values()].sort((a,b)=>{
+    const timeA=Date.parse(a.started_at),timeB=Date.parse(b.started_at);
+    if(Number.isFinite(timeA)&&Number.isFinite(timeB)&&timeA!==timeB)return timeA-timeB;
+    if([b.parent,b.continue_of,b.retry_of].includes(a.id))return -1;
+    if([a.parent,a.continue_of,a.retry_of].includes(b.id))return 1;
+    return (a.attempt||1)-(b.attempt||1)||a.id.localeCompare(b.id);
+  });
 }
 function appRowMeta(r,state){
   if(state==="generating")return r.phase==="queued"?"queued":"stage "+(PHASE_STEP[r.phase]||1)+"/"+STAGE_COUNT;
@@ -660,8 +667,8 @@ function appsGroupsHtml(){
   const groups=appsOrdered().filter(([, ,rows])=>rows.length);
   if(!groups.length)return `<div class="panel-empty">${APPS_Q?"No application matches.":"No applications yet — press Generate on a job."}</div>`;
   return groups.map(([key,label,rows])=>{
-    const folded=key==="applied"&&!APPS_SHOW_APPLIED&&!rows.some(r=>(r.application_id||r.id)===currentApp);
-    const head=key==="applied"?`<button class="app-group-head linkish" data-apps-applied>${label} <span class="n">${rows.length}</span> ${folded?"▸":"▾"}</button>`:`<div class="app-group-head">${label} <span class="n">${rows.length}</span></div>`;
+    const folded=key==="applied"&&!APPS_SHOW_APPLIED;
+    const head=key==="applied"?`<button class="app-group-head linkish" data-apps-applied aria-expanded="${!folded}">${label} <span class="n">${rows.length}</span> ${folded?"▸":"▾"}</button>`:`<div class="app-group-head">${label} <span class="n">${rows.length}</span></div>`;
     return `<div class="app-group ${key}">${head}${folded?"":rows.map(r=>`<button class="app-row ${key}${(r.application_id||r.id)===currentApp?" on":""}" data-app="${esc(r.id)}"><span class="app-row-top"><strong>${esc(r.company)}</strong><span class="app-row-meta">${esc(appRowMeta(r,key))}</span></span><span class="app-row-role">${esc(r.role)}</span></button>`).join("")}</div>`;
   }).join("");
 }
@@ -674,10 +681,10 @@ function toggleAppsList(){
 }
 function attemptTabs(run){
   const lineage=lineageOf(run);if(lineage.length<2)return "";
-  const numberOf=id=>(RUNS.find(r=>r.id===id)||{}).attempt||"?";
+  const numberOf=id=>{const i=lineage.findIndex(r=>r.id===id);return i<0?"?":i+1};
   const attemptMark=r=>r.phase==="done"?"✓":["failed","cancelled"].includes(r.phase)?"✕":RUNNING.includes(r.phase)?"●":"·";
-  const attemptTitle=r=>`Attempt ${r.attempt||1} · ${(r.phase||"queued").replaceAll("_"," ")} · ${r.continue_of?"continued from #"+numberOf(r.continue_of):r.retry_of?"regenerated from scratch after #"+numberOf(r.retry_of):"first attempt"}`;
-  return `<div class="attempts" role="tablist" aria-label="Attempts">${lineage.map(r=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r))}"><span class="attempt-mark">${attemptMark(r)}</span>${esc(r.attempt||1)}</button>`).join("")}</div>`;
+  const attemptTitle=(r,i)=>`Run ${i+1} of ${lineage.length}${i===lineage.length-1?" · Latest":""} · ${(r.phase||"queued").replaceAll("_"," ")}${r.started_at?" · "+r.started_at.replace("T"," "):""} · ${r.continue_of?"continued from Run "+numberOf(r.continue_of):r.retry_of?"regenerated from scratch after Run "+numberOf(r.retry_of):r.parent?"revised from Run "+numberOf(r.parent):i===0?"first run":"new run"}`;
+  return `<div class="attempts" role="tablist" aria-label="Runs, oldest to newest">${lineage.map((r,i)=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r,i))}"><span class="attempt-mark" aria-hidden="true">${attemptMark(r)}</span>Run ${i+1}${i===lineage.length-1?'<span class="attempt-latest">Latest</span>':""}</button>`).join("")}</div>`;
 }
 // The board row an application was generated from: its own URL, or the
 // first-party posting the row links to.
@@ -692,7 +699,7 @@ function appHeader(run,step){
   const alone=["failed","cancelled"].includes(run.phase)&&lineageOf(run).length>1;
   const menu=`<details class="app-menu"><summary class="secondary" title="More">⋯</summary><div class="app-menu-body">
     <button data-app-step="log">Run log</button>${done?`<button data-app-step="revise">Versions</button>`:""}
-    ${alone?`<button class="danger" data-delete-attempt="${esc(run.id)}">Delete attempt #${esc(run.attempt||1)}…</button>`:""}
+    ${alone?`<button class="danger" data-delete-attempt="${esc(run.id)}">Delete Run ${lineageOf(run).findIndex(r=>r.id===run.id)+1}…</button>`:""}
     <button class="danger" data-delete-app="${esc(run.id)}">Delete application…</button></div></details>`;
   const job=jobOfRun(run);
   const id=job?`<button class="app-id app-id-link" data-board-job="${esc(job.url)}" title="Show this job on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)} <span class="app-id-arrow">↗ Board</span></p></button>`
@@ -743,7 +750,7 @@ function renderTailor(run){
   const stopped=run.phase==="failed"||run.phase==="cancelled";
   const continuedBy=RUNS.find(r=>r.continue_of===run.id||r.retry_of===run.id);
   const lineage=lineageOf(run),latest=lineage[lineage.length-1];
-  const origin=lineage.length>1&&latest&&latest.id!==run.id?`<div class="attempt-note">You are viewing an earlier attempt. <button class="linkish" data-run="${esc(latest.id)}">Go to the latest (#${esc(latest.attempt||lineage.length)})</button></div>`:"";
+  const origin=lineage.length>1&&latest&&latest.id!==run.id?`<div class="attempt-note">You are viewing an earlier run. <button class="linkish" data-run="${esc(latest.id)}">Go to the latest (Run ${lineage.length})</button></div>`:"";
   const failure=stopped?`<div class="failure-card"><strong>${esc(run.phase==="cancelled"?"Cancelled":FAILURE_TITLE[code]||"Run stopped")}</strong><div>${esc(run.error||"No error detail was recorded.")}</div><div class="dim">Stopped during ${esc((run.failed_phase||"unknown").replaceAll("_"," "))}${failureActivityNote(run)}</div>${FAILURE_NEXT[code]&&!continuedBy?`<div class="dim">${esc(FAILURE_NEXT[code])}</div>`:""}</div>`:"";
   // Legacy runs keep their evaluation visible; staged runs never had one.
   const fitCard=run.fit?`<div class="fitcard"><div class="fithead"><span class="fitword ${fit.overall>=70?"high":fit.overall>=50?"medium":"low"}">✓</span><strong>Earlier fit evaluation — ${esc(fit.verdict||"")}${fit.overall!=null?", "+esc(fit.overall):""}</strong></div></div>`:"";
@@ -769,6 +776,7 @@ function renderTailor(run){
   openView("tailor",[crumbRun(run),{label:"Log"}],"/app/"+encodeURIComponent(run.id)+"/log");
 }
 // Send: the last step, and the only one that happens outside JobFlow.
+const SEND_DRAFTS=new Map();
 function renderSend(run){
   if(!run)return;ACTIVE_RUN=run.id;PREVIEW_RUN=run.id;
   const review=run.review||{},checked=review.total&&review.done>=review.total,kinds=docKinds(run.scope);
@@ -779,20 +787,43 @@ function renderSend(run){
   const portal=/^https?:\/\//i.test(run.portal_url||"")?`<a class="secondary" href="${esc(run.portal_url)}" target="_blank" rel="noopener">Open portal ↗</a>`:"";
   const mailto=run.apply_email?`<a class="secondary" href="mailto:${esc(run.apply_email)}?subject=${encodeURIComponent("Application: "+(run.role||""))}">Email ${esc(run.apply_email)} ↗</a>`:"";
   const reveals=kinds.map(kind=>`<button class="secondary" data-reveal="${kind}">Reveal ${kind==="cv"?"CV":"letter"} in Finder</button>`).join("");
-  const record=state==="applied"?`<span class="applied-badge">${run.tracker_status==="applied"?"Applied ✓":esc((run.tracker_status||"").replaceAll("_"," "))}${when?" "+esc(when):""}</span>`
-    :`<button class="primary" data-applied="${esc(run.id)}">Mark applied</button>`;
+  const draft=SEND_DRAFTS.get(run.id)||run;
+  const recorded=state==="applied";
+  const record=`<label class="applied-toggle"><input type="checkbox" role="switch" id="owner-applied" form="owner-form" ${recorded||draft.mark_applied?"checked":""} ${recorded?'disabled title="Application already recorded"':""}><span class="toggle-track" aria-hidden="true"></span><span>Applied${recorded&&when?" · "+esc(when):""}</span></label>`;
   mountApp(run,"send",`<div class="send-shell"><section class="send-main">
     <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Check the PDFs</strong><div class="dim">${review.total?`${review.done} of ${review.total} checks ticked`:"No checks recorded yet"}${checked?"":` · <button class="linkish" data-app-step="review">finish them in Review</button>`}</div></div></div>
     <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${changeUrl}${portal}${mailto}${reveals}</div></div></div>
-    <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Moves the Notion Stage to Applied, the tracker row, and this job’s board status.</div><div class="title-actions">${record}</div></div></div>
+    <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Turn on after submitting your application. Click Save below to save this status together with your details.</div><div class="title-actions">${record}</div></div></div>
     <form class="send-step owner-form" id="owner-form" data-run-id="${esc(run.id)}"><span class="stepdot">✎</span><div><strong>Portal, email &amp; notes</strong><div class="dim">Where you applied - a portal to log in to again, or the address you emailed. Saved to the tracker and Notion.</div>
-      <label class="modal-label" for="owner-portal">Application portal</label><input type="url" id="owner-portal" placeholder="https://…" value="${esc(run.portal_url||"")}">
-      <label class="modal-label" for="owner-email">Application email <span class="dim">(when the posting says to email it)</span></label><input type="email" id="owner-email" placeholder="careers@…" value="${esc(run.apply_email||"")}">
-      <label class="modal-label" for="owner-notes">My notes <span class="dim">(optional)</span></label><textarea id="owner-notes" rows="3" placeholder="Login email, reference number, anything to remember…">${esc(run.my_notes||"")}</textarea>
+      <label class="modal-label" for="owner-portal">Application portal</label><input type="url" id="owner-portal" placeholder="https://…" value="${esc(draft.portal_url||"")}">
+      <label class="modal-label" for="owner-email">Application email <span class="dim">(when the posting says to email it)</span></label><input type="email" id="owner-email" placeholder="careers@…" value="${esc(draft.apply_email||"")}">
+      <label class="modal-label" for="owner-notes">My notes <span class="dim">(optional)</span></label><textarea id="owner-notes" rows="3" placeholder="Login email, reference number, anything to remember…">${esc(draft.my_notes||"")}</textarea>
       <div class="title-actions"><button class="secondary" type="submit">Save</button></div></div></form>
     <div class="writing"><div class="label">Published files</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc((run.cv_country||"ch").toUpperCase())}</div></div>
   </section></div>`);
   openView("send",[crumbRun(run),{label:"Send"}],"/app/"+encodeURIComponent(run.id)+"/send");
+}
+function captureSendDraft(){
+  const form=el("owner-form");if(!form)return;
+  const values={portal_url:el("owner-portal").value,apply_email:el("owner-email").value,
+    my_notes:el("owner-notes").value,mark_applied:!!el("owner-applied")?.checked};
+  SEND_DRAFTS.set(form.dataset.runId,values);return values;
+}
+async function saveSendForm(form){
+  if(form.dataset.saving)return;
+  const runId=form.dataset.runId,values=captureSendDraft();
+  const controls=[...form.querySelectorAll("input,textarea,button"),el("owner-applied")].filter(Boolean);
+  const disabled=controls.map(control=>control.disabled);
+  form.dataset.saving="true";controls.forEach(control=>control.disabled=true);
+  try{
+    const {ok,notion}=await postRun("/api/runs/"+encodeURIComponent(runId)+"/owner",values);
+    if(!ok)return;
+    SEND_DRAFTS.delete(runId);
+    toast(notion?"Saved · tracker and Notion":"Saved in the tracker (Notion sync is off)",{ms:3000});
+    if(values.mark_applied)void reloadJobs().catch(()=>{});
+    const fresh=RUNS.find(r=>r.id===runId);if(fresh&&VIEW==="send"&&ACTIVE_RUN===runId)openApp(fresh,"send");
+  }catch(error){toast("Could not save. Your entries are kept; please try again.",{warn:true,ms:6000})}
+  finally{delete form.dataset.saving;controls.forEach((control,i)=>control.disabled=disabled[i])}
 }
 // Deleting is soft (trash + tombstone) and says exactly what goes and what
 // stays; a sent application also needs its company name typed.
@@ -1493,7 +1524,7 @@ document.addEventListener("click",event=>{
   const delAttempt=event.target.closest("[data-delete-attempt]");if(delAttempt){delAttempt.closest("details")?.removeAttribute("open");return void deleteApp(delAttempt.dataset.deleteAttempt,"attempt")}
   const appStep=event.target.closest("[data-app-step]");if(appStep){appStep.closest("details")?.removeAttribute("open");const run=RUNS.find(r=>r.id===ACTIVE_RUN);if(run)openApp(run,appStep.dataset.appStep);return}
   const boardJob=event.target.closest("[data-board-job]");if(boardJob){if(!showJobOnBoard(boardJob.dataset.boardJob))toast("This posting is no longer on the Board",{warn:true});return}
-  const appLink=event.target.closest("[data-app]");if(appLink){const run=RUNS.find(r=>r.id===appLink.dataset.app);if(run)openApp(run);return}
+  const appLink=event.target.closest("[data-app]");if(appLink){const run=RUNS.find(r=>r.id===appLink.dataset.app);if(run){APPS_REVIEW_LIST=false;layout.appsCollapsed=true;saveLayout();openApp(run)}return}
   const chip=event.target.closest("[data-filter]");if(chip){filter=chip.dataset.filter;sel=0;render();return}
   // The source menu: a tick toggles one source, "only" solos it - with five
   // sources, "show me only the ATS rows" is one click that way and four the other.
@@ -1524,11 +1555,6 @@ document.addEventListener("click",event=>{
   const restoreVersion=event.target.closest("[data-restore-version]");if(restoreVersion){restoreVersion.disabled=true;postRun("/api/runs/"+restoreVersion.dataset.restoreVersion+"/restore").then(({ok})=>{const run=RUNS.find(r=>r.id===REVISE_RUN);if(ok&&run)renderRevise(run)});return}
   const versionPreview=event.target.closest("[data-version-preview]");if(versionPreview){const run=RUNS.find(r=>r.id===versionPreview.dataset.versionPreview);if(run)openApp(run,"review");return}
   const previewFilter=event.target.closest("[data-preview-filter]");if(previewFilter){const main=el("preview-main");main.classList.toggle("cv-only",previewFilter.dataset.previewFilter==="cv");main.classList.toggle("cover-only",previewFilter.dataset.previewFilter==="cover");document.querySelectorAll("[data-preview-filter]").forEach(node=>node.classList.toggle("on",node===previewFilter));return}
-  const applied=event.target.closest("[data-applied]");if(applied){const run=RUNS.find(r=>r.id===applied.dataset.applied);if(!run)return;
-    applied.disabled=true;postRun("/api/runs/"+run.id+"/applied",{}).then(({ok,notion})=>{
-      if(ok){toast(notion?`Marked applied · Notion Stage: ${notion}`:"Marked applied in the tracker (Notion sync is off)",{ms:3500});void reloadJobs().catch(()=>{})}
-      else applied.disabled=false;
-      const fresh=RUNS.find(r=>r.id===run.id)||run;openApp(fresh,"send")});return}
   const reveal=event.target.closest("[data-reveal]");if(reveal&&PREVIEW_RUN){postRun("/api/runs/"+PREVIEW_RUN+"/reveal",{kind:reveal.dataset.reveal});return}
   const variant=event.target.closest("[data-variant]");if(variant&&PREVIEW_RUN){const run=RUNS.find(r=>r.id===PREVIEW_RUN);if(!run)return;
     if(!confirm(`Switch the CV to the ${variant.dataset.variant.toUpperCase()} master variant? Earlier edits to this CV are not carried over; the current version stays under Versions.`))return;
@@ -1554,6 +1580,7 @@ async function postCompany(path,body,method="POST"){
   return data;
 }
 document.addEventListener("input",event=>{
+  if(["owner-portal","owner-email","owner-notes","owner-applied"].includes(event.target.id)){captureSendDraft();return}
   if(event.target.id==="apps-q"){APPS_Q=event.target.value;renderAppsList();return}
   if(event.target.id!=="company-search")return;
   const position=event.target.selectionStart;COMPANY_QUERY=event.target.value;
@@ -1562,12 +1589,7 @@ document.addEventListener("input",event=>{
 document.addEventListener("submit",event=>{
   if(event.target.id==="posting-url-form"){event.preventDefault();return void savePostingUrl()}
   if(event.target.id==="owner-form"){
-    event.preventDefault();const form=event.target,runId=form.dataset.runId,button=form.querySelector("button[type=submit]");
-    button.disabled=true;
-    postRun("/api/runs/"+encodeURIComponent(runId)+"/owner",{portal_url:el("owner-portal").value,apply_email:el("owner-email").value,my_notes:el("owner-notes").value}).then(({ok,notion})=>{
-      button.disabled=false;if(!ok)return;
-      toast(notion?"Saved · tracker and Notion":"Saved in the tracker (Notion sync is off)",{ms:3000});
-      const fresh=RUNS.find(r=>r.id===runId);if(fresh&&VIEW==="send"&&ACTIVE_RUN===runId)openApp(fresh,"send")});return;
+    event.preventDefault();void saveSendForm(event.target);return;
   }
   if(event.target.id==="company-add"){
     // One field: the name comes from the link and can be changed under ⋯.

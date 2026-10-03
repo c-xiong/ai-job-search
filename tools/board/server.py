@@ -637,13 +637,18 @@ class Handler(BaseHTTPRequestHandler):
             values, error = owner_values(payload)
             if error:
                 return self._send(400, json.dumps({"error": error}))
+            applied = payload.get("mark_applied", False)
+            if not isinstance(applied, bool):
+                return self._send(400, json.dumps({"error": "mark_applied must be a boolean"}))
             # Notion first, as for Mark applied: the tracker is its cache.
             try:
-                synced = notion.save_owner_fields(record, values)
+                synced = notion.save_owner_fields(record, values, mark_applied=applied)
             except notion.NotionError as exc:
                 return self._send(502, json.dumps({"error": "Notion: %s" % exc}))
-            body = {"notion": synced, "tracker": docs.save_owner_fields(record, values),
+            body = {"notion": synced, "tracker": docs.save_owner_fields(record, values, mark_applied=applied),
                     **values}
+            if applied:
+                body["board"] = mark_board_applied(record.get("job_url"))
             activity.emit("board", "saved portal/email/notes: %s - %s (Notion %s, tracker %s)"
                           % (record["company"], record["role"], synced or "off",
                              body["tracker"]), run_id=run_id)

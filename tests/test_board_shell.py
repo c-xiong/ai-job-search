@@ -645,9 +645,26 @@ t("an attempt already continued links forward instead of offering Continue again
   !ctx.html.includes("continuerun")&&ctx.html.includes('data-run="run-2"'));
 t("every attempt is one tab in a single switcher",
   (ctx.html.match(/class="attempt /g)||[]).length===2&&ctx.html.includes('aria-selected="true"'));
-t("an earlier attempt points to the latest one",ctx.html.includes("Go to the latest (#2)"));
+t("an earlier attempt points to the latest one",ctx.html.includes("Go to the latest (Run 2)"));
 R.renderTailor({...failed,id:"run-2",continue_of:"run-1",attempt:2});
 t("the latest attempt shows no redirect note",!ctx.html.includes("Go to the latest"));
+const versions=[
+  {...run,id:"v3",attempt:1,phase:"drafting",parent:"v2",started_at:"2026-01-03T10:00:00"},
+  {...run,id:"v2",attempt:1,phase:"done",parent:"v1",started_at:"2026-01-02T10:00:00"},
+  {...run,id:"v1",attempt:1,phase:"done",started_at:"2026-01-01T10:00:00"},
+];
+R.setRuns(versions);
+R.renderTailor(versions[2]);
+const tabs=ctx.html.match(/<div class="attempts"[\s\S]*?<\/div>/)[0];
+t("duplicate attempt numbers render oldest to newest",tabs.indexOf('data-run="v1"')<tabs.indexOf('data-run="v2"')&&tabs.indexOf('data-run="v2"')<tabs.indexOf('data-run="v3"'));
+t("runs receive distinct chronological numbers",tabs.includes("Run 1</button>")&&tabs.includes("Run 2</button>")&&tabs.includes('Run 3<span class="attempt-latest">Latest</span>'));
+t("only the newest run is marked latest",(tabs.match(/class="attempt-latest"/g)||[]).length===1);
+t("revision tooltips use the same numbering",tabs.includes("revised from Run 2")&&tabs.includes("2026-01-03 10:00:00"));
+t("the latest link ignores duplicate attempt metadata",ctx.html.includes("Go to the latest (Run 3)"));
+R.renderTailor({...versions[1],phase:"failed"});
+t("delete menu uses the displayed run number",ctx.html.includes("Delete Run 2…"));
+R.renderTailor(versions[0]);
+t("the newest revision has no earlier-run note",!ctx.html.includes("Go to the latest"));
 R.setRuns([]);
 R.renderTailor({...run,pipeline:undefined,phase:"awaiting_approval",fit:{overall:78,verdict:"good"}});
 t("a legacy gate is continued, not re-evaluated",ctx.html.includes("continuerun")&&!ctx.html.includes("retryrun"));

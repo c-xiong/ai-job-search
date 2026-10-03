@@ -251,6 +251,37 @@ class NotionSyncTest(unittest.TestCase):
         self.assertEqual(props, {"Application Portal": {"url": None},
                                  "My Notes": {"rich_text": []}})
 
+    def test_owner_save_combines_application_status_and_details(self):
+        record = {"job_url": "https://example.test/jobs/1", "company": "Example",
+                  "role": "Engineer", "targets": {}}
+        values = {"apply_email": "careers@example.test", "my_notes": "Reference 42"}
+        for stage, status in (("Interested", "drafted"), ("Onsite", "interview")):
+            with self.subTest(stage=stage):
+                row = page("p1", Position_Title="Engineer", Company="Example", Stage=stage,
+                           Job_Posting_URL=record["job_url"])
+                fake = self.fake([row])
+                self.write_tracker({"date": "2026-09-19", "company": "Example",
+                                    "role": "Engineer", "status": status})
+                notion.save_owner_fields(record, values, mark_applied=True)
+                patches = [body["properties"] for method, path, body in fake.calls
+                           if method == "PATCH" and path == "/pages/p1"]
+                self.assertEqual(len(patches), 1)
+                self.assertEqual(patches[0]["Application Email"], {"email": values["apply_email"]})
+                if status == "drafted":
+                    self.assertEqual(patches[0]["Stage"], {"select": {"name": "Applied"}})
+                    self.assertIn("Follow-up Date", patches[0])
+                else:
+                    self.assertNotIn("Stage", patches[0])
+                with mock.patch.object(docs, "_write_tracker", wraps=docs._write_tracker) as write:
+                    docs.save_owner_fields(record, values, mark_applied=True)
+                    self.assertEqual(write.call_count, 1)
+                saved = self.read_tracker()[0]
+                self.assertEqual(saved["status"], "applied" if status == "drafted" else status)
+                self.assertEqual(saved["apply_email"], values["apply_email"])
+                self.assertEqual(saved["my_notes"], values["my_notes"])
+                self.assertEqual(saved["date"], notion.date.today().isoformat()
+                                 if status == "drafted" else "2026-09-19")
+
     def test_pull_mirrors_owner_fields_and_upgrades_old_header(self):
         legacy = docs.CANONICAL_HEADER[:14]
         with open(self.tracker, "w", newline="") as handle:

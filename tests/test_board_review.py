@@ -1,5 +1,6 @@
 """Manual PDF review (the default): no model checks, owner-driven revisions."""
 
+import os
 import re
 import sys
 import unittest
@@ -9,11 +10,67 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from board_harness import SupervisorCase  # noqa: E402
-from board import checkpoint, review, run_registry  # noqa: E402
+from board import checkpoint, docs, review, run_registry  # noqa: E402
 
 
 class ManualReviewTest(SupervisorCase):
     automated_review = False
+
+    def test_overflow_is_repaired_without_enabling_content_review(self):
+        original = docs.pdf_pages
+
+        def pages(pdf):
+            if "cover" in Path(pdf).name and "repair" not in self.stages():
+                return 2
+            return original(pdf)
+
+        with mock.patch.object(docs, "pdf_pages", side_effect=pages):
+            run_id, phase = self.run_to_end()
+        self.assertEqual(phase, "done", run_registry.get(run_id).get("error"))
+        self.assertEqual(self.stages(run_id), ["draft", "repair"])
+        self.assertEqual(run_registry.get(run_id)["budget_usd"]["pass_c"],
+                         2 * run_registry.config()["budget_usd"]["pass_c"])
+
+    def test_unresolved_overflow_stops_after_two_repairs_without_publication(self):
+        original = docs.pdf_pages
+        with mock.patch.object(docs, "pdf_pages", side_effect=lambda pdf:
+                               2 if "cover" in Path(pdf).name else original(pdf)):
+            run_id, phase = self.run_to_end()
+        self.assertEqual(phase, "failed")
+        self.assertEqual(self.stages(run_id), ["draft", "repair", "repair"])
+        self.assertNotIn("recorded", self.manifest(run_id)["publication"])
+        self.assertFalse((self.home / run_registry.get(run_id)["targets"]["cover"]).exists())
+
+    def test_saved_overflow_is_remeasured_in_manual_mode(self):
+        run_id, _ = self.run_to_end()
+        manifest = self.manifest(run_id)
+        checkpoint.record_check(manifest, "mechanical_cover", "fail",
+                                checkpoint.mechanical_inputs(manifest, "cover"), "overflow",
+                                {"checks": [{"id": "cover_page_count", "state": "fail"}]})
+        plan = checkpoint.plan(manifest, ["cover"],
+                               self.supervisor._toolchains(["cover"]),
+                               inspection_enabled=False, review_enabled=False)
+        self.assertEqual(plan[0], ("mechanical", ["cover"]))
+
+    def test_fit_repair_cannot_shrink_the_layout(self):
+        original = docs.pdf_pages
+        with mock.patch.dict(os.environ, {"FAKE_REPAIR": "squeeze"}), \
+                mock.patch.object(docs, "pdf_pages", side_effect=lambda pdf:
+                                  2 if "cover" in Path(pdf).name else original(pdf)):
+            run_id, phase = self.run_to_end()
+        self.assertEqual(phase, "failed")
+        self.assertIn("repair discarded", run_registry.get(run_id)["error"])
+        source = checkpoint.absolute(self.manifest(run_id)["docs"]["cover"]["source"]["path"])
+        self.assertNotIn("enlargethispage", source.read_text())
+
+    def test_class_change_invalidates_the_saved_build(self):
+        run_id, _ = self.run_to_end()
+        manifest = self.manifest(run_id)
+        (self.home / "cover_letters" / "cover.cls").write_text("% updated layout\n")
+        plan = checkpoint.plan(manifest, ["cover"],
+                               self.supervisor._toolchains(["cover"]),
+                               inspection_enabled=False, review_enabled=False)
+        self.assertEqual(plan[0], ("build", ["cover"]))
 
     def test_only_the_letter_is_drafted_and_nothing_reviews_the_pdfs(self):
         run_id, phase = self.run_to_end()

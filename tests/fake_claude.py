@@ -270,6 +270,10 @@ def main():
             if os.environ.get("FAKE_REPAIR") == "truncate":
                 write_through_guard(path, text[: len(text) // 2])
                 continue
+            if os.environ.get("FAKE_REPAIR") == "squeeze":
+                write_through_guard(path, text.replace(
+                    "\\end{document}", "\\enlargethispage{20mm}\n\\end{document}"))
+                continue
             write_through_guard(path, text.replace(
                 "\\end{document}", "\\needspace{5\\baselineskip}\n\\end{document}"))
         return finish(session, 0.08, "repaired")

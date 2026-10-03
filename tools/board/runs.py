@@ -1495,6 +1495,19 @@ class Supervisor:
                 manifest["issues"].append("%s edit (%s) discarded, last good version kept: %s"
                                           % (kind, stage, reason or "no guard record"))
                 continue
+            if layout_only and kind == "cover":
+                after_text = path.read_text(encoding="utf-8")
+                base_text = docs.cover_base().read_text(encoding="utf-8")
+                problems = (docs.cover_blocks.validate_fixed_blocks(after_text, base_text)["issues"]
+                            + docs.cover_blocks.validate_layout(after_text, base_text)["issues"])
+                code_text = "\n".join(re.split(r"(?<!\\)%", line, 1)[0]
+                                      for line in after_text.splitlines())
+                if docs.COVER_SQUEEZE.search(code_text.split("\\begin{document}", 1)[-1]):
+                    problems.append("layout squeezing is not allowed")
+                if problems:
+                    shutil.copyfile(str(history[kind]), str(path))
+                    raise RunFailure("cover repair discarded; approved prose/layout changed: "
+                                     + "; ".join(problems), code="verification_failed")
             old_content = before_checks.get(kind)
             old_consistency = before_consistency
             checkpoint.record_doc(manifest, kind, path, "%s:%s" % (stage, run_id),
@@ -1565,6 +1578,7 @@ class Supervisor:
         run_id = record["id"]
         keywords = manifest.get("keywords") or []
         failing = []
+        cover_overflow = []
         for kind in kinds:
             entry = manifest["docs"][kind]
             pdf = checkpoint.absolute(entry["pdf"]["path"])
@@ -1579,18 +1593,25 @@ class Supervisor:
                                     or "all mechanical checks passed",
                                     {"checks": checks, "coverage": coverage})
             if state == "fail":
-                failing += [{"doc": kind, "page": 1, "kind": c["label"],
+                failing += [{"doc": kind, "page": 1, "kind": c["label"], "check_id": c["id"],
                              "fix_hint": c["detail"]} for c in checks if c["state"] == "fail"]
+                cover_overflow += [{"doc": kind, "page": 1, "kind": c["label"],
+                                    "fix_hint": c["detail"]} for c in checks
+                                   if c["id"] == "cover_page_count" and c["state"] == "fail"]
         checkpoint.save(run_id, manifest)
         if failing and not review:
-            # Manual checking: a failed measurement is listed for the owner, and
-            # never starts a model repair or stops the documents being published.
+            # Manual content review does not waive the rendered page limit.
+            if cover_overflow:
+                self._repair(record, manifest, cover_overflow, settings, counters,
+                             "cover letter exceeds its rendered page limit")
+                return
             activity.emit("verify", "%s mechanical flags for you to check: %s"
                           % (run_id, "; ".join("%s %s" % (i["doc"], i["kind"])
                                                for i in failing)), level="warn", run_id=run_id)
             return
         if failing:
-            repairable = [i for i in failing if "page" in i["kind"] or "placeholder" in
+            repairable = [i for i in failing if i.get("check_id") == "cover_words"
+                          or "page" in i["kind"] or "placeholder" in
                           i["kind"].lower()]
             if len(repairable) != len(failing):
                 raise RunFailure("mechanical checks failed and are not layout-repairable: %s"
@@ -1679,6 +1700,11 @@ class Supervisor:
         """Idempotent: re-running it after an interruption writes nothing twice."""
         run_id = record["id"]
         blockers = []
+        # Check the actual bytes even on resumed/manual runs, before any live
+        # file is replaced. A stale checkpoint must not bypass the page limit.
+        if "cover" in kinds:
+            docs.require_cover_page_limit(checkpoint.absolute(
+                manifest["docs"]["cover"]["pdf"]["path"]))
         for kind in (kinds if review else ()):
             content = checkpoint.check_valid(manifest, "content_" + kind,
                                              checkpoint.content_inputs(manifest, kind))
@@ -2266,6 +2292,12 @@ class Supervisor:
             "motivation and closing sentences, preserving the role attraction, personal "
             "direction and grounded contribution. Omit optional publication or the "
             "least relevant third highlight before hollowing out these ideas. "
+            "For page overflow, remove optional publication or the least relevant "
+            "third highlight first; keep at least two distinct highlights. Then "
+            "shorten only the customised role motivation and closing sentences. "
+            "The company address, header, salutation and signature all consume "
+            "page space: preserve them and leave room for them. A word count "
+            "alone does not prove that the letter fits. "
             "For legacy letters without fixed blocks, remove redundant wording first. "
             "Keep the role-motivation paragraph before the fixed introduction and the "
             "closing after selected evidence. Preserve factual scope. Page limits: %s.\n\n%s\n\n%s"

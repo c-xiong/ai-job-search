@@ -423,6 +423,20 @@ class DocsTest(unittest.TestCase):
         with self.assertRaises(docs.DocumentError):
             docs.publish_document(self.record, "cv", source, pdf)
 
+    def test_overflow_never_replaces_a_finished_cover(self):
+        source, pdf = self.root / "draft.tex", self.root / "draft.pdf"
+        source.write_text("anonymous draft")
+        pdf.write_bytes(PDF_ONE.replace(b"%%EOF", b"2 0 obj <</Type /Page>> endobj\n%%EOF"))
+        with mock.patch.object(docs, "_atomic_copy") as copy:
+            for action in (
+                lambda: docs.publish_document(self.record, "cover", source, pdf),
+                lambda: docs.submission_copy(self.record, "cover", pdf),
+                lambda: docs.snapshot_record(self.record, {"cover": pdf}),
+            ):
+                with self.assertRaisesRegex(docs.DocumentError, "exactly 1 required"):
+                    action()
+            copy.assert_not_called()
+
     def test_archive_is_verbatim_and_never_overwrites(self):
         run_dir = run_registry.run_dir("r-test")
         run_dir.mkdir(parents=True)

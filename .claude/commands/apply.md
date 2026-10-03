@@ -212,6 +212,14 @@ deal-breaker yourself.
   data or time-aware research evaluation contribute more. The approved samples
   supply wording and layout, not default evidence
   choices for unrelated postings.
+- For software delivery roles, follow the base's software selection policy:
+  prefer `jobjuniors_software` for the expanded architecture, failure-handling
+  and testing evidence; never combine it with `jobjuniors`. Keep `event_platform`
+  brief when Java/Spring Boot or backend correctness contributes a distinct
+  strength. Do not select `research_interface` as a software-role bullet.
+  Relevant interface/research work may appear only in the optional `publication`
+  natural paragraph after the list, naming the venue without authorship rank.
+  Do not force either the course project or publication into unrelated roles.
 - Copy each selected COVER_TEXT verbatim into a matching USE_COVER_TEXT wrapper.
   Preserve markers, IDs and punctuation. No paraphrasing, compression, bold labels
   or added mechanisms. Missing suitable evidence is a library-coverage issue to
@@ -250,6 +258,13 @@ deal-breaker yourself.
   library update. The `cover_fixed_blocks` mechanical check detects missing,
   modified or unmarked core text and a changed base preamble; manual review mode
   still reports check failures.
+- The rendered cover page limit is mandatory even with automated review off.
+  Count the complete PDF, including the company address and signature. On
+  overflow, remove optional publication or the least relevant third highlight,
+  then shorten only tailored motivation/closing while keeping two distinct
+  fixed highlights. Rebuild after each change; at most two automatic repairs
+  are allowed. If it still does not fit, keep the draft and report the problem;
+  never publish the overflowing PDF as finished. Word count is not a fit test.
 - A CV-only run never writes a letter; a cover-only run reads CV evidence without
   editing it. Default English copy is maintained in the library; translations or
   new evidence variants require a separate template update, not ad hoc rewriting.

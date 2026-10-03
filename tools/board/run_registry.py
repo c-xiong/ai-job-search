@@ -136,13 +136,13 @@ def stage_budget(settings, kind="apply"):
     """
     caps = settings["budget_usd"]
     if not settings.get("automated_review", False):
-        # Manual checking: the only model pass after drafting is one repair
-        # of a source that does not compile.
-        budget = {"pass_c": float(caps["pass_c"])}
+        # Reserve both bounded compile/page-fit repairs, even in manual mode.
+        budget = {"pass_c": 2 * float(caps["pass_c"])}
     else:
         budget = {"review": 2 * float(caps["review"]), "fix": float(caps["fix"]),
                   "pass_c": (5 * float(caps["pass_c"])
-                             if settings.get("inspection_enabled", True) else 0.0)}
+                             if settings.get("inspection_enabled", True)
+                             else 2 * float(caps["pass_c"]))}
     if kind == "revise":
         budget["revise"] = float(caps["revise"])
     else:

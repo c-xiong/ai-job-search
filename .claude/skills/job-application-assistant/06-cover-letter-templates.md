@@ -69,14 +69,22 @@ for the next highlight:
   checks, failure handling, tracing and regression evaluation.
 - `jobjuniors`: translating product requirements into architecture and carrying
   implementation through testing and deployment.
+- `jobjuniors_software`: expanded software-delivery evidence connecting product
+  ownership with system design, failure handling and testing. Prefer this for
+  relevant software roles; use the shorter `jobjuniors` for supporting delivery
+  evidence in other roles. Never select both variants of the same internship.
 - `nlp_research`: NLP pipelines, data preparation and research evaluation.
 - `nlp_models`: hands-on fine-tuning, empirical model comparison, and quality
   versus memory/response-time judgement. Useful for applied AI, LLM product and
   agent engineering as well as research; an explicit fine-tuning requirement is
   not necessary when this adds relevant evidence of model-level judgement.
-- `research_interface`: human–LLM research and its experimental interface.
-- `event_platform`: course-based software engineering.
-- `publication`: optional research evidence when it helps explain the role fit.
+- `research_interface`: human–LLM research and its experimental interface;
+  not a separate highlight for software delivery roles.
+- `event_platform`: brief course-based Java/Spring Boot evidence when backend
+  correctness or language/framework experience adds a relevant strength.
+- `publication`: optional short natural paragraph after the list, explaining
+  the interface work and naming the publication venue without authorship rank.
+  Include only when relevant and within budget, never as a publication bullet.
 
 Choose the two strongest complementary examples. `nlp_models` can complement
 `contract_agent`: classification/model comparison is different evidence from

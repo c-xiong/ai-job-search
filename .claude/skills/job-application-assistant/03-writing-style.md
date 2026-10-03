@@ -49,7 +49,8 @@ retaining USE_COVER_TEXT markers. Select/order by responsibilities; do not rewri
 them to insert keywords, simplify them or improve their style. Add optional
 publication or a third highlight only when it contributes distinct relevant
 evidence and both tailored parts fit the budget. Never combine nlp_research with
-nlp_models, or research_interface with publication: each pair describes the same
+nlp_models, research_interface with publication, or jobjuniors with
+jobjuniors_software: each pair describes the same
 work. Each complete fixed introduction starts with what the candidate builds, integrates the
 current NLP Research Assistant role, LLM/macroeconomics research and completed MSc
 requirements, then states an engineering interest. Preserve that personal voice;
@@ -57,6 +58,10 @@ do not replace it with an application announcement or add another background par
 Degree requirements are complete; a conferral date has not been confirmed.
 JobJuniors demonstrates translating product requirements into architecture and
 engineering delivery; do not substitute a new narrow payment/staff-tool anecdote.
+For software delivery roles, select the approved expanded engineering variant
+when relevant. Keep the course-project evidence brief, and any relevant research
+interface/publication in the optional natural paragraph after the list, with
+the venue but no authorship-rank emphasis. Follow the base's selection policy.
 Describe the research with the approved NLP-pipeline and machine-learning wording,
 and preserve the independent open-source project's documented scope. Named methods
 can explain engineering choices and behavior, as in the approved agent paragraph;

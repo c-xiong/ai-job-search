@@ -430,6 +430,15 @@ def mark_applied(record):
     stage = read(page, "Stage")
     if stage not in (None, "Interested"):
         return stage
+    props = _applied_properties(page)
+    _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
+    return "Applied"
+
+
+def _applied_properties(page):
+    """Forward-only application transition, shared with the Send form save."""
+    if read(page, "Stage") not in (None, "Interested"):
+        return {}
     today = date.today().isoformat()
     props = {"Stage": _select("Applied")}
     if not read(page, "Application Date"):
@@ -439,8 +448,7 @@ def mark_applied(record):
         kind = next(iter(value))
         view["properties"][name] = {"type": kind, kind: value[kind]}
     props.update(_derive(view, today))
-    _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
-    return "Applied"
+    return props
 
 
 def _page_for(cfg, record):
@@ -456,7 +464,7 @@ def _page_for(cfg, record):
     return page
 
 
-def save_owner_fields(record, values):
+def save_owner_fields(record, values, mark_applied=False):
     """The owner saved the portal link and/or notes on the Send step.
 
     `values` maps tracker columns (`portal_url`, `apply_email`, `my_notes`) to
@@ -471,6 +479,8 @@ def save_owner_fields(record, values):
     _ensure_owner_properties(cfg)
     props = {OWNER_PROPS[column][0]: _owner_value(column, value)
              for column, value in values.items() if column in OWNER_PROPS}
+    if mark_applied:
+        props.update(_applied_properties(page))
     _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
     return "updated"
 

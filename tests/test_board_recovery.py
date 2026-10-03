@@ -534,7 +534,7 @@ class RevisionTest(SupervisorCase):
         original = runs.Supervisor._stage_draft
 
         def draft_after_reported_revision(supervisor, record, *args):
-            # Match the live failure: $0.5868 spent from a $5.50 reservation.
+            # $0.5868 spent from the revision plus two-repair reservation.
             run_registry.debit(0.3868, record["id"])
             return original(supervisor, record, *args)
 
@@ -546,14 +546,14 @@ class RevisionTest(SupervisorCase):
             self.assertEqual(self.settle(new_id), "done", run_registry.get(new_id).get("error"))
         self.assertEqual(self.stages()[before:], ["revise", "draft"])
         record = run_registry.get(new_id)
-        self.assertEqual(sum(record["budget_usd"].values()), 5.50)
+        self.assertEqual(sum(record["budget_usd"].values()), 7.00)
         self.assertLess(record["cost"]["total_usd"], 5.50)
         self.assertEqual(run_guard.validate_letter_plan(
             self.manifest(new_id)["brief"]["letter_plan"]), [])
         argv = next(json.loads(spec.read_text())["argv"]
                     for spec in run_registry.state_dir(new_id).glob("spec-*.json")
                     if "stage: DRAFT" in json.loads(spec.read_text())["argv"][-1])
-        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "4.91")
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "6.41")
         self.assertIn("Scope: brief only", argv[-1])
 
     def test_continue_migrates_a_legacy_brief_without_repeating_a_saved_revision(self):
@@ -592,7 +592,7 @@ class RevisionTest(SupervisorCase):
         argv = next(json.loads(spec.read_text())["argv"]
                     for spec in run_registry.state_dir(continued).glob("spec-*.json")
                     if "stage: DRAFT" in json.loads(spec.read_text())["argv"][-1])
-        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "5.50")
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "7.00")
 
     def test_a_revision_edits_the_adopted_version_in_a_fresh_session(self):
         first, _phase = self.run_to_end()

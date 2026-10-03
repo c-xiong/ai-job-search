@@ -296,8 +296,12 @@ def consistency_inputs(manifest):
 
 
 def build_inputs(manifest, kind, toolchain):
-    return {"source": current_source_sha(manifest, kind),
-            "toolchain": sha256_json(toolchain)}
+    inputs = {"source": current_source_sha(manifest, kind),
+              "toolchain": sha256_json(toolchain)}
+    if kind == "cover" and toolchain.get("kind") == "latex":
+        inputs["cover_class"] = sha256(run_registry.ROOT / (
+            toolchain.get("home") or "cover_letters") / "cover.cls") or "absent"
+    return inputs
 
 
 def mechanical_inputs(manifest, kind):
@@ -354,8 +358,8 @@ def plan(manifest, kinds, toolchains, inspection_enabled=True, review_enabled=Tr
     Mechanical stages (`build`, `mechanical`, `publish`) never need a model.
 
     With `review_enabled` off (the default, `automated_review: false`) the owner
-    checks the PDFs by hand: no review, fix, repair or inspection is planned,
-    and a document only has to exist, build and be mechanically measured.
+    checks the PDFs by hand: content review and inspection are skipped, but
+    cover page overflow still requires a bounded repair and a fresh build.
     """
     inspection_enabled = inspection_enabled and review_enabled
     posting = manifest.get("inputs", {}).get("posting") or {}
@@ -399,7 +403,10 @@ def plan(manifest, kinds, toolchains, inspection_enabled=True, review_enabled=Tr
         steps.append(("build", unbuilt))
     mechanical = {k: check_valid(manifest, "mechanical_" + k, mechanical_inputs(manifest, k))
                   for k in kinds}
-    unchecked = [k for k in kinds if k in unbuilt or not mechanical[k]]
+    unchecked = [k for k in kinds if k in unbuilt or not mechanical[k] or (
+        not review_enabled and k == "cover" and any(
+            c.get("id") == "cover_page_count" and c.get("state") == "fail"
+            for c in (mechanical[k].get("evidence") or {}).get("checks", [])))]
     if unchecked:
         steps.append(("mechanical", unchecked))
     visual = {k: check_valid(manifest, "visual_" + k, visual_inputs(manifest, k))
