@@ -490,9 +490,11 @@ def fetch(sources=SOURCES, max_companies=None, max_new_jobs=None, detail_budget=
             status(True)
 
         if budget.deferred:
-            log("  . %d LinkedIn postings stored without a description - the run's detail "
-                "budget (%d) was spent; they are stored unscreened and can be screened next run"
-                % (budget.deferred, budget.limit))
+            why = ("LinkedIn rate-limited the description fetches (HTTP 429) after %d"
+                   % budget.used if budget.blocked
+                   else "the run's detail budget (%d) was spent" % budget.limit)
+            log("  . %d LinkedIn postings stored without a description - %s; they are "
+                "stored unscreened and can be screened next run" % (budget.deferred, why))
 
         # ---- merge and write (fast, locked) --------------------------------
         with jobs_md.board_lock():

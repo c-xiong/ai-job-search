@@ -35,9 +35,9 @@ approval pause on this path; a fit evaluation runs only when the user asks for o
 ### Step 3: Write Cover Letter
 - Follow the writing style rules in `03-writing-style.md` (critical: no em-dashes, no cliches)
 - Follow the template structure in `06-cover-letter-templates.md`
-- Start from the one cover base, `cover_letters/my_cover.tex`, for every role: obey its TAILORING RULES block, write a tailored motivation paragraph, select one exact fixed introduction and 2-3 distinct COVER_LIBRARY_V1 highlights by the posting's tasks, retain USE_COVER_TEXT markers, then write a tailored closing with a different purpose
-- Keep fixed wording unchanged in draft, review and repair; never combine nlp_research with nlp_models or research_interface with publication. Use named methods only where the approved text explains relevant behavior or engineering decisions
-- Follow the base's motivation/closing and evidence-selection rules, including considering nlp_models for applied AI work beyond research when it adds a distinct strength. Budget both tailored paragraphs before optional evidence. At most 380 body words, usually 250–360 without padding; exactly one page with the base's approved margins and typography. Preserve its preamble exactly apart from whitespace/comments; add no packages or formatting overrides
+- Start from `cover_letters/my_cover.tex` and follow its TAILORING RULES and evidence boundaries. In narrative mode, keep facts fixed while adapting wording and paragraph order throughout the letter. Use the approved examples for voice, never as employer facts or compulsory sentences.
+- Choose complementary evidence by actual responsibilities; give each paragraph a distinct purpose. Keep background proportionate, motivation sincere and closing concise. Review factual scope and whole-letter flow independently.
+- At most 380 body words, exactly one page; preserve the canonical preamble, margins and typography. Older COVER_LIBRARY_V1 bases retain their exact-block rules.
 - Create `cover_letters/cover_<company>_<role>.tex`
 - Ensure the letter connects the strongest specific experience to the role rather than answering every requirement; use no more than one honest adjacent-skill bridge and omit generic programme language
 

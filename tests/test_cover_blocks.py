@@ -208,6 +208,45 @@ class FixedBlocksTest(unittest.TestCase):
                          {"enabled": False, "selected": [], "issues": []})
 
 
+class ProseBlocksTest(unittest.TestCase):
+    """New paragraph bases preserve the same factual and structural boundaries."""
+
+    def source(self):
+        source = letter()
+        source = source.replace("{\\raggedright\\letterbodyfont\n\\begin{itemize}[leftmargin=1.2em]\n", "")
+        source = source.replace("\\end{itemize}\\par}\n\\vspace{6pt}\n", "")
+        for ident in ("agent", "product"):
+            source = source.replace("\\item " + TEXTS[ident][1],
+                                    "\\lettercontent{" + TEXTS[ident][1] + "}")
+        return source
+
+    def check(self, source):
+        return cover_blocks.validate_fixed_blocks(source, BASE + "\n% COVER_FORMAT paragraphs\n")
+
+    def test_prose_preserves_approved_text_and_layout(self):
+        self.assertEqual(self.check(self.source())["issues"], [])
+        source = self.source().replace("\\documentclass{cover}\n", PREAMBLE)
+        prose_base = BASE + "\n% COVER_FORMAT paragraphs\n" + source
+        self.assertEqual(cover_blocks.validate_layout(source, prose_base)["issues"], [])
+
+    def test_lists_and_mixed_wrappers_are_rejected(self):
+        self.assertTrue(self.check(letter())["issues"])
+        for extra in ("\\begin{itemize}\\end{itemize}",
+                      "\\begin{enumerate}\\end{enumerate}", "\\item New claim."):
+            with self.subTest(extra=extra):
+                self.assertTrue(self.check(self.source().replace("\\closing{", extra + "\n\\closing{"))["issues"])
+
+    def test_prose_does_not_relax_facts_markers_or_order(self):
+        for source in (
+                self.source().replace("1,200 users", "12,000 users"),
+                self.source().replace("% USE_COVER_TEXT agent\n", ""),
+                self.source().replace("\\closing{", "\\lettercontent{Extra claim.}\n\\closing{"),
+                self.source().replace("USE_COVER_TEXT agent", "USE_COVER_TEXT product"),
+                self.source().replace("USE_COVER_TEXT opening_ai", "USE_COVER_TEXT agent")):
+            with self.subTest(source=source):
+                self.assertTrue(self.check(source)["issues"])
+
+
 class CoverLayoutTest(unittest.TestCase):
     def source(self):
         return letter().replace("\\documentclass{cover}\n", PREAMBLE)
@@ -363,3 +402,53 @@ class FixedBlocksIntegrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NarrativeTest(unittest.TestCase):
+    base = "% COVER_NARRATIVE_V1\n" + PREAMBLE + r"\begin{document}\end{document}"
+    source = PREAMBLE + r"""\begin{document}
+\senderblock{Applicant}{Contact}
+\recipientblock{Example Company}
+\currentdate{4 October 2026}
+\subjectline{Application}
+\lettercontent{Dear Hiring Team,}
+\lettercontent{This work interests me because it builds on my experience.}
+\lettercontent{I built a service and investigated failures during testing.}
+\lettercontent{I would bring that experience to your team.}
+\closing{Kind regards,}
+\signature{Applicant}
+\end{document}"""
+
+    def test_editable_prose_with_intact_frame(self):
+        for source in (self.source, self.source.replace(
+                'I built a service and investigated failures during testing.',
+                'My project involved testing a service and tracing failures.')):
+            self.assertEqual(cover_blocks.validate_narrative(source, self.base)['issues'], [])
+            self.assertEqual(cover_blocks.validate_layout(source, self.base)['issues'], [])
+        self.assertFalse(cover_blocks.validate_fixed_blocks(self.source, self.base)['enabled'])
+
+    def test_structure_cannot_be_disabled_by_source_marker(self):
+        mutations = [
+            (r'\signature{Applicant}', ''),
+            (r'\lettercontent{Dear Hiring Team,}', ''),
+            ('This work interests me because it builds on my experience.', ''),
+            ('This work interests me because it builds on my experience.', '[MOTIVATION]'),
+            ('This work interests me because it builds on my experience.', r'\small injected'),
+            (r'\closing{Kind regards,}', r'\item injected\closing{Kind regards,}'),
+            (r'\end{document}', r'\end{document}unwrapped'),
+            (r'\signature{Applicant}', r'\signature{Applicant}\signature{Duplicate}'),
+        ]
+        for old, new in mutations:
+            with self.subTest(mutation=old):
+                result = cover_blocks.validate_narrative(self.source.replace(old, new), self.base)
+                self.assertTrue(result['enabled'])
+                self.assertTrue(result['issues'])
+
+    def test_layout_remains_protected(self):
+        source = self.source.replace('left=2.3cm', 'left=1cm')
+        self.assertTrue(cover_blocks.validate_layout(source, self.base)['issues'])
+
+    def test_substantive_repair_requires_review_even_when_only_deleting(self):
+        before = self.source.replace('I built a service', 'This was a course project.\nI built a service')
+        self.assertFalse(checkpoint.narrative_text_unchanged(before, self.source))
+        self.assertTrue(checkpoint.narrative_text_unchanged(self.source, '% comment\n' + self.source))

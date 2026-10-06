@@ -139,6 +139,10 @@ function resetFacets(){facets={...FACET_DEFAULTS,hidden:[]};saveFacets()}
 // "whatever arrived most recently" would have gone on pointing at the run
 // before it and quietly called week-old rows new.
 let LAST_FETCH=null;
+// The fetch whose result summary you have already seen: the one that had
+// finished before this page loaded, or the one you clicked "Show them" on.
+// Its summary gives way to "Ready to fetch" so it does not sit there forever.
+let FETCH_ACK,LAST_FETCH_STATUS=null;
 const foundAt=j=>j.first_seen_at||j.first_seen||"";
 
 // …but only a fetch that ran since arrival stamping existed leaves a stamp
@@ -292,7 +296,7 @@ function render(){
   renderChips();renderSourceChips();
   const rows=shown(),apps=appsByJob();if(sel>=rows.length)sel=Math.max(0,rows.length-1);
   el("tb").innerHTML=rows.map((j,i)=>`<tr class="${i===sel?"sel":""}${isNewArrival(j)?" fresh":""}" data-row="${i}">
-    <td><span class="fitword ${esc(j.fit)}">${esc(j.fit||"—")}</span></td>
+    <td title="${esc(fitTitle(j))}"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"—")}</span>${evalMarker(j)}</td>
     <td class="role" title="${esc(j.title)} · ${esc(sourceTitle(j)||sourceLabel(j.primary_source||j.portal))}">${esc(displayTitle(j.title))}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td><td class="co">${esc(j.company)}</td><td class="co sourcecell" title="${esc(sourceTitle(j))}">${esc(sourceLabel(j.portal||j.primary_source))}</td><td class="draftcell">${draftCell(applicationFor(j,apps))}</td>
     <td class="co">${esc(j.location)}</td><td class="co" title="${esc(j.posted)}">${esc(postedLabel(j))}</td>
     <td class="co foundcell" title="${esc(foundTitle(j))}">${isNewArrival(j)?'<span class="newdot" aria-label="new in the latest fetch"></span>':""}${esc(foundAt(j).slice(5,10))}</td>
@@ -395,25 +399,165 @@ function emailBox(j){
     <div class="emailline"><a href="mailto:${esc(e.email)}">${esc(e.email)}</a>${apply&&!e.apply?'<span class="dim">contact</span>':""}<button class="linkish" data-copy-email="${esc(e.email)}">Copy</button></div>
     <div class="emailctx" title="${esc(e.context)}">${esc(e.context)}</div></div>`).join("")}</div>`;
 }
+// On-demand fit evaluation (tools/board/fit_eval.py): one read-only model pass
+// over the posting and the evidence files, cached server-side per job. It never
+// changes a status; the list only marks evaluated rows with the verdict.
+const VERDICTS={strong:["Strong fit","✓"],worth:["Worth applying","✓"],risky:["Risky","!"],not_recommended:["Not recommended","✕"]};
+const EVAL_MARK={met:"✓",not_met:"✕",unclear:"?"};
+const EVAL_CACHE=new Map(),EVAL_POLLS=new Map(),KW_OPEN=new Map();
+// The background queue (auto_evaluate in board_config.json) evaluates keyword-
+// `high` rows on its own. Its revision moves on every verdict it writes back,
+// and the list reloads then so bands, order and gates stay current.
+let EVAL_QUEUE={enabled:false,running:[],pending:[],revision:null};
+// The keyword screen is the fallback explanation: open until an evaluation
+// exists, folded after, unless the owner toggled it for this row.
+const keywordOpen=j=>KW_OPEN.has(j.url)?KW_OPEN.get(j.url):!j.evaluation;
+document.addEventListener("toggle",event=>{const box=event.target;if(box.matches?.("details.kwbox"))KW_OPEN.set(box.dataset.kw,box.open)},true);
+async function pollEvalQueue(){
+  let data;
+  try{const response=await fetch("/api/evaluate/queue?t="+T);if(!checkAuth(response)||!response.ok)return;data=await response.json()}catch(_){return}
+  const previous=EVAL_QUEUE,moved=previous.revision!=null&&data.revision!==previous.revision,before=JSON.stringify([previous.running,previous.pending.length]);
+  EVAL_QUEUE=data;renderEvalQueue();
+  if(moved){
+    // Never repaint under the owner's cursor: a reload rebuilds the note field.
+    const busy=document.activeElement?.matches?.("input,textarea,select")||MODAL_RESOLVE;
+    if(busy){EVAL_QUEUE.revision=previous.revision;return}
+    // Only the rows that just finished are stale. Dropping every cached result
+    // blanked the evaluation being read, and the pane jumped back to the top.
+    previous.running.filter(url=>!data.running.includes(url)).forEach(url=>EVAL_CACHE.delete(url));
+    const url=selectedJob()?.url,pane=document.querySelector("#jobdetail .posting"),top=pane?pane.scrollTop:0;
+    try{await reloadJobs()}catch(_){return}
+    const index=shown().findIndex(j=>j.url===url);if(index>=0&&index!==sel){sel=index;render()}
+    const after=document.querySelector("#jobdetail .posting");if(after&&selectedJob()?.url===url)after.scrollTop=top;
+  }else if(before!==JSON.stringify([data.running,data.pending.length])&&!VIEW){const j=selectedJob();if(j)paintEval(j)}
+}
+// The header entry to the queue: a pill while it has work, a popover log on click.
+const sinceStart=iso=>{const s=Math.max(0,Math.round((Date.now()-new Date(iso))/1000));return s<60?s+"s":Math.floor(s/60)+"m "+(s%60)+"s"};
+function renderEvalQueue(){
+  const q=EVAL_QUEUE,box=el("evalq");if(!box)return;
+  const busy=q.running.length+q.pending.length,done=q.session?.done||0,failed=q.session?.failed||0;
+  box.hidden=!q.enabled&&!busy&&!(q.recent||[]).length;
+  const total=done+failed+busy,pct=total?Math.round(100*(done+failed)/total):100;
+  el("evalq-pill").innerHTML=busy?`<span>AI review <strong>${done+failed} / ${total}</strong></span><span class="elapsed">${q.paused?"paused":q.scheduled&&!q.running.length?"starts "+esc(evalWhen(q.scheduled)):q.running.length+" running"}</span>`:`<span>AI review</span><span class="elapsed">${failed?failed+" failed":"idle"}</span>`;
+  el("evalq-pill").classList.toggle("busy",busy>0);
+  if(!box.open)return;
+  const job=r=>`<button class="linkish evalq-job" data-evalq-job="${esc(r.url)}" title="${esc(r.title)}"><strong>${esc(r.company||"Unknown")}</strong> · ${esc(displayTitle(r.title||""))}</button>`;
+  const section=(title,rows)=>rows.length?`<div class="evalq-sec"><div class="evalhead2">${title}</div>${rows.join("")}</div>`:"";
+  el("evalq-body").innerHTML=`<div class="evalq-head"><strong>AI review queue</strong><span class="dim">${q.enabled?"automatic":"automatic review is off"}</span></div>
+    <div class="evalq-stats">${done} done · ${q.running.length} running · ${q.pending.length} queued${failed?` · <span class="evalerror">${failed} failed</span>`:""}<span class="dim"> since ${esc(evalWhen(q.session?.started_at))}</span></div>
+    <div class="evalq-bar"><span style="width:${pct}%"></span></div>
+    ${q.scheduled?`<div class="evalq-paused">Scheduled: the queue starts at ${esc(evalWhen(q.scheduled))} (auto_evaluate_after in board_config.json).</div>`:""}
+    ${q.paused?`<div class="evalq-paused">Paused until ${esc(evalWhen(q.paused.until))} after a usage limit: ${esc(q.paused.reason)} <button class="linkish" data-evalq-retry>Resume now</button></div>`:""}
+    ${q.stale?`<div class="dim evalq-more">${q.stale} result${q.stale===1?"":"s"} from an older prompt queued for re-review.</div>`:""}
+    ${section("Running",(q.running_jobs||[]).map(r=>`<div class="evalq-row">${job(r)}<span class="dim">${esc(ENGINE_NAMES[r.provider]||r.provider)} · ${esc(sinceStart(r.started_at))}</span></div>`))}
+    ${section("Up next",(q.next||[]).map(r=>`<div class="evalq-row">${job(r)}</div>`).concat(q.pending.length>5?[`<div class="dim evalq-more">+ ${q.pending.length-5} more</div>`]:[]))}
+    ${(q.errors||[]).length?`<div class="evalq-retry"><button class="secondary" data-evalq-retry>Retry ${q.errors.length} failed</button></div>`:""}
+    ${section("Failed",(q.errors||[]).map(r=>`<div class="evalq-row">${job(r)}<span class="evalerror" title="${esc(r.error)}">${esc(r.error)}</span></div>`))}
+    ${section("Recent results",(q.recent||[]).map(r=>`<div class="evalq-row">${job(r)}<span class="evalq-verdict ${esc(r.verdict)}"><span class="evalmark ${esc(r.verdict)}">${(VERDICTS[r.verdict]||["",""])[1]}</span>${esc((VERDICTS[r.verdict]||[r.verdict])[0])}</span><span class="dim">${esc(evalWhen(r.at))}</span></div>`))}`;
+}
+async function retryEvalQueue(){
+  try{const response=await fetch("/api/evaluate/retry?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});if(!checkAuth(response))return;const data=await response.json();toast(`${data.retried} job${data.retried===1?"":"s"} back in the queue`,{ms:3000})}
+  catch(_){toast("Could not reset the failed reviews.",{warn:true});return}
+  void pollEvalQueue();
+}
+function openEvalJob(url){
+  if(VIEW)restoreWorkspace();
+  let index=shown().findIndex(j=>j.url===url);
+  if(index<0){toast("That job is hidden by the current filters.",{ms:3500});return}
+  sel=index;render();el("evalq").open=false;
+}
+let EVALQ_FAST=null;
+el("evalq")?.addEventListener("toggle",()=>{
+  // Faster updates only while the log is open.
+  if(el("evalq").open){renderEvalQueue();void pollEvalQueue();EVALQ_FAST=setInterval(pollEvalQueue,4000)}
+  else{clearInterval(EVALQ_FAST);EVALQ_FAST=null}
+});
+const fitTitle=j=>VERDICTS[j.evaluation]?`AI review: ${VERDICTS[j.evaluation][0]}${j.keyword_score!=null?` · keyword score ${Math.round(j.keyword_score)}`:""}`:"Keyword score only";
+const evalMarker=j=>{const v=VERDICTS[j.evaluation];return v?`<span class="evalmark ${esc(j.evaluation)}" title="Fit evaluation: ${esc(v[0])}">${v[1]}</span>`:""};
+const evalWhen=iso=>{const d=new Date(iso);return isNaN(d)?"":d.toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})};
+const evalNote=item=>{const note=String(item.note||"");return /^nice-to-have:/i.test(note)?{nice:true,note:note.replace(/^nice-to-have:\s*/i,"")}:{nice:false,note}};
+function evalItems(items,withQuote){
+  return `<ul class="evallist">${items.map(item=>`<li class="${esc(item.status)}"><span class="evalst" title="${esc(String(item.status||"").replace("_"," "))}">${EVAL_MARK[item.status]||"?"}</span><div><strong>${esc(item.requirement)}</strong>${item.note&&item.status!=="met"?` — ${esc(item.note)}`:""}${withQuote&&item.quote?`<div class="evalquote">“${esc(item.quote)}”</div>`:""}</div></li>`).join("")}</ul>`;
+}
+function evalSkills(skills){
+  const group=(key,label)=>{const items=skills?.[key]||[];if(!items.length)return "";
+    return `<div class="evalskills ${key}"><span class="evalglabel">${label}</span><ul>${items.map(item=>{const {nice,note}=evalNote(item);return `<li><strong>${esc(item.skill)}</strong>${nice||/^nice-to-have$/i.test(item.note||"")?' <span class="evalnice">nice-to-have</span>':""}${note&&key!=="met"&&!/^nice-to-have$/i.test(note)?` — ${esc(note)}`:""}</li>`}).join("")}</ul></div>`};
+  return group("met","Met")+group("adjacent","Adjacent")+group("missing","Missing");
+}
+function evalBox(j){
+  const info=EVAL_CACHE.get(j.url)||{},rec=info.evaluation,res=rec?.result,running=Boolean(info.running)||EVAL_POLLS.has(j.url)||EVAL_QUEUE.running.includes(j.url);
+  const queued=!running&&!res&&EVAL_QUEUE.enabled&&EVAL_QUEUE.pending.includes(j.url);
+  const engine=ENGINE_NAMES[(info.running||{}).provider||chosenEngine("generate")]||"the selected engine";
+  const button=`<button class="secondary evalbtn" data-evaluate="${esc(j.url)}" ${running?"disabled":""}>${running?"Evaluating…":res?"Re-evaluate":"Evaluate fit"}</button>`;
+  const meta=rec&&!running?`<span class="evalmeta">${esc(ENGINE_NAMES[rec.provider]||rec.provider)} · ${esc(evalWhen(rec.evaluated_at))}</span>`:"";
+  let body="";
+  if(running)body=`<div class="dim">Evaluating with ${esc(engine)}. This usually takes one to two minutes.</div>`;
+  else if(info.error)body=`<div class="evalerror">${esc(info.error)}</div>`;
+  if(res&&!running){
+    const v=VERDICTS[res.verdict]||[res.verdict,""],sen=res.seniority||{},skills=evalSkills(res.skills);
+    // Only what the posting states: a gate it is silent on is not a row.
+    const hard=(res.hard_requirements||[]).filter(g=>g.quote||g.status==="not_met");
+    body+=`<div class="evalverdict ${esc(res.verdict)}"><span class="evalmark ${esc(res.verdict)}">${v[1]}</span>${esc(v[0])}</div>
+      ${res.summary?`<p class="evalsummary">${esc(res.summary)}</p>`:""}
+      ${hard.length?`<div class="evalsec"><div class="evalhead2">Hard requirements</div>${evalItems(hard,true)}</div>`:""}
+      ${sen.required?`<div class="evalsec"><div class="evalhead2">Seniority</div>${evalItems([{requirement:sen.required,status:sen.status,note:sen.note}],false)}</div>`:""}
+      ${skills?`<div class="evalsec"><div class="evalhead2">Skills</div>${skills}</div>`:""}
+      ${(res.other||[]).length?`<div class="evalsec"><div class="evalhead2">Other requirements</div>${evalItems(res.other,false)}</div>`:""}
+      ${res.advice?`<div class="evalsec"><div class="evalhead2">Advice</div><p class="evalsummary">${esc(res.advice)}</p></div>`:""}`;
+  }else if(queued)body=`<div class="dim">Queued for automatic review (${EVAL_QUEUE.pending.indexOf(j.url)+1} of ${EVAL_QUEUE.pending.length}). Evaluate now to skip the queue.</div>`;
+  else if(!running&&!info.error)body=`<div class="dim">Checks eligibility, seniority, skills and other requirements against your profile, using the engine selected below.</div>`;
+  return `<div id="evalbox" class="evalbox"><div class="evaltop"><span class="sectionhead">Fit evaluation</span>${meta}${button}</div>${body}</div>`;
+}
+function paintEval(j){if(selectedJob()?.url!==j.url||VIEW)return;const box=el("evalbox");if(box)box.outerHTML=evalBox(j)}
+async function loadEval(j,force=false){
+  if(!j||(!force&&(EVAL_CACHE.has(j.url)||!j.evaluation)))return;
+  try{const response=await fetch("/api/evaluate?t="+T+"&url="+encodeURIComponent(j.url));if(!checkAuth(response)||!response.ok)return;EVAL_CACHE.set(j.url,await response.json())}catch(_){return}
+  paintEval(j);
+}
+function pollEval(j){
+  if(EVAL_POLLS.has(j.url))return;
+  const tick=async()=>{
+    await loadEval(j,true);const info=EVAL_CACHE.get(j.url)||{};
+    if(info.running){EVAL_POLLS.set(j.url,setTimeout(tick,4000));return}
+    EVAL_POLLS.delete(j.url);
+    const verdict=info.evaluation?.result?.verdict||"";
+    const row=JOBS.find(x=>x.url===j.url);if(row&&verdict)row.evaluation=verdict;
+    if(info.error)toast("Fit evaluation failed: "+info.error,{warn:true,ms:5000});
+    else if(verdict)toast(`${j.company}: ${VERDICTS[verdict]?.[0]||verdict}`,{ms:3500});
+    if(!VIEW)render();
+  };
+  EVAL_POLLS.set(j.url,setTimeout(tick,3000));
+}
+async function startEval(j){
+  if(!j||EVAL_POLLS.has(j.url))return;
+  const provider=chosenEngine("generate");
+  try{
+    const response=await fetch("/api/evaluate?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:j.url,provider})});
+    if(!checkAuth(response))return;const data=await response.json();
+    if(!response.ok)throw new Error(data.error||"Could not start the evaluation.");
+    EVAL_CACHE.set(j.url,{...(EVAL_CACHE.get(j.url)||{}),running:{provider:data.provider},error:null});
+  }catch(error){EVAL_CACHE.set(j.url,{...(EVAL_CACHE.get(j.url)||{}),running:null,error:error.message});paintEval(j);return}
+  pollEval(j);paintEval(j);
+}
 // The stored reason is one "; "-joined line; each clause is its own fact.
 const whyItems=why=>String(why||"").split(/;\s+/).map(s=>s.trim()).filter(Boolean).map(s=>s[0].toUpperCase()+s.slice(1));
 
 function renderJob(){
   const j=selectedJob(),rows=shown();
   if(!j){el("jobdetail").innerHTML='<div class="panel-empty">Select a job.</div>';el("jobpos").textContent="";return}
-  el("jobpos").textContent=`${sel+1} of ${rows.length}`;el("jobopen").href=j.open_url||j.url;
-  const fitLabel=j.fit||"unranked",score=j.score?Math.round(j.score):null,why=whyItems(j.why),posted=postedText(j);
+  el("jobpos").textContent=`${sel+1} of ${rows.length}`;
+  const fitLabel=j.fit||"unranked",score=j.score?Math.round(j.score):null,why=whyItems(j.why),losses=(j.fit_losses||[]).map(w=>w[0].toUpperCase()+w.slice(1)),posted=postedText(j);
   el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitle" title="${esc(j.title)}">${esc(displayTitle(j.title))}</div>
     <div class="jobmeta"><strong>${esc(j.company)}</strong>${j.location?`<span class="sep">·</span><span>${esc(j.location)}</span>`:""}${posted?`<span class="sep">·</span><span>Posted ${esc(posted)}</span>`:""}</div>
     <div class="badges"><span class="fitpill ${esc(j.fit||"none")}" title="${esc(scoreTitle(j))}"><span class="fitdot"></span>${esc(fitLabel)}${score!=null?`<span class="fitscore">${esc(score)}</span>`:""}</span><span class="badge">${esc(sourceLabel(j.primary_source||j.portal)||"Source unknown")}</span>${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">Title only</span>':""}</div>
-    <div class="posting-link"><a href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener" title="${esc(j.open_url||j.url)}">${esc(postingLinkLabel(j.open_url||j.url))} ↗</a><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button><button class="linkish" data-follow-company="${esc(j.url)}" ${FOLLOW_BUSY?"disabled":""}>Follow company</button></div></div>
-    <div class="whybox"><div class="sectionhead">Why it's here</div>${why.length?`<ul class="whylist">${why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:'<div class="dim">No reason was stored.</div>'}</div>
+    <div class="posting-link"><a href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener" title="${esc(j.open_url||j.url)}">${esc(postingLinkLabel(j.open_url||j.url))} ↗</a><span class="posting-actions"><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button><span class="sep">·</span><button class="linkish" data-follow-company="${esc(j.url)}" ${FOLLOW_BUSY?"disabled":""}>Follow company</button></span></div></div>
     ${emailBox(j)}
-    <div class="posting"><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
+    <div class="posting">${evalBox(j)}<details class="kwbox" data-kw="${esc(j.url)}" ${keywordOpen(j)?"open":""}><summary><span class="kwchev">›</span><span class="sectionhead">Keyword screen</span><span class="kwmeta">${j.keyword_score!=null?`score ${esc(Math.round(j.keyword_score))} · `:""}${why.length} reason${why.length===1?"":"s"}${losses.length?` · ${losses.length} deduction${losses.length===1?"":"s"}`:""}</span></summary>
+      <div class="whybox${losses.length?" split":""}"><div><div class="sectionhead">Why it's here</div>${why.length?`<ul class="whylist">${why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:'<div class="dim">No reason was stored.</div>'}</div>${losses.length?`<div><div class="sectionhead">Where it lost points</div><ul class="whylist losslist">${losses.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>`:""}</div></details><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
     <div class="jobactions"><div class="statusbuttons">${markButtons(j)}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
       ${applicationCard(j)}</div>`;
-  loadPosting(j);
+  loadPosting(j);loadEval(j);
 }
 
 async function update(url,patch,record=true){
@@ -638,7 +782,7 @@ function progressPanel(run){
 // one, so while it runs the application shows its progress and log, and when it
 // finishes the view moves to Review on its own.
 const APP_VIEWS=["tailor","preview","send","revise"];
-let APPS_Q="",APPS_SHOW_APPLIED=false,APPS_REVIEW_LIST=false;
+let APPS_Q="",APPS_SHOW_APPLIED=false;
 // Every attempt of an application: the same application id, plus anything that
 // continues or regenerates an attempt already in the set.
 function lineageOf(run){
@@ -676,11 +820,13 @@ function appsGroupsHtml(){
   }).join("");
 }
 function renderAppsList(){const node=el("apps-groups");if(node)node.innerHTML=appsGroupsHtml()}
-const appsListCollapsed=step=>step==="review"?!APPS_REVIEW_LIST:!!layout.appsCollapsed;
+// One state for every step, changed only by your own collapse/expand - opening
+// an application or reaching review never folds the list away on its own.
+const appsListCollapsed=()=>!!layout.appsCollapsed;
 function toggleAppsList(){
   const shell=document.querySelector(".apps-shell");if(!shell)return;
-  if(VIEW==="preview")APPS_REVIEW_LIST=!APPS_REVIEW_LIST;else{layout.appsCollapsed=!layout.appsCollapsed;saveLayout()}
-  shell.classList.toggle("list-collapsed",appsListCollapsed(VIEW==="preview"?"review":VIEW));
+  layout.appsCollapsed=!layout.appsCollapsed;saveLayout();
+  shell.classList.toggle("list-collapsed",appsListCollapsed());
 }
 function attemptTabs(run){
   const lineage=lineageOf(run);
@@ -1390,6 +1536,8 @@ function fetchSummary(status){
   const boards=sources.flatMap(s=>s.boards_found||[]);
   const result=(added?`${added} new job${added===1?"":"s"} added`:"No new jobs found")+(enriched?` · ${enriched} description${enriched===1?"":"s"} completed`:"")+(boards.length?` · found job boards for ${boards.slice(0,3).join(", ")}${boards.length>3?` and ${boards.length-3} more`:""}`:"");
   if(status.error)return {message:added||enriched?`${result} · Fetch stopped early. See Activity.`:"Could not finish fetching. Try again or see Activity.",error:true};
+  const limited=sources.filter(s=>s.rate_limited).map(s=>labels[s.source]||s.source);
+  if(limited.length&&limited.length===failed.length)return {message:`${result} · ${limited.join(", ")} rate-limited the description fetches; the rest are queued — fetch again later.`,error:true};
   if(failed.length)return {message:`${result} · ${failed.join(", ")} could not be fully checked. See Activity.`,error:true};
   if(!status.finished_at)return {message:"Ready to fetch"};
   const remaining=sources.reduce((n,s)=>n+(s.remaining_due||0)+(s.deferred_descriptions||0),0);
@@ -1407,9 +1555,15 @@ function renderFetchLog(status){
     LAST_FETCH=status.started_at||null;
     if(JOBS.length)render();
   }
+  if("started_at" in status){
+    LAST_FETCH_STATUS=status;
+    // A fetch still running at page load finishes in front of you: show it.
+    if(FETCH_ACK===undefined)FETCH_ACK=status.running?null:status.started_at||null;
+  }
+  const acked="started_at" in status&&!status.running&&(status.started_at||null)===FETCH_ACK;
   const added=(status.sources||[]).reduce((n,s)=>n+(s.added||0),0);
-  el("show-new").hidden=!(added&&!status.running&&status.finished_at);
-  const view=fetchSummary(status);el("collectlog").textContent=view.message;
+  el("show-new").hidden=acked||!(added&&!status.running&&status.finished_at);
+  const view=acked?{message:"Ready to fetch"}:fetchSummary(status);el("collectlog").textContent=view.message;
   el("collectlog").parentElement.classList.toggle("error",!!view.error);
   el("fetch").disabled=!!view.running||FETCH_STARTING;el("fetch").textContent=view.running?"Fetching…":FETCH_STARTING?"Starting…":"Fetch new jobs";
   el("fetch-options").disabled=!!view.running||FETCH_STARTING;
@@ -1504,6 +1658,9 @@ document.addEventListener("click",event=>{
   const copyEmail=event.target.closest("[data-copy-email]");
   if(copyEmail){const address=copyEmail.dataset.copyEmail;return void navigator.clipboard.writeText(address).then(()=>toast("copied "+address),()=>toast("could not copy",{warn:true}))}
   const postingUrl=event.target.closest("[data-posting-url]");if(postingUrl)return void openPostingUrl(JOBS.find(j=>j.url===postingUrl.dataset.postingUrl));
+  if(event.target.closest("[data-evalq-retry]"))return void retryEvalQueue();
+  const evalqJob=event.target.closest("[data-evalq-job]");if(evalqJob)return void openEvalJob(evalqJob.dataset.evalqJob);
+  const evaluate=event.target.closest("[data-evaluate]");if(evaluate)return void startEval(JOBS.find(j=>j.url===evaluate.dataset.evaluate));
   const followCompany=event.target.closest("[data-follow-company]");if(followCompany)return void followJobCompany(JOBS.find(j=>j.url===followCompany.dataset.followCompany));
   if(event.target.closest("[data-bookmarklet]")){event.preventDefault();toast("Drag this link to your bookmarks bar, then click it on the source page.",{ms:4500});return}
   if(event.target.closest("[data-inbox-refresh]"))return void renderInbox();
@@ -1528,7 +1685,7 @@ document.addEventListener("click",event=>{
   const delAttempt=event.target.closest("[data-delete-attempt]");if(delAttempt){delAttempt.closest("details")?.removeAttribute("open");return void deleteApp(delAttempt.dataset.deleteAttempt,"attempt")}
   const appStep=event.target.closest("[data-app-step]");if(appStep){appStep.closest("details")?.removeAttribute("open");const run=RUNS.find(r=>r.id===ACTIVE_RUN);if(run)openApp(run,appStep.dataset.appStep);return}
   const boardJob=event.target.closest("[data-board-job]");if(boardJob){if(!showJobOnBoard(boardJob.dataset.boardJob))toast("This posting is no longer on the Board",{warn:true});return}
-  const appLink=event.target.closest("[data-app]");if(appLink){const run=RUNS.find(r=>r.id===appLink.dataset.app);if(run){APPS_REVIEW_LIST=false;layout.appsCollapsed=true;saveLayout();openApp(run)}return}
+  const appLink=event.target.closest("[data-app]");if(appLink){const run=RUNS.find(r=>r.id===appLink.dataset.app);if(run)openApp(run);return}
   const chip=event.target.closest("[data-filter]");if(chip){filter=chip.dataset.filter;sel=0;render();return}
   // The source menu: a tick toggles one source, "only" solos it - with five
   // sources, "show me only the ATS rows" is one click that way and four the other.
@@ -1675,11 +1832,12 @@ el("f-reset").addEventListener("click",()=>{resetFacets();sel=0;render()});
 // which eight, instead of leaving you to find them in four hundred rows.
 el("show-new").addEventListener("click",()=>{
   facets.found="latest";facets.sort="found";saveFacets();sel=0;render();
+  if(LAST_FETCH_STATUS){FETCH_ACK=LAST_FETCH_STATUS.started_at||null;renderFetchLog(LAST_FETCH_STATUS)}
   document.querySelector(".tablewrap")?.scrollTo({top:0});
 });
 
 renderChrome(null);
-setInterval(pollActivity,3000);setInterval(pollRuns,6000);
+setInterval(pollActivity,3000);setInterval(pollRuns,6000);setInterval(pollEvalQueue,15000);void pollEvalQueue();
 Promise.all([reloadJobs(),pollActivity(),pollRuns()]).then(()=>{
   applyRoute();
   void pollFetch();

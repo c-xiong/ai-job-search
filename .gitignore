@@ -237,3 +237,8 @@ upskill/*.md
 
 # ats-search test scratch (bun tests write throwaway registries here)
 .agents/skills/*/cli/.tmp-tests/
+
+# On-demand fit evaluations from the board (tools/board/fit_eval.py)
+job_scraper/fit_evals.json
+job_scraper/.fit_evals.*.tmp
+**/job_scraper/fit_evals.json

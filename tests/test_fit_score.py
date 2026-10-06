@@ -713,3 +713,58 @@ class LanguageAndGapsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScoringRulesV5Test(unittest.TestCase):
+    """Fallback and compound role families, the founding level, skill synonyms,
+    and a company weight of zero."""
+
+    def prof(self):
+        prof = copy.deepcopy(profile())
+        families = prof["roles"]["families"] = {}
+        families["generic"] = {"score": 14, "terms": ["engineer"]}
+        families["data"] = {"score": 12, "terms": ["data engineer"]}
+        families["ai"] = {"score": 25, "terms": ["llm engineer"],
+                          "compound": [["ai"], ["engineer", "developer"]]}
+        families["fde"] = {"score": 18, "terms": ["forward deployed engineer"]}
+        prof["roles"]["fallback_families"] = ["generic"]
+        prof["roles"]["cap_families"] = ["fde"]
+        return prof
+
+    def test_a_named_family_beats_a_higher_scoring_fallback(self):
+        _, family, _ = fit_score.role_family("Senior Data Engineer", "", self.prof())
+        self.assertEqual(family, "data")
+
+    def test_the_fallback_still_catches_an_unnamed_engineering_title(self):
+        _, family, _ = fit_score.role_family("Compiler Engineer", "", self.prof())
+        self.assertEqual(family, "generic")
+
+    def test_a_compound_title_names_the_ai_family(self):
+        points, family, _ = fit_score.role_family("AI Product Engineer", "", self.prof())
+        self.assertEqual((points, family), (25, "ai"))
+
+    def test_a_capping_family_outranks_the_fallback(self):
+        points, family, _ = fit_score.role_family("Forward Deployed Engineer", "", self.prof())
+        self.assertEqual((points, family), (18, "fde"))
+
+    def test_founding_deducts_without_gating(self):
+        prof = copy.deepcopy(profile())
+        prof["seniority"]["scores"]["founding"] = 20
+        prof["seniority"]["founding"] = ["founding"]
+        _, level, _ = fit_score.seniority("Founding Engineer", "", prof)
+        self.assertEqual(level, "founding")
+        self.assertNotIn("founding", prof["seniority"].get("gate_levels") or [])
+        _, level, _ = fit_score.seniority("Founding Tech Lead", "", dict(prof, seniority=dict(
+            prof["seniority"], lead=["lead"])))
+        self.assertEqual(level, "lead")
+
+    def test_spellings_of_one_skill_count_once(self):
+        prof = copy.deepcopy(profile())
+        prof["skills"].update(primary=["llm", "llms"], secondary=[], domain=[],
+                              synonyms=[["llm", "llms"]])
+        _, hits, _ = fit_score.skill_overlap("We build LLM and LLMs tooling", prof, 18)
+        self.assertEqual(hits, ["llm"])
+
+    def test_a_zero_company_weight_neither_scores_nor_explains(self):
+        self.assertEqual(fit_score.company_affinity("Acme", profile(), {"default": 2}, {"acme": 3}, 0),
+                         (0, None))

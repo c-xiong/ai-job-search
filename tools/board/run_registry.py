@@ -101,6 +101,11 @@ DEFAULT_CONFIG = {
     "codex_bin": "codex",
     "codex_model": None,
     "codex_max_passes": 12,
+    # Background AI review of keyword-`high` rows (tools/board/fit_eval.py).
+    # Off in the shipped defaults: it spends model quota without a click.
+    "auto_evaluate": False,
+    # Local ISO time before which the queue does not start, e.g. a quota reset.
+    "auto_evaluate_after": None,
 }
 
 

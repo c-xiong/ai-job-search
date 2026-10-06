@@ -20,6 +20,7 @@
     <div class="crumb" id="crumb" hidden></div>
     <div class="spacer"></div>
     <span class="barsep" id="right-sep" hidden></span>
+    <details class="evalq popover" id="evalq" hidden><summary class="runpill" id="evalq-pill"></summary><div class="evalq-body" id="evalq-body"></div></details>
     <button class="runpill" id="runpill" hidden></button>
     <button class="secondary theme-toggle" id="theme-toggle" title="Theme follows the system" aria-label="Theme follows the system"><span class="theme-glyph" id="theme-glyph" aria-hidden="true">◐</span><span id="theme-name">Auto</span></button>
   </header>
@@ -97,7 +98,7 @@
     <aside class="rail right-rail" id="right-rail">
       <button class="spine" data-collapse="right" aria-expanded="true"><b>‹</b><span>Job</span></button>
       <section class="panel job-panel" id="job-panel">
-        <div class="panelhead"><span class="label">Job</span><span class="count" id="jobpos"></span><span class="spacer"></span><a class="open" id="jobopen" target="_blank" rel="noopener">open posting ↗</a></div>
+        <div class="panelhead"><span class="label">Job</span><span class="count" id="jobpos"></span><span class="spacer"></span><span class="keyhint" title="Press Enter to open the posting">↵ open posting</span></div>
         <div id="jobdetail" class="jobdetail"><div class="panel-empty">Select a job.</div></div>
       </section>
     </aside>

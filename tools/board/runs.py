@@ -1520,7 +1520,8 @@ class Supervisor:
             if layout_only and kind == "cover":
                 after_text = path.read_text(encoding="utf-8")
                 base_text = docs.cover_base().read_text(encoding="utf-8")
-                problems = (docs.cover_blocks.validate_fixed_blocks(after_text, base_text)["issues"]
+                problems = (docs.cover_blocks.validate_narrative(after_text, base_text)["issues"]
+                            + docs.cover_blocks.validate_fixed_blocks(after_text, base_text)["issues"]
                             + docs.cover_blocks.validate_layout(after_text, base_text)["issues"])
                 code_text = "\n".join(re.split(r"(?<!\\)%", line, 1)[0]
                                       for line in after_text.splitlines())
@@ -1538,7 +1539,10 @@ class Supervisor:
             if layout_only and old_content and old_content["state"] in ("pass", "flag"):
                 before_text = history[kind].read_text(encoding="utf-8")
                 after_text = path.read_text(encoding="utf-8")
-                if checkpoint.layout_only_change(before_text, after_text):
+                if (checkpoint.layout_only_change(before_text, after_text)
+                        and (kind != "cover" or not docs.cover_blocks.validate_narrative(
+                            after_text, docs.cover_base().read_text(encoding="utf-8"))["enabled"]
+                             or checkpoint.narrative_text_unchanged(before_text, after_text))):
                     # A repair that only added layout commands or removed lines
                     # cannot introduce an unsupported claim; the content verdict
                     # carries over, re-bound to the new bytes and marked so.
@@ -2089,107 +2093,62 @@ class Supervisor:
         "with the rest of this prompt. Do not retry it, do not work around it, and do not\n"
         "treat it as an error.\n\n")
 
-    # The letter's shape and selection rules, stated once for every pass that
-    # writes or reviews a letter, so a later pass cannot rewrite approved
-    # project paragraphs. The base holds the fixed prose and evidence limits;
-    # only role motivation, the closing and formal details are customised.
+    # Shared by drafting, independent review and fixes. Facts remain grounded; prose may adapt.
     COVER_RULES = (
-        "Mandatory employer contact research: follow Shared rules in `.claude/commands/apply.md`. "
-        "Use live web search and open official local office/contact/Impressum pages before "
-        "drafting a cover letter; absence from the posting is not a failed search. "
-        "Include verified recipient details and record queries, opened URLs and omissions "
-        "in `%% CONTACT_RESEARCH` source comments. Review/fix may reuse a supported record; "
-        "otherwise research first. Never infer employer location from the CV country.\n"
-        "Letter rules: assemble the fixed COVER_LIBRARY_V1 in the canonical cover base. "
-        "Its TAILORING RULES, evidence boundaries and DO NOT CLAIM list bind every pass.\n"
-        "- The letter must not read as a CV recap. The owner has already chosen the level "
-        "and wording of the core prose. Choose by the posting's tasks, not its title: "
-        "a tailored role-motivation paragraph, one complete fixed introduction variant, "
-        "two distinct highlight blocks (three when a distinct contribution fits the "
-        "budget), the optional publication block, and a tailored closing. Select and order "
-        "evidence for the role; there is no default agent-first order. Do not use both "
-        "research_interface and publication (same project), or nlp_research and "
-        "nlp_models (same research experience). Obey every COVER_EXCLUSIVE group.\n"
-        "- Consider nlp_models for applied AI, LLM and agent product roles, not only "
-        "research jobs or postings that explicitly require fine-tuning. Prefer it when "
-        "hands-on model adaptation and evaluation, model choice, or quality versus "
-        "latency/memory decisions add a relevant model-level strength alongside agent "
-        "engineering and software delivery. The introduction's general research title "
-        "does not make this concrete evidence redundant. Record its task match and "
-        "distinct contribution in letter_plan's existing evidence strings, including "
-        "a third block when selected; if omitted for an AI role, record the stronger "
-        "alternative or lack of relevance/space there. Prefer nlp_research when data "
-        "pipelines or forecasting evaluation better answer the role. Do not force "
-        "nlp_models into unrelated software work or add it merely to reach three items. "
-        "This research comparison supports similar task classification performance "
-        "with lower memory use and faster responses; it does not prove production "
-        "agent performance, measured monetary savings or universal model superiority.\n"
-        "- Copy each selected COVER_TEXT verbatim into its matching USE_COVER_TEXT / "
-        "END_USE_COVER_TEXT wrapper: lettercontent for opening/research, item for "
-        "highlight. Preserve IDs, words, punctuation and numbers; whitespace may vary. "
-        "Never rewrite, polish, shorten, add a label, add a mechanism or change a fixed "
-        "block's final sentence. The cover_fixed_blocks mechanical check detects drift. "
-        "If the library lacks suitable evidence, report the missing coverage and propose "
-        "a reusable addition separately; do not force an irrelevant existing block.\n"
-        "- Only recipient, subject, salutation, date/location, the role-motivation "
-        "paragraph and the closing's substantive sentences are customised. Immediately "
-        "after the salutation, write one concise sentence explaining which concrete "
-        "company/role work attracts the owner and why; use two only when the second "
-        "adds meaning. Ground the interest in confirmed personal direction and verified "
-        "employer work. The supplied candidate profile is the authority for motivation, "
-        "career direction and preferences. For agent roles, use its confirmed "
-        "agent-specific interest only when relevant to actual agent responsibilities; "
-        "do not force that interest into other work. Tailor the work named to each posting; do not "
-        "use a generic application announcement, company-name swap or invented "
-        "domain passion. This paragraph must be non-empty and precede the fixed "
-        "introduction. All three fixed variants (opening_agent, "
-        "opening_nlp and opening_software) retain the owner-confirmed NLP Research "
-        "Assistant title, developing NLP pipelines and machine learning models in "
-        "Python, completion of all requirements for the MSc in Computational "
-        "Linguistics and Language Technology at the University of Zurich, and research "
-        "at the intersection of LLMs and macroeconomics. Do not imply that the degree "
-        "has already been conferred. The approved opening order is what I build, "
-        "then current work and degree status, then an engineering concern. Choose a "
-        "whole fixed variant; no editable opening slots or on-the-fly rewrites.\n"
-        "- Closing: develop the personal reason established at the start, without "
-        "repeating that sentence. Explain the relevant career direction and connect "
-        "one company/role responsibility to strengths already evidenced. Choose the "
-        "relevant confirmed direction from the supplied candidate profile. For agent "
-        "work, explain what its confirmed dependability interest means in practice "
-        "when it adds meaning beyond the fixed introduction; for other work, choose "
-        "the profile's relevant AI/software, product or research direction. Usually "
-        "two or three substantive sentences can explain what matters to the owner "
-        "and what they would contribute; use no compulsory sentence count or quota. "
-        "Keep the reason, career direction and contribution sincere and concrete. "
-        "Choose ONE grounded "
-        "angle: an industry problem, AI application, verified product choice or role "
-        "responsibility. Do not retell projects, use generic company praise, claim "
-        "ideal fit, promise results or rapid ramp-up, invent product use or longstanding "
-        "industry interest, or turn a company ambition into an existing capability. "
-        "Use international or dynamic only when sourced and more relevant to this "
-        "application, never as default praise. A sector/company-name swap is not enough.\n"
-        "- Add the base's exact relocation sentence only when its location rule applies, "
-        "using a city from the original posting or employer site. End exactly: "
-        "I would welcome a conversation. English dates use day month year.\n"
-        "- Budget both tailored paragraphs before deciding whether a third highlight "
-        "fits: %d body words maximum including every fixed block, role motivation, "
-        "closing, relocation and invitation. This is a ceiling, not a target; there "
-        "is no paragraph word quota or padding. Fit one A4 page, copying the "
-        "canonical preamble unchanged to preserve its approved geometry, fonts and "
-        "layout commands. Trim repetition in either tailored paragraph while "
-        "preserving the concrete role attraction, personal direction and grounded "
-        "contribution. Omit optional publication or the least relevant third "
-        "highlight before hollowing out these tailored ideas. "
-        "Never cut inside fixed paragraphs. Keep lists outside lettercontent, wrapped "
-        "in raggedright/letterbodyfont. Exactly three unmarked lettercontent "
-        "paragraphs: salutation, role motivation before the fixed introduction, "
-        "and closing after all selected evidence. No extra background paragraphs.\n"
-        "- Review/fix/repair preserve fixed wording; stylistic preference is not a "
-        "finding against approved prose. Flag stale/contradictory facts for a library "
-        "correction instead of silently changing them. Keep personal, course, research "
-        "and production scope distinct; checks are not guarantees. Both tailored "
-        "paragraphs must be plain, grounded and employer-specific, with distinct "
-        "functions. Resolve all placeholders.\n" % docs.COVER_MAX_WORDS)
+        'Mandatory employer contact research: follow Shared rules in `.claude/commands/apply.md`. Use live '
+        'web search and open official local office/contact pages before drafting; absence from the posting is'
+        ' not a failed search. Record queries, opened URLs and omissions in `% CONTACT_RESEARCH` source '
+        'comments. Review/fix may reuse supported research; otherwise research first. Never infer employer '
+        'location from the CV country.\n'
+        "Facts are fixed; wording and paragraph order are editable. The canonical base's TAILORING RULES, "
+        'evidence bank and DO NOT CLAIM boundaries bind every pass.\n'
+        "- Write one coherent personal letter, not a CV recap. Choose evidence by the posting's tasks, not "
+        'its title. Start with one honest reason for pursuing this work, or a relevant experience that '
+        'explains that interest. No stock opening is required: do not routinely use "What draws me to this '
+        'role". Do not explain the employer\'s product back to them, paste job-description keywords into an '
+        'opening, or invent longstanding passion, product use or domain expertise.\n'
+        '- The candidate profile is the authority for motivation, career direction and preferences. Use '
+        'agent-specific interest only when relevant to actual agent responsibilities; do not force that '
+        'interest into other work. Employer claims require first-party support. Distinguish plans from '
+        'existing capabilities.\n'
+        '- Build the whole narrative around that reason. Background may be brief or integrated with evidence;'
+        ' no compulsory introduction paragraph or research-topic recital. Use "MSc in Computational '
+        'Linguistics" and preserve the distinction between completing requirements and degree conferral. Do '
+        'not turn a research appointment into production experience.\n'
+        '- Select normally two complementary experiences, with a third only when it adds a distinct relevant '
+        'strength. For SDE work, lead with software delivery, engineering decisions and supported outcomes; '
+        'include AI or coursework only when relevant. For AIE work, consider agent engineering, product '
+        'delivery and model adaptation/evaluation on their merits. A task-specific model comparison does not '
+        'establish universal superiority, production gains or monetary savings. Do not repeat one project as '
+        "multiple independent achievements. Record the task match and distinct contribution in letter_plan's "
+        'existing evidence strings.\n'
+        '- Each paragraph must advance the argument. Explain a relevant decision or result rather than '
+        'inventorying tools. Connect background and projects naturally; avoid repeated statements about '
+        'reliability, debugging or career goals. Technical detail must preserve ownership, project context '
+        'and limitations. Personal projects, coursework, research and production remain distinct; tests are '
+        'not guarantees.\n'
+        '- Close briefly with the contribution or next step that follows from the evidence. No compulsory '
+        'invitation sentence, sentence count or paragraph word quota. Do not repeat the opening, retell '
+        'projects, claim ideal fit or promise results. Use relocation only when supported by the profile and '
+        'verified role location; never invent availability or visa facts.\n'
+        '- Use plain first-person prose in separate lettercontent paragraphs, no bullets or labels, normally '
+        'three to seven body paragraphs plus salutation. No slogans, em dashes, generic praise or keyword '
+        'collage. Review the entire letter for natural transitions, repetition and unsupported implications, '
+        'not merely the opening and closing. Approved examples illustrate voice and editorial choices, not '
+        'sentences or employer interests to copy.\n'
+        '- At most 380 body words, usually 250-360 without padding, and exactly one A4 page. Preserve the '
+        'canonical preamble unchanged and all formal letter elements. Resolve placeholders. Fit by removing '
+        'repetition and less relevant detail across the entire narrative, never by changing fonts, margins or'
+        ' spacing. Preserve the honest motivation and strongest evidence when shortening.\n'
+        '- Mechanical structure/layout checks do not establish factual grounding or writing quality. '
+        'Independently review every claim against the candidate profile, master CV and evidence bank; flag '
+        'conflicting sources instead of silently choosing one. Draft, review, fix and repair use this same '
+        'policy.\n'
+        '- Compatibility: a legacy base explicitly declaring COVER_LIBRARY_V1 still requires exact selected '
+        'COVER_TEXT prose, USE_COVER_TEXT markers and its original selection/shape rules. Narrative mode is '
+        'selected by COVER_NARRATIVE_V1 in the canonical base, never by deleting a marker from a generated '
+        'source.\n'
+    )
 
     def _canary(self, record, nonce):
         if record.get("provider") == "codex":
@@ -2380,20 +2339,13 @@ class Supervisor:
             "commands (`\\needspace`, `\\enlargethispage`) and, only when needed to fit "
             "the page limit, remove the least relevant line. Cover letter: never touch "
             "layout (no `\\enlargethispage`, negative `\\vspace`, smaller fonts or "
-            "spacing). If the source uses USE_COVER_TEXT, never change words inside those "
-            "fixed blocks or their markers. Trim repetition only in customised role "
-            "motivation and closing sentences, preserving the role attraction, personal "
-            "direction and grounded contribution. Omit optional publication or the "
-            "least relevant third highlight before hollowing out these ideas. "
-            "For page overflow, remove optional publication or the least relevant "
-            "third highlight first; keep at least two distinct highlights. Then "
-            "shorten only the customised role motivation and closing sentences. "
-            "The company address, header, salutation and signature all consume "
-            "page space: preserve them and leave room for them. A word count "
-            "alone does not prove that the letter fits. "
-            "For legacy letters without fixed blocks, remove redundant wording first. "
-            "Keep the role-motivation paragraph before the fixed introduction and the "
-            "closing after selected evidence. Preserve factual scope. Page limits: %s.\n\n%s\n\n%s"
+            "spacing). For narrative letters, remove repetition and less relevant detail "
+            "across the entire narrative while preserving motivation, strongest evidence "
+            "and factual scope. Legacy USE_COVER_TEXT blocks remain unchanged; only "
+            "custom prose or optional blocks may be cut there. Preserve the company "
+            "address, header, salutation and signature. A word count alone does not "
+            "prove that the letter fits. Any substantive rewrite requires fresh content "
+            "review. Page limits: %s.\n\n%s\n\n%s"
             % ("s" if len(paths) > 1 else "",
                ", ".join("%s %d page(s)" % (docs.DOC_LABELS[k], docs.expected_pages(k))
                          for k in paths),

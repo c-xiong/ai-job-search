@@ -308,7 +308,7 @@ def mechanical_inputs(manifest, kind):
     inputs = {"pdf": current_pdf_sha(manifest, kind),
               "keywords": sha256_json(manifest.get("keywords") or [])}
     if kind == "cover":
-        # Fixed prose is checked against the live canonical library, even if
+        # Cover policy is checked against the live canonical base, even if
         # the compiled PDF has not changed since the previous measurement.
         from . import cover_blocks, docs
         inputs.update(source=current_source_sha(manifest, kind),
@@ -736,3 +736,11 @@ def layout_only_change(before_text, after_text):
         if line.startswith("+ ") and not layout.match(line[2:]):
             return False
     return True
+
+
+def narrative_text_unchanged(before_text, after_text):
+    """Deleting a qualifier can change a claim; narrative edits need review."""
+    def normalise(text):
+        return " ".join("\n".join(re.split(r"(?<!\\)%", line, 1)[0]
+                                    for line in text.splitlines()).split())
+    return normalise(before_text) == normalise(after_text)

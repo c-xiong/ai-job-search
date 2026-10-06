@@ -437,6 +437,13 @@ def check_pdf(kind, pdf, source, keywords, compile_evidence):
             base_text = cover_base().read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             base_text = ""
+        narrative = cover_blocks.validate_narrative(source_text, base_text)
+        if narrative["enabled"]:
+            checks.append(_check(
+                "cover_narrative", "Letter uses supported narrative paragraph structure",
+                "fail" if narrative["issues"] else "pass",
+                "; ".join(narrative["issues"]) if narrative["issues"] else
+                "paragraph frame is valid; factual grounding requires content review", narrative))
         fixed = cover_blocks.validate_fixed_blocks(source_text, base_text)
         if fixed["enabled"]:
             checks.append(_check(

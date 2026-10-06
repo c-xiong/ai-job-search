@@ -21,7 +21,7 @@ const jobs=[
 const render=new Function("JOBS",`
   let sel=0;
   const elements={},el=id=>elements[id]||(elements[id]={});
-  const renderChips=()=>{},renderSourceChips=()=>{},renderJob=()=>{};
+  const renderChips=()=>{},renderSourceChips=()=>{},renderJob=()=>{},evalMarker=()=>"",fitTitle=()=>"";
   const shown=()=>JOBS,appsByJob=()=>new Map(),isNewArrival=()=>false;
   const esc=value=>String(value||""),displayTitle=value=>value;
   const draftCell=()=>"",applicationFor=()=>null,postedLabel=()=>"10-02";

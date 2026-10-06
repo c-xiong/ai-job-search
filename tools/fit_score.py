@@ -53,7 +53,7 @@ REGISTRY = ROOT / "job_scraper" / "companies.json"
 # Bumped whenever the formula changes, so `--recompute --stale` can find the
 # rows that were scored under the old one. It is not a schema version: the
 # fields are additive and readers tolerate their absence as always.
-FIT_VERSION = 3   # 2: posting language, German, gaps; 3: gaps inform only, experience gate
+FIT_VERSION = 5   # 2: posting language, German, gaps; 3: gaps inform only, experience gate; 4: fit_losses; 5: optional company, fallback/compound roles, founding, synonyms
 
 BANDS = ("high", "medium", "low")
 # The ceiling each band puts on a row's sort priority. Owned by jobs_md, which
@@ -62,6 +62,8 @@ BANDS = ("high", "medium", "low")
 BAND_CEILING = jobs_md.BAND_CEILING
 
 MAX_REASONS = 4
+# A shortfall smaller than this is rounding (Zug vs Zurich), not a reason.
+MIN_LOSS = 2
 
 
 class ConfigError(ValueError):
@@ -230,6 +232,10 @@ def role_family(title, body, profile):
     roles = profile["roles"]
     families = roles.get("families") or {}
     capping = set(roles.get("cap_families") or ())
+    # A catch-all ("engineer", "developer") is only the answer when no named
+    # family speaks - otherwise it outscores a weaker named one (generic 14 beat
+    # data engineer 12) and swallows titles that do name a family.
+    fallback = set(roles.get("fallback_families") or ())
     factor = roles.get("description_factor", 0.6)
 
     ceiling, cap_term, cap_name = None, None, None
@@ -246,13 +252,20 @@ def role_family(title, body, profile):
             return ceiling, cap_name, '%s, but the title says "%s"' % (reason, cap_term)
         return points, name, reason
 
+    # A capping title ("Forward Deployed Engineer") is itself a named family,
+    # so it outranks the catch-all its "engineer" would otherwise fall into.
+    tiers = [[n for n in families if n not in capping and n not in fallback]]
+    if ceiling is None:
+        tiers.append([n for n in families if n in fallback])
     best = (0, None, None)
-    for name, family in families.items():
-        if name in capping:
-            continue
-        term = first_match(title, family["terms"])
-        if term and family["score"] > best[0]:
-            best = (family["score"], name, term)
+    for tier in tiers:
+        for name in tier:
+            family = families[name]
+            term = first_match(title, family["terms"]) or _compound_match(title, family)
+            if term and family["score"] > best[0]:
+                best = (family["score"], name, term)
+        if best[1]:
+            break
     if best[1]:
         return _finish(best[0], best[1], 'title matches "%s"' % best[2])
     if ceiling is not None:
@@ -272,6 +285,20 @@ def role_family(title, body, profile):
                        'posting body mentions "%s" (title is generic)' % best[2])
 
     return 0, None, "no engineering or AI role wording found"
+
+
+def _compound_match(title, family):
+    """A title naming one word from every `compound` group, e.g. AI + engineer.
+
+    "AI Product Engineer", "AI Agent Engineer" and "KI-Entwickler" name the
+    subject and the shape in separate words, so no fixed phrase list keeps up.
+    Bare "ai" is safe here only because a second group has to match too.
+    """
+    groups = family.get("compound") or ()
+    if not groups:
+        return None
+    found = [first_match(title, group) for group in groups]
+    return " + ".join(found) if all(found) else None
 
 
 # --------------------------------------------------------------------------
@@ -307,6 +334,9 @@ def _level_for_years(years, profile):
     return "lead"
 
 
+TITLE_LADDER = ("lead", "senior", "three_plus", "founding", "one_two", "entry")
+
+
 def seniority(title, body, profile):
     """(score, level, reason). Title reads the full ladder; the body does not.
 
@@ -319,11 +349,14 @@ def seniority(title, body, profile):
     scores = block["scores"]
     candidates = []
 
-    # Title: the whole ladder, most senior wins.
-    for level in ("lead", "senior", "three_plus", "one_two", "entry"):
+    # Title: the whole ladder, most senior wins. "founding" sits between: a
+    # founding role expects ownership beyond a new grad's, but states no bar
+    # that rules one out, so it deducts without gating.
+    for level in block.get("title_ladder") or TITLE_LADDER:
         term = first_match(title, block.get(level) or [])
         if term:
-            candidates.append((scores[level], level, 'title says "%s"' % term))
+            candidates.append((scores.get(level, scores["none"]), level,
+                               'title says "%s"' % term))
             break
 
     # Body: years, plus explicit entry wording. Nothing else.
@@ -350,9 +383,18 @@ def skill_overlap(body, profile, maximum):
     block = profile["skills"]
     saturation = max(1, block.get("saturation", 10))
     weights = (("primary", 3), ("secondary", 2), ("domain", 1))
-    hits, points = [], 0
+    # Spellings of one skill ("llm", "llms", "large language model") count once.
+    canon = {}
+    for group in block.get("synonyms") or ():
+        for term in group:
+            canon[term.lower()] = group[0].lower()
+    hits, seen, points = [], set(), 0
     for tier, weight in weights:
         for term in all_matches(body, block.get(tier) or []):
+            key = canon.get(term.lower(), term.lower())
+            if key in seen:
+                continue
+            seen.add(key)
             hits.append(term)
             points += weight
     score = min(maximum, int(round(maximum * points / float(saturation))))
@@ -514,6 +556,9 @@ def company_affinity(name, profile, affinity, tiers, maximum):
     "Unrated" therefore does not mean one fixed number - a tier-1 company with
     no rating seeds to 4, not to the neutral default.
     """
+    if not maximum:
+        # Company switched off in weights.max: it neither scores nor explains.
+        return 0, None
     ratings = affinity.get("companies") or {}
     threshold = (profile.get("company") or {}).get("match_threshold", 85)
 
@@ -639,12 +684,36 @@ def score(title, company, location, body, ctx, german_hard=False):
             band = ceiling
         reasons.insert(0, reason)
 
+    # Where the number fell short of 100, biggest shortfall first, so a low or
+    # medium row explains itself without opening the posting. Gates lead: they
+    # cost no points but they are why the band reads lower than the number.
+    shortfalls = [
+        ("role", role_reason),
+        ("seniority", sen_reason),
+        ("skills", "only %d profile skill%s named (%s)" % (
+            len(hits), "" if len(hits) == 1 else "s", ", ".join(hits[:3]))
+         if hits else skill_reason),
+        ("company", comp_reason or (maxima["company"] and "company unrated (neutral default)")),
+        ("location", loc_reason),
+    ]
+    losses = []
+    for key, reason in shortfalls:
+        lost = maxima[key] - parts[key]
+        if lost >= MIN_LOSS and reason:
+            losses.append((lost, "-%d %s: %s" % (lost, key, reason)))
+    if gap_pts:
+        losses.append((gap_pts, "-%d gaps: %s" % (gap_pts, gap_reason)))
+    losses.sort(key=lambda item: -item[0])
+    losses = ["band capped at %s: %s" % (ceiling, reason) for ceiling, reason in gates
+              ] + [text for _, text in losses]
+
     return {
         "fit": band,
         "fit_score": raw,
         "fit_priority_score": min(raw, BAND_CEILING[band]),
         "fit_parts": parts,
         "fit_reasons": reasons[:MAX_REASONS],
+        "fit_losses": losses,
         "fit_source": "deterministic",
         "fit_evidence": evidence,
         "fit_version": FIT_VERSION,

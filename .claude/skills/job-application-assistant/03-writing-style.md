@@ -42,95 +42,17 @@ and what the candidate has learned to care about as an engineer:
 
 ## Cover Letter Structure
 
-The binding rules and fixed paragraphs live in `cover_letters/my_cover.tex`.
-Start with a tailored motivation, followed by one fixed introduction, two selected
-highlights and a tailored closing. Copy the selected library paragraphs exactly,
-retaining USE_COVER_TEXT markers. Select/order by responsibilities; do not rewrite
-them to insert keywords, simplify them or improve their style. Add optional
-publication or a third highlight only when it contributes distinct relevant
-evidence and both tailored parts fit the budget. Never combine nlp_research with
-nlp_models, research_interface with publication, or jobjuniors with
-jobjuniors_software: each pair describes the same
-work. Each complete fixed introduction starts with what the candidate builds, integrates the
-current NLP Research Assistant role, LLM/macroeconomics research and completed MSc
-requirements, then states an engineering interest. Preserve that personal voice;
-do not replace it with an application announcement or add another background paragraph.
-Degree requirements are complete; a conferral date has not been confirmed.
-JobJuniors demonstrates translating product requirements into architecture and
-engineering delivery; do not substitute a new narrow payment/staff-tool anecdote.
-For software delivery roles, select the approved expanded engineering variant
-when relevant. Keep the course-project evidence brief, and any relevant research
-interface/publication in the optional natural paragraph after the list, with
-the venue but no authorship-rank emphasis. Follow the base's selection policy.
-Describe the research with the approved NLP-pipeline and machine-learning wording,
-and preserve the independent open-source project's documented scope. Named methods
-can explain engineering choices and behavior, as in the approved agent paragraph;
-they are not a reason to add library inventories. The approved samples establish
-voice and depth, not evidence choices or motivation to repeat for every role.
-
-### The tailored first paragraph
-
-Write one concise sentence before the fixed introduction explaining what specific
-work attracts the candidate to this role or employer. Use a second sentence only
-when it adds a distinct reason. Connect an actual responsibility or independently
-verified company detail to an owner-confirmed interest from `01-candidate-profile.md`;
-the base supplies the generation rules. Apply the profile's agent-specific
-preferences only to relevant work, not as a default for unrelated software or
-research roles. Choose the relevant
-confirmed interest rather than inventing domain passion, product usage or personal
-history. Keep this first paragraph separate from the fixed introduction and its
-USE_COVER_TEXT wrapper. A company-name swap must not leave an equally suitable
-opening for unrelated roles.
-
-### Model evidence beyond research roles
-
-The nlp_models paragraph is useful for applied AI, LLM product and agent roles as
-well as research when model adaptation, empirical comparison or the quality,
-memory and response-time trade-off contributes a relevant strength. The posting
-need not explicitly require fine-tuning. Its model-level evaluation can complement
-contract_agent's system behavior, citation controls, tracing and regression checks;
-jobjuniors adds product delivery. Include all three only when each supplies useful,
-distinct evidence and the tailored opening and closing fit. Choose nlp_research
-instead when pipelines, data or time-aware forecasting evaluation contribute more.
-For general software work without relevant model tasks, prefer stronger software
-evidence. Do not turn the classification comparison into claims of production
-optimization, generally superior small models, or foundation-model training.
-
-### The customised closing
-
-The closing develops the reason introduced at the start. Write one to three new
-sentences, using the owner-confirmed career direction and values in the profile:
-- Explain why the specific work matters to the candidate or the direction they
-  want to pursue. Develop the attraction instead of repeating it. Dependable
-  agents and honest evaluation are appropriate for relevant AI work; useful
-  products and practical engineering/research may be the better connection for
-  another role. Do not force an agent goal into every application.
-- One grounded contribution: connect a responsibility to one or two strengths
-  already evidenced, without retelling projects. Company task, career direction
-  and contribution can share one natural sentence; do not force separate ones.
-
-Then append the base's conditional relocation and fixed invitation. Reserve space
-for a meaningful closing before optional evidence, without a fixed quota or
-padding. Warmth comes from a believable reason
-for wanting the work. Mention an international or energetic team only when sourced
-and relevant; never use these as default compliments. Prefer the specific work to
-"real impact", "passionate about technology" or "not just a demo". Do not force
-production language onto research roles. Avoid generic praise, unsupported personal history,
-product-use claims, guarantees, and treating future ambitions as existing products.
-A company-name swap must not leave an equally suitable paragraph for any employer.
-Do not reuse a sample closing unless the next posting independently supports the
-same motivation and task match.
-
-### Editing and review
-
-Style advice applies to the tailored motivation and closing. Keep fixed prose unchanged even
-when another phrasing seems better. Flag a stale fact rather than silently changing
-it. Use at most 380 body words, usually 250–360 with no minimum or padding. To fit
-one page, remove verbose customised wording while preserving both tailored parts;
-drop optional publication or the least relevant third highlight before reducing
-the specificity needed for a sincere motivation and meaningful closing. Keep the
-approved 23 mm side, 16 mm top and 20 mm bottom margins and
-10.7 pt/14 pt body typography. Never shrink typography or cut inside a fixed paragraph.
+Facts are fixed; wording and paragraph order are editable. The canonical base's TAILORING RULES, evidence bank and DO NOT CLAIM boundaries bind every pass.
+- Write one coherent personal letter, not a CV recap. Choose evidence by the posting's tasks, not its title. Start with one honest reason for pursuing this work, or a relevant experience that explains that interest. No stock opening is required: do not routinely use "What draws me to this role". Do not explain the employer's product back to them, paste job-description keywords into an opening, or invent longstanding passion, product use or domain expertise.
+- The candidate profile is the authority for motivation, career direction and preferences. Use agent-specific interest only when relevant to actual agent responsibilities; do not force that interest into other work. Employer claims require first-party support. Distinguish plans from existing capabilities.
+- Build the whole narrative around that reason. Background may be brief or integrated with evidence; no compulsory introduction paragraph or research-topic recital. Use "MSc in Computational Linguistics" and preserve the distinction between completing requirements and degree conferral. Do not turn a research appointment into production experience.
+- Select normally two complementary experiences, with a third only when it adds a distinct relevant strength. For SDE work, lead with software delivery, engineering decisions and supported outcomes; include AI or coursework only when relevant. For AIE work, consider agent engineering, product delivery and model adaptation/evaluation on their merits. A task-specific model comparison does not establish universal superiority, production gains or monetary savings. Do not repeat one project as multiple independent achievements. Record the task match and distinct contribution in letter_plan's existing evidence strings.
+- Each paragraph must advance the argument. Explain a relevant decision or result rather than inventorying tools. Connect background and projects naturally; avoid repeated statements about reliability, debugging or career goals. Technical detail must preserve ownership, project context and limitations. Personal projects, coursework, research and production remain distinct; tests are not guarantees.
+- Close briefly with the contribution or next step that follows from the evidence. No compulsory invitation sentence, sentence count or paragraph word quota. Do not repeat the opening, retell projects, claim ideal fit or promise results. Use relocation only when supported by the profile and verified role location; never invent availability or visa facts.
+- Use plain first-person prose in separate lettercontent paragraphs, no bullets or labels, normally three to seven body paragraphs plus salutation. No slogans, em dashes, generic praise or keyword collage. Review the entire letter for natural transitions, repetition and unsupported implications, not merely the opening and closing. Approved examples illustrate voice and editorial choices, not sentences or employer interests to copy.
+- At most 380 body words, usually 250-360 without padding, and exactly one A4 page. Preserve the canonical preamble unchanged and all formal letter elements. Resolve placeholders. Fit by removing repetition and less relevant detail across the entire narrative, never by changing fonts, margins or spacing. Preserve the honest motivation and strongest evidence when shortening.
+- Mechanical structure/layout checks do not establish factual grounding or writing quality. Independently review every claim against the candidate profile, master CV and evidence bank; flag conflicting sources instead of silently choosing one. Draft, review, fix and repair use this same policy.
+- Compatibility: a legacy base explicitly declaring COVER_LIBRARY_V1 still requires exact selected COVER_TEXT prose, USE_COVER_TEXT markers and its original selection/shape rules. Narrative mode is selected by COVER_NARRATIVE_V1 in the canonical base, never by deleting a marker from a generated source.
 
 ## Language for Different Role Types
 

@@ -135,8 +135,8 @@ shows exactly those as the screening list.
 
 - Follow `.claude/skills/job-application-assistant/03-writing-style.md`. The
   letter keeps the owner's voice. There is no standing narrative: each letter
-  selects approved fixed blocks from the cover base's library by the posting's
-  tasks and is assembled as one coherent page.
+  selects grounded evidence by the posting's tasks and develops one coherent
+  narrative under the canonical cover base's policy.
 - Any mention of agentic coding or AI tooling names **Claude Code**.
 - CV language: the `CV language` in CLAUDE.md (English). The letter matches the
   posting's language.
@@ -214,83 +214,22 @@ deal-breaker yourself.
 
 ### Cover letter
 
-- Assemble the seeded copy of `cover_letters/my_cover.tex`. Its TAILORING RULES
-  and COVER_LIBRARY_V1 are the single source of truth for fixed wording.
-- Choose by the posting's responsibilities, not its title or CV variant. Record
-  the role problem and evidence choices in the existing `letter_plan`. Select one
-  fixed introduction and the two strongest distinct highlights, preceded by a
-  concise tailored motivation and followed by a tailored closing. Add a third
-  highlight or optional publication only when it adds relevant evidence and both
-  tailored parts fit the budget. Order by relevance; never split
-  one project. Never include both nlp_research and nlp_models (the same current
-  research), or both research_interface and publication (the same project).
-  Include nlp_models when hands-on model adaptation, empirical comparison or
-  quality versus memory/response-time judgement adds a relevant strength for
-  applied AI, LLM product, agent or research work. A research role or explicit
-  fine-tuning requirement is not necessary. Its model-level evaluation complements
-  contract_agent's system controls, tracing and regression checks; jobjuniors
-  contributes product delivery. Do not add it solely because fine-tuning is
-  impressive, or infer production optimization, generally superior smaller
-  models, or foundation-model training. Use nlp_research instead when pipelines,
-  data or time-aware research evaluation contribute more. The approved samples
-  supply wording and layout, not default evidence
-  choices for unrelated postings.
-- For software delivery roles, follow the base's software selection policy:
-  prefer `jobjuniors_software` for the expanded architecture, failure-handling
-  and testing evidence; never combine it with `jobjuniors`. Keep `event_platform`
-  brief when Java/Spring Boot or backend correctness contributes a distinct
-  strength. Do not select `research_interface` as a software-role bullet.
-  Relevant interface/research work may appear only in the optional `publication`
-  natural paragraph after the list, naming the venue without authorship rank.
-  Do not force either the course project or publication into unrelated roles.
-- Copy each selected COVER_TEXT verbatim into a matching USE_COVER_TEXT wrapper.
-  Preserve markers, IDs and punctuation. No paraphrasing, compression, bold labels
-  or added mechanisms. Missing suitable evidence is a library-coverage issue to
-  report, not a reason to force a poor match or rewrite a block silently.
-- Customise recipient, subject, salutation, date/location, a motivation before the
-  fixed introduction, and one to three closing sentences. The motivation is
-  normally one concise sentence; a second must add a distinct reason. Connect
-  specific role/company work to an owner-confirmed interest from the profile.
-  The closing develops that attraction through relevant career direction or
-  values and one evidenced contribution, rather than repeating the opening or
-  retelling projects. The base supplies the generation rules; the profile alone
-  supplies confirmed personal direction. Apply its agent-specific preferences
-  only to relevant work. Do not invent personal history,
-  product usage or industry passion, or use generic praise. Keep tailored
-  motivation outside the fixed introduction's markers. Preserve the introduction's
-  voice and current role/degree status in every selected whole variant;
-  do not infer a conferral date from an old expected date. Relocation and invitation
-  use its fixed wording; do not invent availability, notice periods or visa facts.
-- Employer claims require first-party verification. Unknown address lines are
-  deleted; ambitious future capabilities must not be stated as already achieved.
-  International/energetic teams are optional sourced reasons, never default praise.
-- Exactly one page and at most 380 body words, usually 250–360, with no minimum
-  or padding. Budget the motivation and a meaningful closing alongside the two
-  strongest fixed highlights before optional third evidence or publication.
-  Remove verbose customised wording without erasing either tailored part; drop
-  optional publication or the least relevant third highlight before reducing
-  necessary specificity. Preserve the approved 23 mm side, 16 mm top and 20 mm bottom
-  margins and 10.7 pt body/14 pt leading. Do not alter fonts, margins or spacing,
-  or shorten fixed text.
-- Preserve the fixed-library base's preamble exactly; only whitespace and comments
-  may differ. Do not add packages or font, margin or spacing overrides to a copy.
-- Routine application passes keep the canonical base read-only; an explicit owner
-  request to update the pipeline/template is a separate authorized library edit.
-- All passes, including review/fix/repair, preserve fixed paragraphs. Review their
-  factual currency and selection, not their style. Report source conflicts for a
-  library update. The `cover_fixed_blocks` mechanical check detects missing,
-  modified or unmarked core text and a changed base preamble; manual review mode
-  still reports check failures.
-- The rendered cover page limit is mandatory even with automated review off.
-  Count the complete PDF, including the company address and signature. On
-  overflow, remove optional publication or the least relevant third highlight,
-  then shorten only tailored motivation/closing while keeping two distinct
-  fixed highlights. Rebuild after each change; at most two automatic repairs
-  are allowed. If it still does not fit, keep the draft and report the problem;
-  never publish the overflowing PDF as finished. Word count is not a fit test.
-- A CV-only run never writes a letter; a cover-only run reads CV evidence without
-  editing it. Default English copy is maintained in the library; translations or
-  new evidence variants require a separate template update, not ad hoc rewriting.
+Start from `cover_letters/my_cover.tex`; preserve its preamble and formal frame.
+
+Facts are fixed; wording and paragraph order are editable. The canonical base's TAILORING RULES, evidence bank and DO NOT CLAIM boundaries bind every pass.
+- Write one coherent personal letter, not a CV recap. Choose evidence by the posting's tasks, not its title. Start with one honest reason for pursuing this work, or a relevant experience that explains that interest. No stock opening is required: do not routinely use "What draws me to this role". Do not explain the employer's product back to them, paste job-description keywords into an opening, or invent longstanding passion, product use or domain expertise.
+- The candidate profile is the authority for motivation, career direction and preferences. Use agent-specific interest only when relevant to actual agent responsibilities; do not force that interest into other work. Employer claims require first-party support. Distinguish plans from existing capabilities.
+- Build the whole narrative around that reason. Background may be brief or integrated with evidence; no compulsory introduction paragraph or research-topic recital. Use "MSc in Computational Linguistics" and preserve the distinction between completing requirements and degree conferral. Do not turn a research appointment into production experience.
+- Select normally two complementary experiences, with a third only when it adds a distinct relevant strength. For SDE work, lead with software delivery, engineering decisions and supported outcomes; include AI or coursework only when relevant. For AIE work, consider agent engineering, product delivery and model adaptation/evaluation on their merits. A task-specific model comparison does not establish universal superiority, production gains or monetary savings. Do not repeat one project as multiple independent achievements. Record the task match and distinct contribution in letter_plan's existing evidence strings.
+- Each paragraph must advance the argument. Explain a relevant decision or result rather than inventorying tools. Connect background and projects naturally; avoid repeated statements about reliability, debugging or career goals. Technical detail must preserve ownership, project context and limitations. Personal projects, coursework, research and production remain distinct; tests are not guarantees.
+- Close briefly with the contribution or next step that follows from the evidence. No compulsory invitation sentence, sentence count or paragraph word quota. Do not repeat the opening, retell projects, claim ideal fit or promise results. Use relocation only when supported by the profile and verified role location; never invent availability or visa facts.
+- Use plain first-person prose in separate lettercontent paragraphs, no bullets or labels, normally three to seven body paragraphs plus salutation. No slogans, em dashes, generic praise or keyword collage. Review the entire letter for natural transitions, repetition and unsupported implications, not merely the opening and closing. Approved examples illustrate voice and editorial choices, not sentences or employer interests to copy.
+- At most 380 body words, usually 250-360 without padding, and exactly one A4 page. Preserve the canonical preamble unchanged and all formal letter elements. Resolve placeholders. Fit by removing repetition and less relevant detail across the entire narrative, never by changing fonts, margins or spacing. Preserve the honest motivation and strongest evidence when shortening.
+- Mechanical structure/layout checks do not establish factual grounding or writing quality. Independently review every claim against the candidate profile, master CV and evidence bank; flag conflicting sources instead of silently choosing one. Draft, review, fix and repair use this same policy.
+- Compatibility: a legacy base explicitly declaring COVER_LIBRARY_V1 still requires exact selected COVER_TEXT prose, USE_COVER_TEXT markers and its original selection/shape rules. Narrative mode is selected by COVER_NARRATIVE_V1 in the canonical base, never by deleting a marker from a generated source.
+
+Compile with the existing LaTeX workflow into `build/`, verify one page, render
+and inspect. At most two automatic repairs before reporting a persistent defect.
 
 ---
 
@@ -305,29 +244,17 @@ only what matters for a truthful, targeted application:
 - **Exaggeration** - escalated scope, numbers, seniority or ownership.
 - **Consequential omission** - decisive requirements the documents could answer
   with real evidence but do not.
-- **Specificity and clarity** - generic lines that could be sent anywhere. In
-  the letter, every filler sentence named under "Cover letter" above (GitHub
-  or portfolio pointers, unrequested availability lines, unsupported industry philosophy,
-  recaps) in customised prose is a `must_fix`. Never delete or rewrite fixed
-  blocks for stylistic reasons; check their selection and factual currency.
-- **Letter level, shape and selection** - the evidence and the thinking chosen
-  answer the posting's main problems (compare `letter_plan` when present), not a
-  fixed order. Verify the selected block IDs and rationale against the posting's
-  actual tasks; check same-project exclusions and that each highlight adds a
-  distinct relevant strength. Verify a concise tailored motivation before the
-  unchanged fixed introduction; it must identify specific work tied to a confirmed
-  interest. The closing must develop that reason through relevant career direction
-  or values and an evidenced contribution; it must not simply repeat the opening.
-  A company-name swap must not leave equally suitable customised prose for unrelated
-  roles. Do not inherit a sample's closing or agent-first selection by default.
-  Owner-confirmed values are useful when connected to the work, not filler merely
-  because they express a personal principle. Named methods are appropriate when they
-  explain supported behavior or decisions, as in the approved agent paragraph;
-  a bare library inventory or unexplained metric is a `clarity` finding. At most
-  380 body words with no padding. A fix never adds
-  a background paragraph or a third item to fill space. Preserve the selected
-  library text exactly; only tailored motivation and closing wording are open to
-  stylistic improvement.
+- **Whole-letter narrative** - apply the cover policy above to every paragraph.
+  Compare evidence selection with `letter_plan`: each experience should answer a
+  relevant task and add a distinct strength. Flag generic company praise, product
+  explainers, keyword collage, repeated reliability claims, disconnected background
+  or abrupt transitions. Background can be concise and integrated. The opening
+  should express a supported reason; the closing should add a contribution or next
+  step. Do not enforce a stock opening, fixed introduction or invitation sentence.
+  Every factual implication still needs support, even when phrased more naturally.
+  Use the base's scope boundaries and check the full 380-word narrative. Legacy
+  COVER_LIBRARY_V1 bases retain their exact-prose rules; narrative bases allow
+  stylistic revisions throughout. Mechanical checks do not replace this review.
 - **Consistency** (both documents) - the CV and letter agree on every shared fact.
 - **Voice** - the letter reads as the owner's plain first person, not as
   marketing copy.
@@ -366,9 +293,8 @@ unsupported claim; keep the page limits. A CV layout repair uses `\needspace` /
 `\enlargethispage` first and removes the least relevant line only when needed.
 A letter is never repaired with layout commands: it is brought back to one page
 by cutting words, in the order given under "Cover letter" above. A letter fix
-keeps the letter's shape and level - tailored motivation, fixed introduction,
-2-3 highlights, developed closing; no CV
-detail added back.
+preserves factual scope, coherent motivation, complementary evidence and a concise
+closing. Narrative wording is editable throughout; avoid adding CV detail or filler.
 
 ---
 

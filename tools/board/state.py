@@ -54,7 +54,14 @@ def _score_source(entry):
 
 
 def jobs_payload():
-    return {"jobs": _sorted(_shape(load().items())), "statuses": STATUSES}
+    rows = _sorted(_shape(load().items()))
+    # The on-demand evaluation lives in its own sidecar (fit_eval.py); the list
+    # only needs each row's verdict to mark it.
+    from . import fit_eval
+    verdicts = fit_eval.verdicts()
+    for row in rows:
+        row["evaluation"] = verdicts.get(row["url"]) or ""
+    return {"jobs": rows, "statuses": STATUSES}
 
 
 def _shape(items):
@@ -114,7 +121,11 @@ def _shape(items):
             # a prefit.
             "score_source": _score_source(entry),
             "fit_evidence": entry.get("fit_evidence", ""),
+            # The raw keyword score, kept beside an AI band (fit_eval.py) so the
+            # page can show both numbers.
+            "keyword_score": entry.get("fit_score"),
             "fit_parts": entry.get("fit_parts") or {},
+            "fit_losses": entry.get("fit_losses") or [],
             "dupes": entry.get("possible_duplicate_of") or [],
         })
     return rows

@@ -500,7 +500,9 @@ def screen(record, log, budget=None):
     if not ident:
         return "new", "", ""
     if budget is not None and not budget.take():
-        return "new", "AUTO-SCREEN: not screened - the run's detail budget was spent", ""
+        reason = ("LinkedIn rate-limited this run" if budget.blocked
+                  else "the run's detail budget was spent")
+        return "new", "AUTO-SCREEN: not screened - %s" % reason, ""
     try:
         proc = subprocess.run(["bun", "run", cli, "detail", ident, "--format", "json"],
                               cwd=str(ROOT), timeout=90, capture_output=True, text=True)

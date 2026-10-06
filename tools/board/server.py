@@ -43,8 +43,8 @@ import jobs_md  # noqa: E402
 import ats_fetch  # noqa: E402
 import linkedin_inbox  # noqa: E402
 
-from . import (activity, add_job, companies, docs, notion, review, run_registry, runs,  # noqa: E402
-               state, trash)
+from . import (activity, add_job, companies, docs, fit_eval, notion, review,  # noqa: E402
+               run_registry, runs, state, trash)
 
 TOKEN_FILE = jobs_md.ROOT / "job_scraper" / ".board-token"
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
@@ -375,7 +375,12 @@ class Handler(BaseHTTPRequestHandler):
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            # The tab closed or the poll was aborted mid-response (reload,
+            # sleep, a newer poll superseding it). Nobody is left to answer.
+            self.close_connection = True
 
     def do_GET(self):
         parts = urlparse(self.path)
@@ -413,6 +418,11 @@ class Handler(BaseHTTPRequestHandler):
             if row is None:
                 return self._send(404, json.dumps({"error": "unknown job"}))
             return self._send(200, json.dumps(row, ensure_ascii=False))
+        if parts.path == "/api/evaluate/queue":
+            return self._send(200, json.dumps(fit_eval.queue_status(), ensure_ascii=False))
+        if parts.path == "/api/evaluate":
+            return self._send(200, json.dumps(fit_eval.status((query.get("url") or [""])[0]),
+                                              ensure_ascii=False))
         if parts.path == "/api/fetch/status":
             return self._send(200, json.dumps(fetch_status(), ensure_ascii=False))
         if parts.path == "/api/linkedin/inbox":
@@ -492,6 +502,7 @@ class Handler(BaseHTTPRequestHandler):
         run_id, action = run_route(parts.path)
         company_match = COMPANY_PATH.fullmatch(parts.path)
         known = parts.path in ("/api/update", "/api/jobs/add", "/api/fetch", "/api/runs",
+                               "/api/evaluate", "/api/evaluate/retry",
                                "/api/linkedin/capture", "/api/linkedin/process",
                                "/api/runs/undelete",
                                "/api/companies", "/api/companies/resolve-all",
@@ -542,6 +553,12 @@ class Handler(BaseHTTPRequestHandler):
                 "%s - %s (%s)" % (body.get("company"), body.get("title"), body.get("outcome"))
                 if code == 200 else body.get("error")),
                 level="info" if code == 200 else "warn", ms=timer.ms)
+            return self._send(code, json.dumps(body, ensure_ascii=False))
+
+        if parts.path == "/api/evaluate/retry":
+            return self._send(200, json.dumps({"retried": fit_eval.retry_failed()}))
+        if parts.path == "/api/evaluate":
+            code, body = fit_eval.start(payload)
             return self._send(code, json.dumps(body, ensure_ascii=False))
 
         if parts.path == "/api/fetch":
@@ -797,6 +814,7 @@ def main(argv=None):
     runs.supervisor()          # reconcile orphans before the first request
     trash.purge()              # deleted runs older than trash.TRASH_DAYS
     notion.start_background_pull()   # no-op unless job_scraper/notion_sync.json is set
+    fit_eval.start_background()      # no-op per tick unless auto_evaluate is on
 
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

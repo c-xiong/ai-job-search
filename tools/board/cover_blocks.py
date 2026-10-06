@@ -1,16 +1,17 @@
-"""Validate approved cover-letter prose without asking a model to judge it.
+"""Validate cover-letter structure and layout, plus legacy immutable prose.
 
-The canonical base opts in with COVER_LIBRARY_V1 and stores plain-text blocks
-in comments. A generated letter selects blocks with USE_COVER_TEXT markers.
-Only whitespace may change. Legacy/custom bases without the declaration keep
-their existing behaviour. This is a checker for the base's supported LaTeX
-shape, not a general-purpose TeX parser.
+COVER_NARRATIVE_V1 permits editable prose within the supported formal frame.
+COVER_LIBRARY_V1 retains exact text and selection checks for older bases.
+The canonical base selects the policy, not the generated source. These checks
+validate structure and layout; independent content review establishes grounding.
+This is not a general-purpose TeX parser.
 """
 
 import re
 
 
 _ID = r"[a-z][a-z0-9_-]*"
+_NARRATIVE = re.compile(r"^\s*%\s*COVER_NARRATIVE_V1\s*$", re.M)
 _DECLARATION = re.compile(r"^\s*%\s*COVER_LIBRARY_V1\s*$", re.M)
 _LIBRARY_START = re.compile(r"^\s*%\s*COVER_TEXT (" + _ID + r") (opening|highlight|research)\s*$")
 _EXCLUSIVE = re.compile(r"^\s*%\s*COVER_EXCLUSIVE\s+(.+?)\s*$")
@@ -139,7 +140,7 @@ def _commands(text, name, arguments=1):
             yield match.start(), at, values
 
 
-def _shape(source, selected, kinds, issues):
+def _shape(source, selected, kinds, issues, prose=False):
     # Replace whole marked blocks before stripping comments. Comments alone
     # cannot satisfy the text check or count as selected visible paragraphs.
     masked, last = [], 0
@@ -158,7 +159,10 @@ def _shape(source, selected, kinds, issues):
         issues.append("selected blocks must appear inside the document body")
     starts = list(re.finditer(r"\\begin\{itemize\}(?:\[[^\]]*\])?", body))
     ends = list(re.finditer(r"\\end\{itemize\}", body))
-    if len(starts) != 1 or len(ends) != 1 or starts[0].end() > ends[0].start():
+    if prose:
+        if starts or ends:
+            issues.append("paragraph-format letters must not contain an itemize list")
+    elif len(starts) != 1 or len(ends) != 1 or starts[0].end() > ends[0].start():
         issues.append("fixed letter requires exactly one itemize list")
     else:
         for token in tokens:
@@ -223,6 +227,7 @@ def validate_fixed_blocks(source_text, base_text):
     if not result["enabled"]:
         return result
     issues = result["issues"]
+    prose = bool(re.search(r"^\s*%\s*COVER_FORMAT paragraphs\s*$", base_text, re.M))
     library = _library(base_text, issues)
     exclusive_groups = _exclusive_groups(base_text, library, issues)
     selected = _selected(source_text, issues)
@@ -239,7 +244,7 @@ def validate_fixed_blocks(source_text, base_text):
         kind, expected = library[ident]
         kinds.append(kind)
         code = _without_comments(text).strip()
-        pattern = (r"\\item(?![A-Za-z])\s+(.+)" if kind == "highlight"
+        pattern = (r"\\item(?![A-Za-z])\s+(.+)" if kind == "highlight" and not prose
                    else r"\\lettercontent\s*\{([^{}]*)\}")
         match = re.fullmatch(pattern, code, re.S)
         if not match:
@@ -255,7 +260,64 @@ def validate_fixed_blocks(source_text, base_text):
         together = [ident for ident in group if ident in seen]
         if len(together) > 1:
             issues.append("mutually exclusive blocks selected: " + ", ".join(together))
-    _shape(source_text, selected, kinds, issues)
+    _shape(source_text, selected, kinds, issues, prose=prose)
+    return result
+
+
+def validate_narrative(source_text, base_text):
+    """Check the supported paragraph frame, not the meaning or truth of prose."""
+    result = {"enabled": bool(_NARRATIVE.search(base_text)), "issues": []}
+    if not result["enabled"]:
+        return result
+    issues = result["issues"]
+    code = _without_comments(source_text)
+    begin, end = r"\begin{document}", r"\end{document}"
+    if code.count(begin) != 1 or code.count(end) != 1 or code.index(begin) > code.index(end):
+        issues.append("narrative letter requires one document environment")
+        return result
+    body, tail = code.split(begin, 1)[1].split(end, 1)
+    if tail.strip():
+        issues.append("unsupported content after document")
+    paragraphs = list(_commands(body, "lettercontent"))
+    if not 4 <= len(paragraphs) <= 8:
+        issues.append("use a salutation and three to seven narrative paragraphs")
+    if not paragraphs or not re.match(r"Dear\b", paragraphs[0][2][0].strip()):
+        issues.append("first paragraph must be the salutation")
+    spans = []
+    for start, finish, values in paragraphs:
+        text = values[0].strip()
+        if not text:
+            issues.append("empty narrative paragraph")
+        if re.search(r"\[[A-Z][A-Z0-9 _.,/&()'-]*\]", text):
+            issues.append("unresolved narrative placeholder")
+        # Literal text and escaped punctuation only: nested layout commands or
+        # lists must not hide inside an otherwise valid paragraph wrapper.
+        if re.search(r"\\[A-Za-z]|(?<!\\)[{}]", text):
+            issues.append("unsupported command or grouping inside narrative paragraph")
+        spans.append((start, finish))
+    formal = []
+    for name, nargs in (("senderblock", 2), ("recipientblock", 1),
+                        ("currentdate", 1), ("subjectline", 1),
+                        ("closing", 1), ("signature", 1)):
+        commands = list(_commands(body, name, nargs))
+        if len(commands) != 1:
+            issues.append("require exactly one formal letter command: " + name)
+        for start, finish, values in commands:
+            if any(not value.strip() for value in values):
+                issues.append("empty formal letter command: " + name)
+            if paragraphs and ((name in ("closing", "signature") and start < paragraphs[-1][1])
+                               or (name not in ("closing", "signature") and finish > paragraphs[0][0])):
+                issues.append("formal letter command outside its header/footer: " + name)
+            formal.append((name, start))
+            spans.append((start, finish))
+    if [name for name, _ in sorted(formal, key=lambda item: item[1])] != [
+            "senderblock", "recipientblock", "currentdate", "subjectline", "closing", "signature"]:
+        issues.append("formal letter commands must retain their order")
+    chars = list(body)
+    for start, finish in spans:
+        chars[start:finish] = " " * (finish - start)
+    if "".join(chars).strip():
+        issues.append("text or unsupported commands outside narrative paragraphs")
     return result
 
 
@@ -269,7 +331,7 @@ def validate_layout(source_text, base_text):
     """
     base = _without_comments(base_text)
     geometries = list(_commands(base, "geometry"))
-    result = {"enabled": bool(_DECLARATION.search(base_text) and geometries), "issues": []}
+    result = {"enabled": bool((_DECLARATION.search(base_text) or _NARRATIVE.search(base_text)) and geometries), "issues": []}
     if not result["enabled"]:
         return result
     source = _without_comments(source_text)
@@ -302,8 +364,8 @@ def validate_layout(source_text, base_text):
     # outside that macro, so their explicit group/font wrapper is essential.
     list_end = re.compile(r"\\end\{itemize\}")
     ends = list(list_end.finditer(body))
-    if len(source_lists) != 1 or len(ends) != 1 or not (
+    if base_lists and (len(source_lists) != 1 or len(ends) != 1 or not (
             re.search(r"\{\s*\\raggedright\s*\\letterbodyfont\s*$", body[:source_lists[0].start()])
-            and re.match(r"\s*\\par\s*\}", body[ends[0].end():])):
+            and re.match(r"\s*\\par\s*\}", body[ends[0].end():]))):
         result["issues"].append("itemize must retain the approved raggedright/letterbodyfont group")
     return result
