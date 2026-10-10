@@ -65,6 +65,7 @@ except ImportError:  # pragma: no cover - Windows
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import jobs_md  # noqa: E402
+import job_attrs  # noqa: E402
 import posting_text  # noqa: E402
 import postings  # noqa: E402
 
@@ -103,9 +104,8 @@ ALLOWED_TOOLS = ("Read", "Glob", "Grep", "WebSearch", "WebFetch", "TodoWrite",
 BASE_CV_CHOICES = ("auto", "sde", "ai", "ml")
 BASE_CV_ERROR = "base_cv must be auto, sde or ai"
 # `ch` is the default and serves every non-German posting; `de` adds the
-# relocating-to-Germany line. The country is never inferred from a posting's
-# location: it is a legal statement the owner chooses. Records from before the
-# default was pinned hold None, which the master resolves to `ch` as well.
+# relocating-to-Germany line. New runs infer it from the board location;
+# explicit choices and revisions keep the owner's selection.
 COUNTRY_CHOICES = ("ch", "de")
 DEFAULT_COUNTRY = "ch"
 COUNTRY_ERROR = "cv_country must be ch or de"
@@ -264,7 +264,7 @@ class Supervisor:
         if base_cv not in BASE_CV_CHOICES:
             return 400, {"error": BASE_CV_ERROR}
         # Unset (or the retired `default`) means "not chosen": a revision
-        # inherits its parent's country, anything else gets `ch`.
+        # inherits its parent's country; new runs use the board location.
         country = payload.get("cv_country")
         if country == "default":
             country = None
@@ -304,6 +304,11 @@ class Supervisor:
                     "cv" in docs.doc_kinds({"scope": scope})
                     and _resolve_base_cv(base_cv) != parent_base):
                 return 400, {"error": "say what should change"}
+        if country is None:
+            detected = (job_attrs.effective(entry) or {}).get("country")
+            if not detected or detected == "unknown":
+                detected = job_attrs.country(entry.get("location"), entry.get("title"))
+            country = "de" if detected == "DE" else DEFAULT_COUNTRY
         try:
             provider, execution = providers.selection(payload, settings, parent)
         except (ValueError, TypeError, KeyError) as exc:

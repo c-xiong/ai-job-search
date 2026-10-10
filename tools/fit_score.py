@@ -38,6 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collectors  # noqa: E402
+import job_attrs  # noqa: E402
 import jobs_md  # noqa: E402
 import posting_text  # noqa: E402
 import postings  # noqa: E402
@@ -53,7 +54,7 @@ REGISTRY = ROOT / "job_scraper" / "companies.json"
 # Bumped whenever the formula changes, so `--recompute --stale` can find the
 # rows that were scored under the old one. It is not a schema version: the
 # fields are additive and readers tolerate their absence as always.
-FIT_VERSION = 5   # 2: posting language, German, gaps; 3: gaps inform only, experience gate; 4: fit_losses; 5: optional company, fallback/compound roles, founding, synonyms
+FIT_VERSION = 6   # 2: posting language, German, gaps; 3: gaps inform only, experience gate; 4: fit_losses; 5: optional company, fallback/compound roles, founding, synonyms; 6: remote and German working-student deductions
 
 BANDS = ("high", "medium", "low")
 # The ceiling each band puts on a row's sort priority. Owned by jobs_md, which
@@ -602,6 +603,42 @@ def location_score(text, profile):
 
 
 # --------------------------------------------------------------------------
+# Component 6: attribute deductions (job_attrs.py)
+
+# Defaults when the profile has no "penalties" block. Fully remote hiring tends
+# to favour candidates who already hold work rights in a cheaper market, which
+# a visa-dependent candidate cannot compete with; remote restricted to CH/DE/AT
+# does not have that problem, so it costs less. A German working-student role
+# is not workable on a Swiss student permit, but an ad that also offers an
+# internship still is - only the working-student-only ad is deducted.
+DEFAULT_PENALTIES = {
+    "remote": {"anywhere": 15, "region": 15, "unknown": 12, "local": 5},
+    "de_working_student_only": 20,
+}
+
+
+def attribute_deductions(attrs, profile):
+    """[(component, points, reason)] for one row's effective attributes."""
+    if not attrs:
+        return []
+    penalties = dict(DEFAULT_PENALTIES)
+    penalties.update(profile.get("penalties") or {})
+    out = []
+    if attrs.get("work_mode") == "remote":
+        scope = attrs.get("remote_scope") or "unknown"
+        points = (penalties.get("remote") or {}).get(scope, 0)
+        if points:
+            label = {"anywhere": "anywhere", "region": "Europe-wide", "local": "within CH/DE/AT",
+                     "unknown": "scope not stated"}.get(scope, scope)
+            out.append(("remote", points, "fully remote (%s)" % label))
+    if attrs.get("country") == "DE" and attrs.get("job_type") == ["working_student"]:
+        points = penalties.get("de_working_student_only", 0)
+        if points:
+            out.append(("job_type", points, "German working-student role (no internship option)"))
+    return out
+
+
+# --------------------------------------------------------------------------
 # The score
 
 
@@ -616,7 +653,7 @@ class Context(object):
         self.tiers = tiers if tiers is not None else load_tiers()
 
 
-def score(title, company, location, body, ctx, german_hard=False):
+def score(title, company, location, body, ctx, german_hard=False, attrs=None):
     """The five components, the gates, the band, and the sort ceiling.
 
     Returns the `fit_*` fields, ready to be merged onto an entry.
@@ -648,6 +685,9 @@ def score(title, company, location, body, ctx, german_hard=False):
              "company": comp_pts, "location": loc_pts}
     if gap_pts:
         parts["gaps"] = -gap_pts
+    deductions = attribute_deductions(attrs, profile)
+    for key, points, _ in deductions:
+        parts[key] = -points
     raw = max(0, sum(parts.values()))
 
     band = "high" if raw >= bands["high"] else "medium" if raw >= bands["medium"] else "low"
@@ -656,6 +696,8 @@ def score(title, company, location, body, ctx, german_hard=False):
                comp_reason, loc_reason]
     if german == "soft" and language == "en":
         reasons.insert(0, "German mentioned as a plus")
+    for _, _, reason in deductions:
+        reasons.insert(0, reason)
     reasons = [r for r in reasons if r]
 
     # Gates. Each can only lower the band, the number is always preserved, and
@@ -708,6 +750,8 @@ def score(title, company, location, body, ctx, german_hard=False):
             losses.append((lost, "-%d %s: %s" % (lost, key, reason)))
     if gap_pts:
         losses.append((gap_pts, "-%d gaps: %s" % (gap_pts, gap_reason)))
+    for key, points, reason in deductions:
+        losses.append((points, "-%d %s: %s" % (points, key.replace("_", " "), reason)))
     losses.sort(key=lambda item: -item[0])
     losses = ["band capped at %s: %s" % (ceiling, reason) for ceiling, reason in gates
               ] + [text for _, text in losses]
@@ -738,16 +782,27 @@ def score_entry(entry, ctx, body=None):
     german = (entry.get("user_status") == "gate"
               and "German" in (entry.get("note") or ""))
     return score(entry.get("title", ""), entry.get("company", ""),
-                 entry.get("location", ""), body, ctx, german_hard=german)
+                 entry.get("location", ""), body, ctx, german_hard=german,
+                 attrs=job_attrs.effective(entry))
 
 
-def apply_to(entry, ctx, body=None):
+def apply_to(entry, ctx, body=None, detect_attrs=True):
     """Write the deterministic fields onto an entry, respecting /rank.
 
     `/rank` is the authority: once it has judged a row, a recompute may refresh
     the number and the parts but must not move the band it displays, or the
     next collect would quietly undo an LLM assessment that cost real tokens.
+
+    `detect_attrs` refreshes the row's detected attributes first (never the
+    hand-set ones); a plain recompute leaves them as they are.
     """
+    if body is None:
+        try:
+            body = postings.load(entry)
+        except postings.UnsafePath:
+            body = ""
+    if detect_attrs:
+        job_attrs.apply(entry, body)
     fields = score_entry(entry, ctx, body)
     if entry.get("fit_source") == "ranked":
         fields.pop("fit", None)
@@ -879,7 +934,7 @@ def recompute(seen, ctx, only_stale=False):
             continue
         if entry.get("fit_source") == "ranked":
             ranked += 1
-        apply_to(entry, ctx)
+        apply_to(entry, ctx, detect_attrs=False)
         touched += 1
     return touched, ranked
 

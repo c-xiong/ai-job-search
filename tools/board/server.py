@@ -41,6 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fetch_jobs  # noqa: E402
 import jobs_md  # noqa: E402
 import ats_fetch  # noqa: E402
+import fit_score  # noqa: E402
+import job_attrs  # noqa: E402
 import linkedin_inbox  # noqa: E402
 
 from . import (activity, add_job, companies, docs, fit_eval, notion, review,  # noqa: E402
@@ -746,6 +748,33 @@ class Handler(BaseHTTPRequestHandler):
             if "note" in payload:
                 seen[url]["user_note"] = str(payload["note"])[:500]
                 why.append("note on %s" % (seen[url].get("company") or "job"))
+            if "attrs" in payload:
+                # Hand-set job type / work mode / country...: a null value
+                # hands the field back to detection. The row is rescored, since
+                # the remote and working-student deductions read these.
+                raw = payload["attrs"] if isinstance(payload["attrs"], dict) else None
+                if raw is None:
+                    return self._send(400, json.dumps({"error": "attrs must be an object"}))
+                cleared = [key for key, value in raw.items() if value is None]
+                manual, error = job_attrs.clean_manual(
+                    {key: value for key, value in raw.items() if value is not None})
+                if error:
+                    return self._send(400, json.dumps({"error": error}))
+                entry = seen[url]
+                merged = dict(entry.get("attrs_manual") or {})
+                for key in cleared:
+                    merged.pop(key, None)
+                merged.update(manual)
+                if merged:
+                    entry["attrs_manual"] = merged
+                else:
+                    entry.pop("attrs_manual", None)
+                try:
+                    fit_score.apply_to(entry, fit_score.Context(),
+                                       detect_attrs="attrs" not in entry)
+                except (fit_score.ConfigError, OSError):
+                    pass
+                why.append("job details on %s" % (entry.get("company") or "job"))
             if posting_url is not None:
                 entry = seen[url]
                 if posting_url:

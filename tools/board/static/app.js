@@ -110,10 +110,13 @@ const buildFilters=()=>[["active","active"],...STATUSES.map(s=>[s,s]),["all","al
 // and coming back tomorrow to a board silently stuck on `no` would be a bug
 // with a plausible-looking cause.
 const BOARD_KEY="jobflow.board.v1";
-const FACET_DEFAULTS={version:1,hidden:[],fit:"any",found:"any",sort:"priority"};
+const FACET_DEFAULTS={version:1,hidden:[],fit:"any",found:"any",sort:"priority",type:"any",mode:"any",country:"any"};
 const SORT_KEYS=["priority","found","found-asc","posted","score","company","role"];
 const FIT_VALUES=["any","high","medium","low","unranked"];
 const FOUND_VALUES=["any","latest","1","7","30"];
+const TYPE_VALUES=["any","full_time","intern","working_student"];
+const MODE_VALUES=["any","not_remote","remote","hybrid","onsite","unknown"];
+const COUNTRY_VALUES=["any","CH","DE","AT","EU","other","unknown"];
 function loadFacets(){
   try{
     const value=JSON.parse(localStorage.getItem(BOARD_KEY));
@@ -123,6 +126,9 @@ function loadFacets(){
       fit:FIT_VALUES.includes(value.fit)?value.fit:"any",
       found:FOUND_VALUES.includes(value.found)?value.found:"any",
       sort:SORT_KEYS.includes(value.sort)?value.sort:"priority",
+      type:TYPE_VALUES.includes(value.type)?value.type:"any",
+      mode:MODE_VALUES.includes(value.mode)?value.mode:"any",
+      country:COUNTRY_VALUES.includes(value.country)?value.country:"any",
     };
     localStorage.removeItem(BOARD_KEY);
   }catch(_){try{localStorage.removeItem(BOARD_KEY)}catch(__){}}
@@ -130,7 +136,7 @@ function loadFacets(){
 }
 let facets=loadFacets();
 function saveFacets(){try{localStorage.setItem(BOARD_KEY,JSON.stringify(facets))}catch(_){}}
-const facetsAreDefault=()=>!facets.hidden.length&&facets.fit==="any"&&facets.found==="any"&&facets.sort==="priority";
+const facetsAreDefault=()=>!facets.hidden.length&&facets.fit==="any"&&facets.found==="any"&&facets.sort==="priority"&&facets.type==="any"&&facets.mode==="any"&&facets.country==="any";
 function resetFacets(){facets={...FACET_DEFAULTS,hidden:[]};saveFacets()}
 
 // The run stamp of the most recent fetch, read from /api/fetch/status. It is
@@ -189,7 +195,13 @@ function inFound(j){
   // comparison covers both the stamped rows and the older date-only ones.
   return foundAt(j)>=dayFloor(+facets.found);
 }
-function match(j){return inStatus(j)&&inQuery(j)&&inSource(j)&&inFit(j)&&inFound(j)}
+// Job type, work mode and country (tools/job_attrs.py). A row with no
+// attributes yet (a low row the backfill skipped) only passes "any".
+const inType=j=>facets.type==="any"||(j.attrs?.job_type||[]).includes(facets.type);
+const inMode=j=>{const mode=j.attrs?.work_mode;return facets.mode==="any"||(facets.mode==="not_remote"?!!mode&&mode!=="remote":mode===facets.mode)};
+const inCountry=j=>facets.country==="any"||j.attrs?.country===facets.country;
+const inAttrs=j=>inType(j)&&inMode(j)&&inCountry(j);
+function match(j){return inStatus(j)&&inQuery(j)&&inSource(j)&&inFit(j)&&inFound(j)&&inAttrs(j)}
 
 // Sorting is a client-side reorder of the payload, never a second opinion
 // about it: `priority` is the absence of a sorter, so the default order stays
@@ -245,7 +257,9 @@ const ENGINE_NAMES={claude:"Claude Code",codex:"Codex"};
 const ENGINE_CHOICES=new Map();
 const enginePicker=(key,selected=DEFAULT_PROVIDER)=>`<label class="engine-picker">Engine <select data-engine="${esc(key)}" aria-label="Engine">${Object.entries(ENGINE_NAMES).map(([value,label])=>`<option value="${value}" ${value===(ENGINE_CHOICES.get(key)||selected)?"selected":""}>${label}</option>`).join("")}</select></label>`;
 const chosenEngine=(key,run)=>ENGINE_CHOICES.get(key)||(run?(run.provider||"claude"):DEFAULT_PROVIDER);
-const generatePicker=url=>`<div class="generate-picker">${enginePicker("generate")}<select data-gen-scope aria-label="Documents">${scopeOptions("both")}</select><select data-gen-base aria-label="CV variant">${variantOptions(url)}</select><select data-gen-country aria-label="Work-authorisation line">${COUNTRIES.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div><button class="primary tailor" data-tailor="${esc(url)}">Generate</button>`;
+const countryFor=url=>((JOBS.find(j=>j.url===url)||{}).attrs?.country||"").toUpperCase()==="DE"?"de":"ch";
+const countryOptions=url=>COUNTRIES.map(([v,l])=>`<option value="${v}" ${v===countryFor(url)?"selected":""}>${l}</option>`).join("");
+const generatePicker=url=>`<div class="generate-picker">${enginePicker("generate")}<select data-gen-scope aria-label="Documents">${scopeOptions("both")}</select><select data-gen-base aria-label="CV variant">${variantOptions(url)}</select><select data-gen-country aria-label="Work-authorisation line">${countryOptions(url)}</select></div><button class="primary tailor" data-tailor="${esc(url)}">Generate</button>`;
 const DRAFT_LABEL={both:"Draft CV + cover letter",cv:"Draft CV",cover:"Draft cover letter"};
 const DRAFT_STEP={both:["Draft CV + cover letter","Tailors both documents and audits every factual claim."],
   cv:["Draft CV","Tailors the CV and audits every factual claim."],
@@ -269,7 +283,7 @@ function renderChips(){
 // every facet applied *except* this one: a 0 because the fit filter excludes
 // its rows is telling you the truth about ticking it.
 function renderSourceChips(){
-  const pool=JOBS.filter(j=>inStatus(j)&&inQuery(j)&&inFit(j)&&inFound(j));
+  const pool=JOBS.filter(j=>inStatus(j)&&inQuery(j)&&inFit(j)&&inFound(j)&&inAttrs(j));
   const counts=new Map();
   for(const j of JOBS)if(!counts.has(sourceKey(j)))counts.set(sourceKey(j),0);
   for(const j of pool)counts.set(sourceKey(j),(counts.get(sourceKey(j))||0)+1);
@@ -282,7 +296,8 @@ function renderSourceChips(){
   el("f-source-label").textContent=visible.length===keys.length?"All sources":visible.length===1?sourceLabel(visible[0]):`${visible.length} of ${keys.length} sources`;
   el("f-source").classList.toggle("set",visible.length!==keys.length);
   el("f-fit").value=facets.fit;el("f-found").value=facets.found;el("f-sort").value=facets.sort;
-  ["f-fit","f-found","f-sort"].forEach(id=>el(id).classList.toggle("set",el(id).selectedIndex>0));
+  el("f-type").value=facets.type;el("f-mode").value=facets.mode;el("f-country").value=facets.country;
+  ["f-fit","f-found","f-sort","f-type","f-mode","f-country"].forEach(id=>el(id).classList.toggle("set",el(id).selectedIndex>0));
   // The option names what it can actually deliver. Without a run stamp the best
   // the board can do is the newest arrival date it holds, which on a board
   // fetched twice in one day is a day, not a run.
@@ -297,7 +312,7 @@ function render(){
   const rows=shown(),apps=appsByJob();if(sel>=rows.length)sel=Math.max(0,rows.length-1);
   el("tb").innerHTML=rows.map((j,i)=>`<tr class="${i===sel?"sel":""}${isNewArrival(j)?" fresh":""}" data-row="${i}">
     <td title="${esc(fitTitle(j))}"><span class="fitword ${esc(j.fit)}">${esc(j.fit||"—")}</span>${evalMarker(j)}</td>
-    <td class="role" title="${esc(j.title)} · ${esc(sourceTitle(j)||sourceLabel(j.primary_source||j.portal))}">${esc(displayTitle(j.title))}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td><td class="co">${esc(j.company)}</td><td class="co sourcecell" title="${esc(sourceTitle(j))}">${esc(sourceLabel(j.portal||j.primary_source))}</td><td class="draftcell">${draftCell(applicationFor(j,apps))}</td>
+    <td class="role" title="${esc(j.title)} · ${esc(sourceTitle(j)||sourceLabel(j.primary_source||j.portal))}">${esc(displayTitle(j.title))}${attrTags(j)}${j.dupes?.length?'<span class="dupe"> · possible dupe</span>':""}</td><td class="co">${esc(j.company)}</td><td class="co sourcecell" title="${esc(sourceTitle(j))}">${esc(sourceLabel(j.portal||j.primary_source))}</td><td class="draftcell">${draftCell(applicationFor(j,apps))}</td>
     <td class="co">${esc(j.location)}</td><td class="co" title="${esc(j.posted)}">${esc(postedLabel(j))}</td>
     <td class="co foundcell" title="${esc(foundTitle(j))}">${isNewArrival(j)?'<span class="newdot" aria-label="new in the latest fetch"></span>':""}${esc(foundAt(j).slice(5,10))}</td>
     <td><select data-url="${esc(j.url)}">${statusChoices(j).map(s=>`<option value="${esc(s)}" ${s===j.status?"selected":""}>${esc(s)}</option>`).join("")}</select></td></tr>`).join("");
@@ -561,6 +576,50 @@ function renderJob(){
   loadPosting(j);loadEval(j);
 }
 
+// -- Job attributes (tools/job_attrs.py) --------------------------------------
+// Detected from the posting; any field can be set by hand, and a hand-set
+// value always wins over detection until you reset it.
+const ATTR_FIELDS=[
+  ["job_type","Type",[["full_time","Full-time"],["intern","Intern"],["working_student","Working student"]]],
+  ["work_mode","Work mode",[["onsite","On-site"],["hybrid","Hybrid"],["remote","Fully remote"],["unknown","?"]]],
+  ["remote_scope","Remote from",[["local","CH/DE/AT only"],["region","Europe"],["anywhere","Anywhere"],["unknown","?"]]],
+  ["country","Country",[["CH","CH"],["DE","DE"],["AT","AT"],["EU","EU"],["other","Other"],["unknown","?"]]],
+  ["language","Language",[["en","English"],["de_plus","German a plus"],["de_required","German required"],["de_posting","German posting"],["unknown","?"]]],
+  ["visa","Visa",[["offered","Sponsorship offered"],["none","No sponsorship"],["permit_required","Permit required"],["citizenship","Citizenship"],["unknown","Not stated"]]],
+];
+const REMOTE_SCOPE_TEXT={local:"restricted to CH/DE/AT",region:"Europe-wide",anywhere:"from anywhere",unknown:"scope not stated"};
+function attrTags(j){
+  const a=j.attrs||{},types=a.job_type||[],tags=[];
+  if(types.length&&!(types.length===1&&types[0]==="full_time"))tags.push(`<span class="attrtag">${esc(types.filter(t=>t!=="full_time").map(t=>t==="intern"?"Intern":"Working student").join(" / "))}</span>`);
+  if(a.work_mode==="remote")tags.push(`<span class="attrtag warn" title="Fully remote, ${esc(REMOTE_SCOPE_TEXT[a.remote_scope]||"scope not stated")}">⚠ Remote</span>`);
+  return tags.join("");
+}
+function attrWarnings(a){
+  const out=[];
+  if(a.work_mode==="remote")out.push(`Fully remote (${REMOTE_SCOPE_TEXT[a.remote_scope]||"scope not stated"}). Remote hiring tends to favour candidates who already hold work rights in a cheaper market; the fit score is reduced.`);
+  if(a.country==="DE"&&(a.job_type||[]).length===1&&a.job_type[0]==="working_student")out.push("German working-student role with no internship option; the fit score is reduced.");
+  return out;
+}
+function attrsBox(j){
+  const a=j.attrs||{},manual=new Set(j.attrs_manual||[]);
+  if(!Object.keys(a).length)return `<div class="attrs"><div class="dim">Job type and work mode not detected yet. <button class="linkish" data-attr-detect="${esc(j.url)}">Detect now</button></div></div>`;
+  const rows=ATTR_FIELDS.filter(([key])=>key!=="remote_scope"||a.work_mode==="remote").map(([key,label,options])=>{
+    const value=a[key],chips=options.map(([v,text])=>{const on=key==="job_type"?(value||[]).includes(v):value===v;return `<button type="button" class="chip${on?" on":""}" data-attr="${key}" data-attr-value="${v}">${esc(text)}</button>`}).join("");
+    return `<div class="attrrow"><span class="label">${esc(label)}${manual.has(key)?` <button class="linkish" data-attr-reset="${key}" title="Set by you. Click to go back to the detected value.">· set by you ↺</button>`:""}</span><div class="seg">${chips}</div></div>`;
+  }).join("");
+  const warnings=attrWarnings(a).map(w=>`<div class="attrwarn">⚠ ${esc(w)}</div>`).join("");
+  const timing=a.timing?`<div class="attrrow"><span class="label">Timing</span><span class="dim">${esc(a.timing)}</span></div>`:"";
+  return `<div class="attrs">${warnings}${rows}${timing}</div>`;
+}
+async function setAttr(j,key,value){
+  let next=value;
+  if(key==="job_type"&&value!==null){const cur=new Set(j.attrs?.job_type||[]);cur.has(value)?cur.delete(value):cur.add(value);if(!cur.size){toast("a job needs at least one type",{warn:true});return}next=["full_time","intern","working_student"].filter(t=>cur.has(t))}
+  else if(value!==null&&j.attrs?.[key]===value)return;
+  const response=await fetch("/api/update?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:j.url,attrs:{[key]:next}})});
+  if(!response.ok){const data=await response.json().catch(()=>({}));toast(data.error||"save failed",{warn:true,ms:2500});return}
+  await reloadJobs().catch(()=>toast("saved, but the list could not reload",{warn:true}));
+}
+
 async function update(url,patch,record=true){
   const j=JOBS.find(x=>x.url===url),prev=j?.status;
   const response=await fetch("/api/update?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,...patch})});
@@ -735,7 +794,7 @@ async function startTailor(url){
   const j=JOBS.find(x=>x.url===url);if(!j)return;
   const existing=applicationFor(j);if(existing){openApp(existing);return}
   const pick=name=>document.querySelector(`[data-gen-${name}]`)?.value;
-  const scope=pick("scope")||"both",base_cv=pick("base")||"auto",cv_country=pick("country")||"ch";
+  const scope=pick("scope")||"both",base_cv=pick("base")||"auto",cv_country=pick("country")||countryFor(url);
   const note=await openTextModal({eyebrow:"Generate "+(DRAFT_LABEL[scope]||"").replace(/^Draft /,""),title:j.company+" — "+j.title,label:"One-off instruction (optional)",placeholder:"Emphasize a project, explain a transition, or leave this empty…",hint:"This instruction applies only to this run unless you later add it as a standing preference.",submit:"Generate"});
   if(note===null)return;
   const started=await postRun("/api/runs",{job_url:url,kind:"apply",note,scope,base_cv,cv_country,provider:chosenEngine("generate")});
@@ -1656,6 +1715,12 @@ function selectCompanyRow(row){
 const closePopovers=(except=null)=>document.querySelectorAll("details.popover[open],details.app-menu[open]").forEach(node=>{if(node!==except)node.removeAttribute("open")});
 document.addEventListener("click",event=>{
   closePopovers(event.target.closest("details.popover,details.app-menu"));
+  const attrChip=event.target.closest("[data-attr]");
+  if(attrChip){const j=selectedJob();if(j)setAttr(j,attrChip.dataset.attr,attrChip.dataset.attrValue);return}
+  const attrReset=event.target.closest("[data-attr-reset]");
+  if(attrReset){const j=selectedJob();if(j)setAttr(j,attrReset.dataset.attrReset,null);return}
+  const attrDetect=event.target.closest("[data-attr-detect]");
+  if(attrDetect){const j=selectedJob();if(j)setAttr(j,"work_mode",null);return}
   const copyText=event.target.closest("[data-copy]");
   if(copyText&&copyText.dataset.copy){const text=copyText.dataset.copy;return void navigator.clipboard.writeText(text).then(()=>toast("copied "+text),()=>toast("could not copy",{warn:true}))}
   const copyEmail=event.target.closest("[data-copy-email]");
@@ -1781,7 +1846,7 @@ document.addEventListener("submit",event=>{
 });
 document.addEventListener("change",event=>{
   if(event.target.matches("[data-engine]")){ENGINE_CHOICES.set(event.target.dataset.engine,event.target.value);return}
-  if(event.target.id==="f-fit"||event.target.id==="f-found"||event.target.id==="f-sort"){
+  if(["f-fit","f-found","f-sort","f-type","f-mode","f-country"].includes(event.target.id)){
     facets[event.target.id.slice(2)]=event.target.value;saveFacets();sel=0;render();return;
   }
   if(event.target.matches("[data-mark]")&&PREVIEW_RUN){const box=event.target;box.disabled=true;

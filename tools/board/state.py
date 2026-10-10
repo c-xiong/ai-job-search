@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import apply_email  # noqa: E402
+import job_attrs  # noqa: E402
 import jobs_md  # noqa: E402
 import postings  # noqa: E402
 
@@ -127,6 +128,12 @@ def _shape(items):
             "keyword_score": entry.get("fit_score"),
             "fit_parts": entry.get("fit_parts") or {},
             "fit_losses": entry.get("fit_losses") or [],
+            # Job type, work mode, country... (tools/job_attrs.py): detected
+            # values with your own overrides laid over them, and which keys you
+            # set, so the page can mark a hand-set value.
+            "attrs": job_attrs.effective(entry) or {
+                "country": job_attrs.country(entry.get("location"), entry.get("title"))},
+            "attrs_manual": sorted((entry.get("attrs_manual") or {}).keys()),
             "dupes": entry.get("possible_duplicate_of") or [],
         })
     return rows

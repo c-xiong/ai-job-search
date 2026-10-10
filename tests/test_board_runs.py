@@ -200,12 +200,25 @@ class ScopeTest(SupervisorCase):
         self.assertEqual(code, 400)
         self.assertFalse(self.calls.exists())
 
-    def test_the_country_is_never_inferred_from_the_posting(self):
+    def test_country_defaults_to_ch_and_rejects_invalid_choices(self):
         run_id, _phase = self.run_to_end()
         self.assertEqual(run_registry.get(run_id)["cv_country"], "ch")
         self.assertEqual(self.manifest(run_id)["inputs"]["variant"]["country"], "ch")
         code, body = self.start(url="https://example.com/jobs/2", cv_country="berlin")
         self.assertEqual(code, 400)
+
+    def test_german_location_selects_de_unless_explicitly_overridden(self):
+        with mock.patch.object(self.supervisor, "_board_entry", return_value={
+                "location": "Berlin, Germany", "title": "AI Engineer"}):
+            run_id, phase = self.run_to_end()
+        self.assertEqual(phase, "done")
+        self.assertEqual(run_registry.get(run_id)["cv_country"], "de")
+        self.assertEqual(self.manifest(run_id)["inputs"]["variant"]["country"], "de")
+        with mock.patch.object(self.supervisor, "_board_entry", return_value={
+                "location": "Berlin, Germany"}):
+            run_id, phase = self.run_to_end(url="https://example.com/jobs/2", cv_country="ch")
+        self.assertEqual(phase, "done")
+        self.assertEqual(run_registry.get(run_id)["cv_country"], "ch")
 
 
 class ContentReviewTest(SupervisorCase):

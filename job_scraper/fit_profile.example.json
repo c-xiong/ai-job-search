@@ -243,6 +243,18 @@
     "match_threshold": 85
   },
 
+  "penalties": {
+    "_comment": [
+      "Deductions read from tools/job_attrs.py's attributes (job type, work mode,",
+      "country). Optional: the values below are the built-in defaults. Fully remote",
+      "is deducted by scope - restricted to CH/DE/AT ('local'), Europe-wide",
+      "('region'), anywhere, or not stated. A German working-student ad with no",
+      "internship option is deducted; one that offers both is not."
+    ],
+    "remote": {"anywhere": 15, "region": 15, "unknown": 12, "local": 5},
+    "de_working_student_only": 20
+  },
+
   "weights": {
     "_comment": [
       "max must sum to 100. bands are the display thresholds; calibrate them",
