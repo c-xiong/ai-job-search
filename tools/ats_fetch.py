@@ -46,6 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collectors  # noqa: E402
 import fit_score  # noqa: E402
+import job_filters  # noqa: E402
 import jobs_md  # noqa: E402
 import postings  # noqa: E402
 from company_lock import registry_lock  # noqa: E402
@@ -433,7 +434,9 @@ def merge(seen, rows, today, log, portal=PORTAL, pending=None, stamp=None):
         status = row.get("status")
         note = row.get("note")
         if status is None:
-            status, note = collectors.screen_text(row.get("description") or "")
+            hit = job_filters.title_hit(row.get("title", ""), job_filters.load_settings())
+            status, note = (("gate", job_filters.title_note(hit)) if hit
+                            else collectors.screen_text(row.get("description") or ""))
         stats["gated"] += status == "gate"
 
         entry = {

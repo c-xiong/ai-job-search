@@ -44,6 +44,7 @@ import ats_fetch  # noqa: E402
 import fit_score  # noqa: E402
 import job_attrs  # noqa: E402
 import linkedin_inbox  # noqa: E402
+import search_prefs  # noqa: E402
 
 from . import (activity, add_job, companies, docs, fit_eval, notion, review,  # noqa: E402
                run_registry, runs, state, trash)
@@ -210,6 +211,16 @@ def start_fetch(payload):
                      args=(sources, max_companies, max_new_jobs, detail_fetches)).start()
     return 202, {"started": True, "sources": sources, "max_companies": max_companies,
                  "max_new_jobs": max_new_jobs, "linkedin_detail_fetches": detail_fetches}
+
+
+def search_config_view():
+    """search_prefs.overview() over the live config, collection state and board."""
+    cfg = fetch_jobs.load_config()
+    try:
+        seen = state.load()
+    except (OSError, ValueError):
+        seen = {}
+    return search_prefs.overview(cfg, fetch_jobs.load_collection_state(), seen)
 
 
 def fetch_status():
@@ -448,6 +459,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(runs.supervisor().snapshot(), ensure_ascii=False))
         if parts.path == "/api/prefs":
             return self._send(200, json.dumps(docs.standing_preferences(), ensure_ascii=False))
+        if parts.path == "/api/search-config":
+            return self._send(200, json.dumps(search_config_view(), ensure_ascii=False))
+        if parts.path == "/api/learn":
+            return self._send(200, json.dumps(learn.listing(), ensure_ascii=False))
         if parts.path == "/api/companies":
             try:
                 body = companies.listing()
@@ -513,7 +528,8 @@ class Handler(BaseHTTPRequestHandler):
                                "/api/runs/undelete",
                                "/api/companies", "/api/companies/resolve-all",
                                "/api/companies/follow", "/api/companies/capture",
-                               "/api/companies/health-check") or \
+                               "/api/companies/health-check", "/api/search-config",
+                               "/api/learn") or \
             (run_id and action in RUN_POST_ACTIONS)
         known = known or bool(company_match and company_match.group("action") in
                               ("resolve", "identity", "test-fetch", "manage"))

@@ -1518,6 +1518,73 @@ function applyFetchSettings(value){
 }
 try{applyFetchSettings(JSON.parse(localStorage.getItem(FETCH_SETTINGS_KEY))||FETCH_DEFAULTS)}catch(_){applyFetchSettings(FETCH_DEFAULTS)}
 el("fetch-options").addEventListener("change",()=>{applyFetchSettings(fetchSettings());try{localStorage.setItem(FETCH_SETTINGS_KEY,JSON.stringify(fetchSettings()))}catch(_){}});
+// -- Search settings (tools/search_prefs.py, tools/job_filters.py) -----------
+// Roles x job types x locations become the searches; the filters gate what is
+// plainly not for you before a detail fetch is spent on it. Saved into
+// scrape_config.json on every change, so they apply to the next fetch -
+// including the scheduled one.
+let SEARCH_CFG=null,SEARCH_OPEN=new Set(["prefs"]);
+const JOB_TYPE_LABEL={full_time:"Full-time",intern:"Intern",working_student:"Working student"};
+async function loadSearchConfig(){
+  try{const response=await fetch("/api/search-config?t="+T);if(!checkAuth(response)||!response.ok)throw new Error();SEARCH_CFG=await response.json()}
+  catch(_){el("search-config").innerHTML='<div class="evalerror">Could not load the search settings.</div>';return}
+  renderSearchConfig();
+}
+async function saveSearchConfig(patch){
+  const response=await fetch("/api/search-config?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){toast(data.error||"could not save",{warn:true});return renderSearchConfig()}
+  SEARCH_CFG=data;renderSearchConfig();
+}
+function savePrefs(change){saveSearchConfig({search_preferences:{...SEARCH_CFG.preferences,enabled:true,...change}})}
+function saveFilters(change){const c=SEARCH_CFG;saveSearchConfig({filters:{groups:Object.fromEntries(c.filters.map(f=>[f.key,f.on])),body:Object.fromEntries(c.body_filters.map(f=>[f.key,f.on])),allow:c.allow,...change}})}
+function renderSearchConfig(){
+  const c=SEARCH_CFG;if(!c)return;const p=c.preferences;
+  const listRow=(key,label,placeholder)=>`<div class="sc-row"><span class="sc-label">${label}</span><div class="sc-chips">${p[key].map(v=>`<span class="chip on sc-item">${esc(v)}<button type="button" class="sc-x" data-sc-remove="${key}" data-sc-value="${esc(v)}" aria-label="Remove ${esc(v)}">×</button></span>`).join("")}<input class="sc-add" data-sc-add="${key}" placeholder="${placeholder}" aria-label="${placeholder}"></div></div>`;
+  const types=`<div class="sc-row"><span class="sc-label">Job types</span><div class="sc-chips">${c.job_types.map(t=>`<button type="button" class="chip${p.job_types.includes(t)?" on":""}" data-sc-type="${t}">${JOB_TYPE_LABEL[t]}</button>`).join("")}</div></div>`;
+  const generated=c.searches.filter(r=>!r.custom).length,custom=c.searches.length-generated;
+  const section=(id,title,meta,body)=>`<details class="fetch-advanced sc-section" data-sc-section="${id}" ${SEARCH_OPEN.has(id)?"open":""}><summary>${title}${meta?` <span class="sc-meta">${meta}</span>`:""}</summary><div class="sc-body">${body}</div></details>`;
+  const prefs=`${p.enabled?"":`<div class="hint">Off - only your custom searches run. Any change below turns it on.</div>`}
+    ${listRow("roles","Roles","+ role, Enter")}${types}${listRow("locations","Locations","+ place, Enter")}
+    <div class="sc-row"><span class="sc-label">Pages</span><select data-sc-pages>${[1,2,3].map(n=>`<option value="${n}" ${p.pages===n?"selected":""}>${n} per search (${n*10} jobs)</option>`).join("")}</select></div>
+    <div class="sc-row"><span class="sc-label">Per fetch</span><input type="number" class="sc-budget" data-sc-budget min="1" max="${c.budget_ceiling}" value="${c.budget}"><span class="dim">searches</span></div>
+    <div class="hint">${generated} generated + ${custom} custom searches, ${c.tasks} result pages: about ${c.fetches_per_round} fetch${c.fetches_per_round===1?"":"es"} to run them all once.</div>`;
+  const on=c.filters.filter(f=>f.on).length+c.body_filters.filter(f=>f.on).length;
+  const filters=`<div class="hint">Matching titles go to <b>gate</b> before any detail is fetched; you can move one back at any time.</div>
+    ${c.filters.map(f=>`<label class="source"><input type="checkbox" data-sc-filter="${f.key}" ${f.on?"checked":""}> ${esc(f.label)}</label>`).join("")}
+    <div class="sc-sub">From the posting text</div>
+    ${c.body_filters.map(f=>`<label class="source"><input type="checkbox" data-sc-body="${f.key}" ${f.on?"checked":""}> ${esc(f.label)}</label>`).join("")}
+    <div class="sc-sub">Always let through titles with</div>
+    <input class="sc-allow" data-sc-allow value="${esc(c.allow.join(", "))}" placeholder="e.g. Member of Technical Staff">`;
+  const rows=c.searches.map(r=>`<tr class="${r.custom?"custom":""}"><td title="${esc(r.label)}">${esc(r.label)}</td><td class="dim">${r.custom?"custom":esc(JOB_TYPE_LABEL[r.job_type]||"")}</td><td class="num" title="Results last time">${r.last_run?r.returned:"–"}</td><td class="num good" title="High or medium fit, not gated">${r.last_run?r.good:"–"}</td><td class="num dim" title="Gated (filtered, German, …)">${r.last_run?r.gated:"–"}</td></tr>`).join("");
+  const table=`<table class="sc-table"><thead><tr><th>Search</th><th></th><th class="num">got</th><th class="num">good</th><th class="num">gated</th></tr></thead><tbody>${rows}</tbody></table><div class="hint">Custom searches live in scrape_config.json. A search that keeps bringing nothing good is worth removing.</div>`;
+  el("search-config").innerHTML=section("prefs","Search preferences",p.enabled?`${p.roles.length}×${p.job_types.length}×${p.locations.length}`:"off",prefs)
+    +section("filters","Filters",`${on} on`,filters)+section("searches","Searches",`${c.searches.length}`,table);
+}
+el("fetch-settings").addEventListener("toggle",()=>{if(el("fetch-settings").open)loadSearchConfig()});
+el("search-config").addEventListener("toggle",event=>{const box=event.target.closest?.("[data-sc-section]");if(box)box.open?SEARCH_OPEN.add(box.dataset.scSection):SEARCH_OPEN.delete(box.dataset.scSection)},true);
+el("search-config").addEventListener("click",event=>{
+  const c=SEARCH_CFG;if(!c)return;
+  const remove=event.target.closest("[data-sc-remove]");
+  if(remove){const key=remove.dataset.scRemove;return savePrefs({[key]:c.preferences[key].filter(v=>v!==remove.dataset.scValue)})}
+  const type=event.target.closest("[data-sc-type]");
+  if(type){const t=type.dataset.scType,cur=new Set(c.preferences.job_types);cur.has(t)?cur.delete(t):cur.add(t);if(!cur.size){toast("keep at least one job type",{warn:true});return}return savePrefs({job_types:c.job_types.filter(x=>cur.has(x))})}
+});
+el("search-config").addEventListener("keydown",event=>{
+  const add=event.target.closest?.("[data-sc-add]");if(!add||event.key!=="Enter")return;event.preventDefault();event.stopPropagation();
+  const key=add.dataset.scAdd,value=add.value.trim();if(!value)return;
+  if(SEARCH_CFG.preferences[key].some(v=>v.toLowerCase()===value.toLowerCase())){add.value="";return}
+  savePrefs({[key]:[...SEARCH_CFG.preferences[key],value]});
+});
+el("search-config").addEventListener("change",event=>{
+  const t=event.target,c=SEARCH_CFG;if(!c)return;
+  if(t.matches("[data-sc-pages]"))return savePrefs({pages:+t.value});
+  if(t.matches("[data-sc-budget]"))return saveSearchConfig({keyword_search_budget:Math.max(1,Math.min(c.budget_ceiling,+t.value||c.budget_default))});
+  if(t.matches("[data-sc-filter]")){c.filters.find(f=>f.key===t.dataset.scFilter).on=t.checked;return saveFilters({})}
+  if(t.matches("[data-sc-body]")){c.body_filters.find(f=>f.key===t.dataset.scBody).on=t.checked;return saveFilters({})}
+  if(t.matches("[data-sc-allow]"))return saveFilters({allow:t.value.split(",").map(w=>w.trim()).filter(Boolean)});
+});
+
 el("fetch-reset").addEventListener("click",()=>{applyFetchSettings(FETCH_DEFAULTS);try{localStorage.removeItem(FETCH_SETTINGS_KEY)}catch(_){}});
 // Add job (DESIGN.md §17): a posting you found yourself, resolved by the
 // server without a model. The token is remembered for static/add.html, the

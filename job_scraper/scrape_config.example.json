@@ -24,8 +24,22 @@
     "max_companies": 8,
     "max_new_jobs": 40
   },
-  "linkedin_max_detail_fetches": 15,
-  "keyword_search_budget": 12,
+  "linkedin_max_detail_fetches": 30,
+  "keyword_search_budget": 24,
+  "search_preferences": {
+    "_comment": "Roles x job types (full_time, intern, working_student) x locations, expanded into LinkedIn and freehire searches at fetch time (tools/search_prefs.py). The linkedin/freehire lists above still run as custom searches. Edit from the board's Fetch settings.",
+    "enabled": false,
+    "roles": ["Software Engineer"],
+    "job_types": ["full_time"],
+    "locations": ["your-country"],
+    "pages": 1
+  },
+  "filters": {
+    "_comment": "Title rules gate a posting before its detail is fetched; body rules after the text is read (tools/job_filters.py). Groups: seniority, founding, academic, non_engineering, qa_test, embedded, mobile, enterprise_apps, security (on by default), devops (off). allow: words that always let a title through.",
+    "groups": {},
+    "allow": [],
+    "body": {}
+  },
   "arbeitnow": {
     "enabled": false,
     "max_pages": 2,

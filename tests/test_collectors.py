@@ -14,16 +14,16 @@ def silent(_message):
 
 class KeywordPlanTest(unittest.TestCase):
     def test_shared_budget_rotates_over_sources_queries_and_pages(self):
-        cfg = {"linkedin": [{"q": "Engineer %d" % n, "l": "Remote", "pages": 2} for n in range(9)],
-               "freehire": [{"q": "Research %d" % n, "pages": 2} for n in range(5)],
+        cfg = {"linkedin": [{"q": "Engineer %d" % n, "l": "Remote", "pages": 2} for n in range(30)],
+               "freehire": [{"q": "Research %d" % n, "pages": 2} for n in range(10)],
                "keyword_search_budget": 999}
         first = collectors.CollectionSession(cfg, ["linkedin", "freehire"])
-        self.assertEqual(len(first.selected), 12)
+        self.assertEqual(len(first.selected), collectors.search_prefs.SEARCH_BUDGET_CEILING)
         self.assertEqual({t["source"] for t in first.selected}, {"linkedin", "freehire"})
         second = collectors.CollectionSession(cfg, ["linkedin", "freehire"], first.persisted_state("2026-10-02"))
         self.assertNotEqual([t["key"] for t in first.selected], [t["key"] for t in second.selected])
         reached = {t["key"] for t in first.selected + second.selected}
-        self.assertEqual(len(reached), 24)
+        self.assertEqual(len(reached), 2 * collectors.search_prefs.SEARCH_BUDGET_CEILING)
 
     def test_source_subsets_keep_other_query_rotation_and_checkpoints(self):
         cfg = {"linkedin": [{"q": "Engineer %d" % n, "l": "Remote"} for n in range(10)],
@@ -39,8 +39,8 @@ class KeywordPlanTest(unittest.TestCase):
         self.assertEqual(resumed.start, both.next_cursor)
         self.assertIn("saved-query", state["queries"])
 
-    def test_collectors_share_twelve_calls_and_preserve_seven_day_window(self):
-        cfg = {"linkedin": [{"q": "Engineer %d" % n, "l": "Remote", "pages": 3} for n in range(7)],
+    def test_collectors_share_the_default_budget_and_preserve_seven_day_window(self):
+        cfg = {"linkedin": [{"q": "Engineer %d" % n, "l": "Remote", "pages": 3} for n in range(12)],
                "freehire": [{"q": "Scientist %d" % n, "city": "Berlin"} for n in range(5)]}
         calls = []
         def cli(args, _log):
@@ -49,7 +49,7 @@ class KeywordPlanTest(unittest.TestCase):
         with collectors.CollectionSession(cfg, ["linkedin", "freehire"]) as session, patch.object(collectors, "bun", cli):
             collectors.collect_linkedin(cfg, silent)
             collectors.collect_freehire(cfg, silent)
-        self.assertEqual(len(calls), 12)
+        self.assertEqual(len(calls), collectors.search_prefs.SEARCH_BUDGET_DEFAULT)
         self.assertTrue(all(args[args.index("--jobage") + 1] == "7" for args in calls))
         self.assertTrue(all(args[args.index("--sort") + 1] == "date" for args in calls if args[0] == collectors.LINKEDIN))
         self.assertGreater(session.summary("linkedin")["deferred_queries"], 0)

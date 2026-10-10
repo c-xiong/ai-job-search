@@ -28,6 +28,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import job_filters  # noqa: E402
+import search_prefs  # noqa: E402
 import jobs_md  # noqa: E402
 
 ROOT = jobs_md.ROOT
@@ -113,8 +115,10 @@ class CollectionSession:
         self.outcomes, self.blocked = [], set()
         self.last_error = None
         self.last_meta = {}
-        specs = {s: [q for q in cfg.get(s, []) if isinstance(q, dict)
-                     and q.get("enabled", True)] for s in ("linkedin", "freehire") if s in sources}
+        # Generated from search_preferences, then the hand-written ones the
+        # generated set does not already cover (search_prefs.py).
+        planned = search_prefs.searches(cfg)
+        specs = {s: planned[s] for s in ("linkedin", "freehire") if s in sources}
         tasks = []
         for page in range(1, 4):
             for index in range(max((len(q) for q in specs.values()), default=0)):
@@ -124,14 +128,17 @@ class CollectionSession:
                     spec = queries[index]
                     if page > bounded(spec.get("pages", cfg.get("pages_per_query", 1)), 1, 1, 3):
                         continue
-                    key = hashlib.sha256(json.dumps([source, spec, page], sort_keys=True).encode()).hexdigest()[:16]
+                    # Markers are not part of the search: a custom query keeps
+                    # its history when preferences start covering it.
+                    bare = {k: v for k, v in spec.items() if k not in ("custom", "generated")}
+                    key = hashlib.sha256(json.dumps([source, bare, page], sort_keys=True).encode()).hexdigest()[:16]
                     tasks.append({"source": source, "spec": spec, "page": page, "key": key})
         self.tasks = tasks
         self.cursor_key = ",".join(sorted(specs))
         cursors = self.state.get("query_cursors") or {}
         cursors = cursors if isinstance(cursors, dict) else {}
         self.start = bounded(cursors.get(self.cursor_key, self.state.get("query_cursor", 0)), 0, 0, 10**9) % max(1, len(tasks))
-        budget = bounded(cfg.get("keyword_search_budget", 12), 12, 0, 12)
+        budget = search_prefs.search_budget(cfg)
         self.selected = [tasks[(self.start + n) % len(tasks)] for n in range(min(budget, len(tasks)))]
         self.next_cursor = (self.start + len(self.selected)) % max(1, len(tasks))
 
@@ -337,10 +344,14 @@ def german_hit(text):
 
 
 def screen_text(text):
-    """Turn a posting's text into (user_status, note) via the German screen."""
+    """Turn a posting's text into (user_status, note): the German screen, then
+    the body rules in job_filters.py (PhD required, citizenship/clearance)."""
     verdict, quote = german_hit(text)
     if verdict == "hard":
         return "gate", "AUTO-SCREEN: German stated as a job condition - '%s'" % quote
+    hit = job_filters.body_hit(text, job_filters.load_settings())
+    if hit:
+        return "gate", job_filters.body_note(hit)
     if verdict == "soft":
         # Not excluded: a nice-to-have German line is exactly the case the rule
         # leaves to the candidate. Flagged so it is visible, not silently passed.
@@ -567,6 +578,11 @@ def screen(record, log, budget=None):
     *unattended* burst, not the burst itself, so the per-run cap is what
     actually bounds it.
     """
+    # The title filter runs first and needs no request: a Senior posting must
+    # not spend one of the run's detail fetches.
+    hit = job_filters.title_hit(record.get("title", ""), job_filters.load_settings())
+    if hit:
+        return "gate", job_filters.title_note(hit), record.get("description") or ""
     if record.get("description"):
         status, note = screen_text(record["description"])
         return status, note, record["description"]
