@@ -1156,7 +1156,7 @@ function regeneratePanel(run,v){
   if(run.phase!=="done")return `<div class="regen"><div class="hint">Regenerate is available once this run has finished. ${["failed","cancelled"].includes(run.phase)?"Continue it from the run view first.":""}</div></div>`;
   const kinds=docKinds(run.scope),hasCv=kinds.includes("cv");
   const variant=hasCv?`<div class="regen-row"><span class="label">CV variant</span><div class="seg">${[["sde","SDE"],["ai","AI"]].map(([value,label])=>`<button type="button" class="chip${v.variant===value?" on":""}" data-variant="${value}" ${v.variant===value?"disabled":""}>${label}</button>`).join("")}</div></div>`:"";
-  const docs=kinds.map((kind,i)=>`<label><input type="radio" name="edit" value="${kind}" ${i===(kinds.length>1?1:0)?"checked":""}> ${kind==="cv"?"CV":"Cover letter"}</label>`).join("");
+  const docs=kinds.map((kind,i)=>`<label><input type="checkbox" name="edit" value="${kind}" ${i===(kinds.length>1?1:0)?"checked":""}> ${kind==="cv"?"CV":"Cover letter"}</label>`).join("");
   return `<form class="regen" id="regen-form">${enginePicker(run.id,run.provider||"claude")}${variant}<div class="regen-row"><span class="label">Regenerate</span><div class="seg">${docs}</div></div><textarea id="regen-note" placeholder="${hasCv?"Optional, e.g. change the CV title to “AI Engineer | LLM Applications”. Leave empty to regenerate from scratch.":"Optional: what should change? Leave empty to regenerate from scratch."}"></textarea><button class="primary" type="submit">Regenerate</button></form>`;
 }
 
@@ -2020,8 +2020,9 @@ document.addEventListener("submit",event=>{
     void companyWork(oldName,async()=>{await postCompany(companyPath(oldName),{mtime:COMPANIES.mtime,inspect:true,changes},"PATCH");COMPANY_SELECTED=name;COMPANY_BUSY=name;if(sourceChanged&&COMPANIES.companies.find(row=>row.name===name)?.will_be_searched)await checkCompany(name);toast("Company saved")});return;
   }
   if(event.target.id==="regen-form"){
-    event.preventDefault();const run=RUNS.find(r=>r.id===PREVIEW_RUN),note=el("regen-note").value.trim(),edit=new FormData(event.target).get("edit");
-    if(!run||!edit)return;
+    event.preventDefault();const run=RUNS.find(r=>r.id===PREVIEW_RUN),note=el("regen-note").value.trim(),picked=new FormData(event.target).getAll("edit");
+    if(!run)return;if(!picked.length){toast("pick the CV, the cover letter or both",{warn:true});return}
+    const edit=picked.length===1?picked[0]:picked;
     const button=event.submitter;if(button)button.disabled=true;
     postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope:run.scope||"both",edit,note,provider:chosenEngine(run.id,run)}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else if(button)button.disabled=false});return;
   }

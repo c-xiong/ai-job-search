@@ -14,7 +14,7 @@ const ctx={RUNS:[run],PREVIEW_RUN:'r1',REVISE_RUN:'r1',POSTING_URL_JOB:null,
   closePopovers:()=>{},esc:String,toast:()=>{},confirm:()=>true,renderTailor:()=>{},openApp:()=>{},
   restoreWorkspace:()=>{},el:id=>nodes[id]||(nodes[id]={value:''}),
   postRun:async(path,body)=>{requests.push({path,body});return {ok:false}},
-  FormData:class{constructor(form){this.data=form.data||{}}get(k){return this.data[k]}},
+  FormData:class{constructor(form){this.data=form.data||{}}get(k){return this.data[k]}getAll(k){const v=this.data[k];return v==null?[]:Array.isArray(v)?v:[v]}},
   document:{addEventListener:(type,fn)=>listeners[type]=fn,querySelector:()=>null}};
 vm.createContext(ctx);
 vm.runInContext(slice('let DEFAULT_PROVIDER=','const generatePicker=')+'\n'+

@@ -136,9 +136,17 @@ def _resolve_base_cv(base):
     return "ai" if base == "ml" else base
 
 
+def edit_kinds(record):
+    """The documents a revision edits: `edit` is one kind or a list of kinds."""
+    edit = record.get("edit")
+    if not edit:
+        return []
+    return [edit] if isinstance(edit, str) else list(edit)
+
+
 def fresh_edit(record):
-    """A Regenerate with no instruction: redo `record["edit"]` from scratch."""
-    return (record.get("kind") == "revise" and bool(record.get("edit"))
+    """A Regenerate with no instruction: redo `edit_kinds(record)` from scratch."""
+    return (record.get("kind") == "revise" and bool(edit_kinds(record))
             and not (record.get("note") or "").strip() and not record.get("continue_of"))
 
 
@@ -313,12 +321,18 @@ class Supervisor:
             provider, execution = providers.selection(payload, settings, parent)
         except (ValueError, TypeError, KeyError) as exc:
             return 400, {"error": str(exc)}
-        # Which document a revision edits; the others are carried over as they
-        # are, so the revised version still holds the complete document set.
+        # Which documents a revision edits (one kind, or a list for both); the
+        # others are carried over as they are, so the revised version still
+        # holds the complete document set.
         edit = payload.get("edit")
-        if edit is not None and (kind != "revise" or edit not in
-                                 docs.doc_kinds({"scope": scope})):
-            return 400, {"error": "edit must be one of the revised run's documents"}
+        if edit is not None:
+            picked = edit_kinds({"edit": edit}) if isinstance(edit, (str, list)) else []
+            allowed = docs.doc_kinds({"scope": scope})
+            if (kind != "revise" or not picked or len(set(picked)) != len(picked)
+                    or any(k not in allowed for k in picked)):
+                return 400, {"error": "edit must be one of the revised run's documents"}
+            ordered = [k for k in allowed if k in picked]
+            edit = ordered[0] if len(ordered) == 1 else ordered
         company = (payload.get("company") or entry.get("company") or "").strip()
         role = (payload.get("role") or entry.get("title") or "").strip()
         if not company or not role:
@@ -336,7 +350,7 @@ class Supervisor:
             # reseed (no model), or a cover letter drafted afresh.
             if kind == "revise" and not note:
                 budget = (run_registry.stage_budget(settings, "apply")
-                          if edit == "cover" else {})
+                          if "cover" in edit_kinds({"edit": edit}) else {})
             else:
                 budget = run_registry.stage_budget(settings, kind)
         worst_case = round(sum(budget.values()), 4)
@@ -1007,7 +1021,7 @@ class Supervisor:
             if fresh_edit(record):
                 # Regenerate one document from scratch: leave it behind so the
                 # plan drafts the letter again, or reseeds the CV from the master.
-                adopt_kinds = [k for k in adopt_kinds if k != record["edit"]]
+                adopt_kinds = [k for k in adopt_kinds if k not in edit_kinds(record)]
             if src_manifest:
                 items = checkpoint.adopt_from_checkpoint(
                     manifest, run_id, src_manifest, source_id, adopt_kinds, ext["cv"])
@@ -1462,8 +1476,8 @@ class Supervisor:
             manifest["revision"] = {"note": "", "applied": True, "at": checkpoint.now()}
             checkpoint.save(record["id"], manifest)
             return
-        if record.get("edit"):
-            kinds = [record["edit"]]
+        if edit_kinds(record):
+            kinds = edit_kinds(record)
         missing = [k for k in kinds if checkpoint.current_source_sha(manifest, k) is None]
         if missing:
             raise RunFailure("the version to revise has no recoverable %s"
