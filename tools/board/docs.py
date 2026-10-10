@@ -1013,13 +1013,18 @@ def merge_tracker(record, brief=None):
     return action
 
 
-def _posting_email(record):
-    """The posting's application address, or "" - read from the run's posting.md."""
+def posting_emails(record):
+    """All candidate contacts from the saved posting, with source context."""
     try:
         text = (run_registry.run_dir(record["id"]) / "posting.md").read_text(encoding="utf-8")
     except (KeyError, OSError):
-        return ""
-    return apply_email.best(text)
+        return []
+    return apply_email.extract(text)
+
+
+def _posting_email(record):
+    hits = posting_emails(record)
+    return ", ".join(apply_email.guidance(hits)["recipients"])
 
 
 def _upgrade_header(header, rows):

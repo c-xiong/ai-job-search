@@ -282,12 +282,18 @@ def _ensure_owner_properties(cfg):
     _ensure_properties(cfg, "owner", dict(OWNER_PROPS.values()))
 
 
+def _owner_read(page, column, name):
+    if column == "apply_email":
+        return read(page, "Application Recipients") or read(page, name) or ""
+    return read(page, name) or ""
+
+
 def _owner_value(column, value):
     """The Notion property value for an owner column; empty clears it."""
     if column == "portal_url":
         return {"url": value or None}
     if column == "apply_email":
-        return {"email": value or None}
+        return {"email": value.split(",")[0].strip() or None}
     return _text(value) if value else {"rich_text": []}
 
 
@@ -338,6 +344,10 @@ def _sync_documents(cfg, pages):
             if (row.get(column) or "").strip() and not read(page, name):
                 _ensure_owner_properties(cfg)
                 props[name] = _owner_value(column, row[column].strip())
+        recipients = (row.get("apply_email") or "").strip()
+        if "," in recipients and not read(page, "Application Recipients"):
+            _ensure_properties(cfg, "owner_recipients", {"Application Recipients": {"rich_text": {}}})
+            props["Application Recipients"] = _text(recipients)
         if props:
             _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
             changed += 1
@@ -479,6 +489,11 @@ def save_owner_fields(record, values, mark_applied=False):
     _ensure_owner_properties(cfg)
     props = {OWNER_PROPS[column][0]: _owner_value(column, value)
              for column, value in values.items() if column in OWNER_PROPS}
+    if "apply_email" in values and ("," in values["apply_email"]
+                                      or "Application Recipients" in page.get("properties", {})):
+        _ensure_properties(cfg, "owner_recipients", {"Application Recipients": {"rich_text": {}}})
+        props["Application Recipients"] = (_text(values["apply_email"])
+                                            if values["apply_email"] else {"rich_text": []})
     if mark_applied:
         props.update(_applied_properties(page))
     _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
@@ -555,7 +570,7 @@ def _merge_tracker(pages):
                 # A non-empty Notion value wins; an empty one never blanks the
                 # tracker (the documents pass fills Notion from it instead).
                 for column, (name, _schema) in OWNER_PROPS.items():
-                    value = (read(page, name) or "").strip()
+                    value = _owner_read(page, column, name).strip()
                     if value and match[ix[column]] != value:
                         match[ix[column]] = value
                         changed += 1
@@ -569,7 +584,7 @@ def _merge_tracker(pages):
                 row[ix["channel"]] = read(page, "Source") or ""
                 row[ix["notes"]] = "from Notion"
                 for column, (name, _schema) in OWNER_PROPS.items():
-                    row[ix[column]] = (read(page, name) or "").strip()
+                    row[ix[column]] = _owner_read(page, column, name).strip()
                 rows.append(row)
                 changed += 1
             elif match[ix["status"]] != status:

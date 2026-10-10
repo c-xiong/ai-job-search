@@ -36,7 +36,7 @@ const ctx={URL,document,JOBS:[job],RUNS:[run],T:"token",ACTIVE_RUN:null,PREVIEW_
   STATUSES:[],FILTERS:{},buildFilters:()=>[],renderStatusKeys:()=>{},
   el:node,displayTitle:x=>x,requestAnimationFrame:fn=>fn(),checkAuth:()=>{},render:()=>{},pollActivity:()=>{},
   toast:message=>messages.push(message),closePopovers:()=>{},latestApplications:()=>[run],
-  esc:x=>String(x||"").replaceAll("&","&amp;").replaceAll('"',"&quot;"),
+  esc:x=>String(x||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"),
   docKinds:()=>["cv"],appState:()=>"ready",DOC_TITLE:{cv:"CV"},crumbRun:()=>({}),openView:()=>{},
   mountApp:(_run,_view,html)=>ctx.sendHtml=html,
   fetch:async(url,options)=>{
@@ -142,7 +142,24 @@ async function staleReload(){
   assert.equal(ctx.ui.applicationFor(ctx.JOBS[0]),run);
 }
 async function sendForm(){
+  run.posting_emails=[{email:"one@example.com",context:"Send documents to one@example.com",apply:true},{email:"two@example.com",context:"Questions: <contact> two@example.com",apply:false,purpose:"questions"}];
   ctx.VIEW="send";ctx.ui.renderSend(run);
+  assert(!ctx.sendHtml.includes('data-email-draft='));
+  assert(!ctx.sendHtml.includes('data-add-recipient="two@example.com"'));
+  node("owner-form").dataset={runId:run.id};
+  run.email_guidance={mode:"email",recipients:["one@example.com"],message:"Send to one@example.com"};
+  ctx.ui.renderSend(run);
+  assert(ctx.sendHtml.includes('data-email-draft='));
+  listeners.click(event({closest:s=>s==='[data-email-draft]'?{dataset:{emailDraft:run.id}}:null}));
+  assert(ctx.sendHtml.includes('id="email-body"'));
+  const body=node("email-body");body.value="My edited application email";listeners.input(event(body));
+  ctx.ui.renderSend(run);assert(ctx.sendHtml.includes("My edited application email"));
+  assert(ctx.sendHtml.includes("one@example.com"));assert(ctx.sendHtml.includes("two@example.com"));
+  assert(ctx.sendHtml.includes("&lt;contact&gt;"));assert(ctx.sendHtml.includes('multiple id="owner-email"'));
+  node("owner-form").dataset={runId:run.id};
+  node("owner-email").value="one@example.com";
+  listeners.click(event({closest:s=>s==='[data-add-recipient]'?{dataset:{addRecipient:"two@example.com"}}:null}));
+  assert.equal(node("owner-email").value,"one@example.com, two@example.com");
   const form=node("owner-form");form.dataset={runId:run.id};
   const controls=["owner-portal","owner-email","owner-notes","save"].map(node);
   form.querySelectorAll=()=>controls;

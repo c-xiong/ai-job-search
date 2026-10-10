@@ -410,9 +410,7 @@ function emailBox(j){
   const emails=EMAIL_CACHE.get(j.url)||[];
   if(!emails.length)return '<div id="emailbox" hidden></div>';
   const apply=emails.some(e=>e.apply);
-  return `<div id="emailbox" class="emailbox"><div class="sectionhead">${apply?"Apply by email":"Contact"}</div>${emails.map(e=>`<div class="emailrow">
-    <div class="emailline"><a href="mailto:${esc(e.email)}">${esc(e.email)}</a>${apply&&!e.apply?'<span class="dim">contact</span>':""}<button class="linkish" data-copy-email="${esc(e.email)}">Copy</button></div>
-    <div class="emailctx" title="${esc(e.context)}">${esc(e.context)}</div></div>`).join("")}</div>`;
+  return `<div id="emailbox" class="emailbox"><span class="label">${apply?"Apply by email":"Contact"}</span>${emails.map(e=>`<span class="emailline" title="${esc(e.context)}"><a href="mailto:${esc(e.email)}">${esc(e.email.toLowerCase())}</a><button class="linkish" data-copy-email="${esc(e.email)}">Copy</button></span>`).join("")}</div>`;
 }
 // On-demand fit evaluation (tools/board/fit_eval.py): one read-only model pass
 // over the posting and the evidence files, cached server-side per job. It never
@@ -987,6 +985,20 @@ function renderTailor(run){
 }
 // Send: the last step, and the only one that happens outside JobFlow.
 const SEND_DRAFTS=new Map();
+const EMAIL_DRAFTS=new Map();
+function emailDraftBox(run){
+  const guidance=run.email_guidance||{};
+  if(guidance.mode!=="email")return "";
+  const draft=EMAIL_DRAFTS.get(run.id);
+  if(!draft)return `<button class="secondary" data-email-draft="${esc(run.id)}">Draft application email</button><div class="dim">Creates an editable English email from the role and document selection when you click.</div>`;
+  return `<div class="email-draft"><strong>Application email draft</strong><div class="dim">To: ${esc(guidance.recipients.join(", "))} · Replace [Your name] and attach the PDFs before sending.</div><label class="modal-label" for="email-subject">Subject</label><input id="email-subject" value="${esc(draft.subject)}"><label class="modal-label" for="email-body">Message</label><textarea id="email-body" rows="10">${esc(draft.body)}</textarea><div class="title-actions"><button class="secondary" data-copy-email-draft>Copy subject and message</button><button class="secondary" data-open-email-draft>Open in email app ↗</button></div></div>`;
+}
+function createEmailDraft(run){
+  if(run.email_guidance?.mode!=="email")return;
+  const attachments=docKinds(run.scope).map(k=>k==="cv"?"CV":"cover letter").join(" and ");
+  EMAIL_DRAFTS.set(run.id,{subject:`Application: ${run.role||"Open position"}`,body:`Dear Hiring Team,\n\nI would like to apply for the ${run.role||"advertised"} position at ${run.company||"your company"}. Please find my ${attachments} attached for your consideration.\n\nThank you for your time. I would welcome the opportunity to discuss my application.\n\nKind regards,\n[Your name]`});
+  captureSendDraft();renderSend(run);
+}
 function renderSend(run){
   if(!run)return;ACTIVE_RUN=run.id;PREVIEW_RUN=run.id;
   const review=run.review||{},checked=review.total&&review.done>=review.total,kinds=docKinds(run.scope);
@@ -995,18 +1007,23 @@ function renderSend(run){
   const open=postingUrl?`<a class="secondary" href="${esc(postingUrl)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
   const changeUrl=job?`<button class="linkish" data-posting-url="${esc(job.url)}">Change URL</button>`:"";
   const portal=/^https?:\/\//i.test(run.portal_url||"")?`<a class="secondary" href="${esc(run.portal_url)}" target="_blank" rel="noopener">Open portal ↗</a>`:"";
-  const mailto=run.apply_email?`<a class="secondary" href="mailto:${esc(run.apply_email)}?subject=${encodeURIComponent("Application: "+(run.role||""))}">Email ${esc(run.apply_email)} ↗</a>`:"";
+  const mailto=run.apply_email?`<a class="secondary" href="mailto:${esc(run.apply_email.replace(/\s/g,""))}?subject=${encodeURIComponent("Application: "+(run.role||""))}">Email ${esc(run.apply_email)} ↗</a>`:"";
   const reveals=kinds.map(kind=>`<button class="secondary" data-reveal="${kind}">Reveal ${kind==="cv"?"CV":"letter"} in Finder</button>`).join("");
   const draft=SEND_DRAFTS.get(run.id)||run;
+  const contacts=run.posting_emails||[];
+  const guidance=run.email_guidance||{mode:"unconfirmed",message:"Check the original posting for application instructions."};
+  const purposeLabels={application:"Application recipient",support:"Application help / error reporting — do not send your CV",questions:"Questions about the role — not an application recipient",unknown:"Purpose unconfirmed — do not assume this accepts applications"};
+  const contactList=`<div class="send-contacts"><div class="label">How to apply</div><p>${esc(guidance.message)}</p>${contacts.map(e=>`<div class="send-contact"><div class="label">${esc(purposeLabels[e.purpose]||purposeLabels.unknown)}</div><div class="emailline"><span>${esc(e.email)}</span><button class="linkish" data-copy-email="${esc(e.email)}">Copy</button>${e.apply?`<button class="linkish" data-add-recipient="${esc(e.email)}">Add recipient</button>`:""}</div><details><summary>Source wording</summary><div class="dim">${esc(e.context)}</div></details></div>`).join("")}${emailDraftBox(run)}</div>`;
+
   const recorded=state==="applied";
   const record=`<label class="applied-toggle"><input type="checkbox" role="switch" id="owner-applied" form="owner-form" ${recorded||draft.mark_applied?"checked":""} ${recorded?'disabled title="Application already recorded"':""}><span class="toggle-track" aria-hidden="true"></span><span>Applied${recorded&&when?" · "+esc(when):""}</span></label>`;
   mountApp(run,"send",`<div class="send-shell"><section class="send-main">
     <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Check the PDFs</strong><div class="dim">${review.total?`${review.done} of ${review.total} checks ticked`:"No checks recorded yet"}${checked?"":` · <button class="linkish" data-app-step="review">finish them in Review</button>`}</div></div></div>
-    <div class="send-step"><span class="stepdot">2</span><div><strong>Apply on the employer’s site</strong><div class="dim">Upload the compiled PDFs there; JobFlow never submits anything.</div><div class="title-actions">${open}${changeUrl}${portal}${mailto}${reveals}</div></div></div>
+    <div class="send-step"><span class="stepdot">2</span><div><strong>Submit your application</strong><div class="dim">Follow the posting’s instructions: upload your PDFs on the employer’s site or attach them to an email.</div>${contactList}<div class="title-actions">${open}${changeUrl}${portal}${mailto}${reveals}</div></div></div>
     <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Turn on after submitting your application. Click Save below to save this status together with your details.</div><div class="title-actions">${record}</div></div></div>
     <form class="send-step owner-form" id="owner-form" data-run-id="${esc(run.id)}"><span class="stepdot">✎</span><div><strong>Portal, email &amp; notes</strong><div class="dim">Where you applied - a portal to log in to again, or the address you emailed. Saved to the tracker and Notion.</div>
       <label class="modal-label" for="owner-portal">Application portal</label><input type="url" id="owner-portal" placeholder="https://…" value="${esc(draft.portal_url||"")}">
-      <label class="modal-label" for="owner-email">Application email <span class="dim">(when the posting says to email it)</span></label><input type="email" id="owner-email" placeholder="careers@…" value="${esc(draft.apply_email||"")}">
+      <label class="modal-label" for="owner-email">Application recipients <span class="dim">(separate multiple addresses with commas)</span></label><input type="email" multiple id="owner-email" placeholder="careers@example.com, recruiter@example.com" value="${esc(draft.apply_email||"")}">
       <label class="modal-label" for="owner-notes">My notes <span class="dim">(optional)</span></label><textarea id="owner-notes" rows="3" placeholder="Login email, reference number, anything to remember…">${esc(draft.my_notes||"")}</textarea>
       <div class="title-actions"><button class="secondary" type="submit">Save</button></div></div></form>
     <div class="writing"><div class="label">Published files</div>${kinds.map(kind=>`<div>${esc(run.targets?.[kind]||DOC_TITLE[kind]+" target pending")}</div>`).join("")}<div class="dim">Base ${esc((run.resolved_base_cv||run.base_cv||"auto").toUpperCase())} · country ${esc((run.cv_country||"ch").toUpperCase())}</div></div>
@@ -1723,6 +1740,17 @@ document.addEventListener("click",event=>{
   if(attrDetect){const j=selectedJob();if(j)setAttr(j,"work_mode",null);return}
   const copyText=event.target.closest("[data-copy]");
   if(copyText&&copyText.dataset.copy){const text=copyText.dataset.copy;return void navigator.clipboard.writeText(text).then(()=>toast("copied "+text),()=>toast("could not copy",{warn:true}))}
+  const draftEmail=event.target.closest("[data-email-draft]");
+  if(draftEmail){const run=RUNS.find(r=>r.id===draftEmail.dataset.emailDraft);if(run)createEmailDraft(run);return}
+  if(event.target.closest("[data-copy-email-draft],[data-open-email-draft]")){
+    const run=RUNS.find(r=>r.id===ACTIVE_RUN),draft=EMAIL_DRAFTS.get(ACTIVE_RUN);
+    if(!draft||run?.email_guidance?.mode!=="email")return;
+    if(event.target.closest("[data-copy-email-draft]"))void navigator.clipboard.writeText(`Subject: ${draft.subject}\n\n${draft.body}`).then(()=>toast("Email draft copied"),()=>toast("Could not copy",{warn:true}));
+    else location.href="mailto:"+run.email_guidance.recipients.join(",")+"?subject="+encodeURIComponent(draft.subject)+"&body="+encodeURIComponent(draft.body);
+    return;
+  }
+  const addRecipient=event.target.closest("[data-add-recipient]");
+  if(addRecipient){const input=el("owner-email");if(!input)return;const addresses=input.value.split(",").map(s=>s.trim()).filter(Boolean),address=addRecipient.dataset.addRecipient;if(!addresses.some(s=>s.toLowerCase()===address.toLowerCase()))addresses.push(address);input.value=addresses.join(", ");captureSendDraft();input.focus();return}
   const copyEmail=event.target.closest("[data-copy-email]");
   if(copyEmail){const address=copyEmail.dataset.copyEmail;return void navigator.clipboard.writeText(address).then(()=>toast("copied "+address),()=>toast("could not copy",{warn:true}))}
   const postingUrl=event.target.closest("[data-posting-url]");if(postingUrl)return void openPostingUrl(JOBS.find(j=>j.url===postingUrl.dataset.postingUrl));
@@ -1809,6 +1837,7 @@ async function postCompany(path,body,method="POST"){
   return data;
 }
 document.addEventListener("input",event=>{
+  if(["email-subject","email-body"].includes(event.target.id)){const draft=EMAIL_DRAFTS.get(ACTIVE_RUN);if(draft)draft[event.target.id==="email-subject"?"subject":"body"]=event.target.value;return}
   if(["owner-portal","owner-email","owner-notes","owner-applied"].includes(event.target.id)){captureSendDraft();return}
   if(event.target.id==="apps-q"){APPS_Q=event.target.value;renderAppsList();return}
   if(event.target.id!=="company-search")return;

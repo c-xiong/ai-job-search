@@ -751,6 +751,8 @@ class Supervisor:
             record["tracker_date"] = (row.get("date") or "").strip()
             for column in docs.OWNER_COLUMNS:
                 record[column] = row.get(column) or ""
+            record["posting_emails"] = docs.posting_emails(record)
+            record["email_guidance"] = docs.apply_email.guidance(record["posting_emails"])
             if record.get("pipeline") == 2:
                 record["progress"] = self._progress(record, settings)
             if record.get("phase") == "done":

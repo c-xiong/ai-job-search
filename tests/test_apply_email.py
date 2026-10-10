@@ -42,6 +42,42 @@ class ApplyEmailTest(unittest.TestCase):
         self.assertEqual([h["email"] for h in apply_email.extract(text)],
                          ["jobs@acme.ch", "anna@acme.ch"])
 
+    def test_submission_help_is_not_an_application_recipient(self):
+        text = "If you need help with an application error, email hiring@example.com."
+        self.assertFalse(apply_email.extract(text)[0]["apply"])
+        self.assertEqual(apply_email.best(text), "")
+
+    def test_multiple_recipients_are_preserved(self):
+        text = "Send your CV to one@example.com and two@example.com."
+        self.assertEqual({h["email"] for h in apply_email.extract(text)},
+                         {"one@example.com", "two@example.com"})
+
+    def test_questions_heading_across_lines(self):
+        hits = apply_email.extract("Have questions?\n\nContact our team\n\njobs@example.com")
+        self.assertEqual(hits[0]["purpose"], "questions")
+        self.assertEqual(apply_email.guidance(hits)["recipients"], [])
+
+    def test_instruction_does_not_bleed_into_next_sentence(self):
+        hits = apply_email.extract("Send your CV to jobs@example.com. Contact team@example.com.")
+        self.assertEqual([h["apply"] for h in hits], [True, False])
+
+    def test_negative_and_help_contexts(self):
+        for text in ("Do not send applications to jobs@example.com.",
+                     "If you need help, email apply@example.com."):
+            self.assertEqual(apply_email.guidance(apply_email.extract(text))["mode"], "unconfirmed")
+
+    def test_joint_and_alternative_recipients(self):
+        joint = apply_email.guidance(apply_email.extract("Send your CV to one@example.com and two@example.com."))
+        self.assertEqual(joint["recipients"], ["one@example.com", "two@example.com"])
+        alternate = apply_email.guidance(apply_email.extract("Send your CV to one@example.com or two@example.com."))
+        self.assertEqual(alternate["mode"], "choose")
+        self.assertEqual(alternate["recipients"], [])
+
+    def test_later_explicit_instruction_beats_bare_address(self):
+        hits = apply_email.extract("jobs@example.com\nSend your CV to jobs@example.com.")
+        self.assertEqual(len(hits), 1)
+        self.assertTrue(hits[0]["apply"])
+
     def test_markup_is_stripped_and_duplicates_collapse(self):
         text = '<p>Send your CV to <a href="mailto:jobs@acme.ch">jobs@acme.ch</a>.</p>'
         self.assertEqual([h["email"] for h in apply_email.extract(text)], ["jobs@acme.ch"])

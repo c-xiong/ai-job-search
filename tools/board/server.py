@@ -264,7 +264,7 @@ def run_route(path):
     return match.group("id"), match.group("action")
 
 
-OWNER_LIMITS = {"portal_url": 2000, "apply_email": 254,   # RFC 5321 path limit
+OWNER_LIMITS = {"portal_url": 2000, "apply_email": 2000,  # comma-separated recipients
                 "my_notes": 2000}                         # Notion's text-object cap
 EMAIL_SHAPE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
@@ -284,8 +284,12 @@ def owner_values(payload):
         if (column == "portal_url" and value
                 and urlsplit(value).scheme not in ("http", "https")):
             return None, "the portal link must start with http:// or https://"
-        if column == "apply_email" and value and not EMAIL_SHAPE.fullmatch(value):
-            return None, "the application email is not an email address"
+        if column == "apply_email" and value:
+            addresses = [address.strip() for address in value.split(",")]
+            if any(len(address) > 254 or not EMAIL_SHAPE.fullmatch(address)
+                   or any(char in address for char in ",;<>?&#") for address in addresses):
+                return None, "enter valid email addresses separated by commas"
+            value = ", ".join(dict((address.casefold(), address) for address in addresses).values())
         values[column] = value
     if not values:
         return None, "nothing to save"
