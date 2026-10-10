@@ -417,15 +417,11 @@ function emailBox(j){
 // changes a status; the list only marks evaluated rows with the verdict.
 const VERDICTS={strong:["Strong fit","✓"],worth:["Worth applying","✓"],risky:["Risky","!"],not_recommended:["Not recommended","✕"]};
 const EVAL_MARK={met:"✓",not_met:"✕",unclear:"?"};
-const EVAL_CACHE=new Map(),EVAL_POLLS=new Map(),KW_OPEN=new Map();
+const EVAL_CACHE=new Map(),EVAL_POLLS=new Map();
 // The background queue (auto_evaluate in board_config.json) evaluates keyword-
 // `high` rows on its own. Its revision moves on every verdict it writes back,
 // and the list reloads then so bands, order and gates stay current.
 let EVAL_QUEUE={enabled:false,running:[],pending:[],revision:null};
-// The keyword screen is the fallback explanation: open until an evaluation
-// exists, folded after, unless the owner toggled it for this row.
-const keywordOpen=j=>KW_OPEN.has(j.url)?KW_OPEN.get(j.url):!j.evaluation;
-document.addEventListener("toggle",event=>{const box=event.target;if(box.matches?.("details.kwbox"))KW_OPEN.set(box.dataset.kw,box.open)},true);
 async function pollEvalQueue(){
   let data;
   try{const response=await fetch("/api/evaluate/queue?t="+T);if(!checkAuth(response)||!response.ok)return;data=await response.json()}catch(_){return}
@@ -501,10 +497,9 @@ function evalBox(j){
   const info=EVAL_CACHE.get(j.url)||{},rec=info.evaluation,res=rec?.result,running=Boolean(info.running)||EVAL_POLLS.has(j.url)||EVAL_QUEUE.running.includes(j.url);
   const queued=!running&&!res&&EVAL_QUEUE.enabled&&EVAL_QUEUE.pending.includes(j.url);
   const engine=ENGINE_NAMES[(info.running||{}).provider||chosenEngine("generate")]||"the selected engine";
-  const button=`<button class="secondary evalbtn" data-evaluate="${esc(j.url)}" ${running?"disabled":""}>${running?"Evaluating…":res?"Re-evaluate":"Evaluate fit"}</button>`;
   const meta=rec&&!running?`<span class="evalmeta">${esc(ENGINE_NAMES[rec.provider]||rec.provider)} · ${esc(evalWhen(rec.evaluated_at))}</span>`:"";
   let body="";
-  if(running)body=`<div class="dim">Evaluating with ${esc(engine)}. This usually takes one to two minutes.</div>`;
+  if(running)body=`<div class="dim">Evaluating with ${esc(engine)} (one to two minutes).</div>`;
   else if(info.error)body=`<div class="evalerror">${esc(info.error)}</div>`;
   if(res&&!running){
     const v=VERDICTS[res.verdict]||[res.verdict,""],sen=res.seniority||{},skills=evalSkills(res.skills);
@@ -517,11 +512,18 @@ function evalBox(j){
       ${skills?`<div class="evalsec"><div class="evalhead2">Skills</div>${skills}</div>`:""}
       ${(res.other||[]).length?`<div class="evalsec"><div class="evalhead2">Other requirements</div>${evalItems(res.other,false)}</div>`:""}
       ${res.advice?`<div class="evalsec"><div class="evalhead2">Advice</div><p class="evalsummary">${esc(res.advice)}</p></div>`:""}`;
-  }else if(queued)body=`<div class="dim">Queued for automatic review (${EVAL_QUEUE.pending.indexOf(j.url)+1} of ${EVAL_QUEUE.pending.length}). Evaluate now to skip the queue.</div>`;
-  else if(!running&&!info.error)body=`<div class="dim">Checks eligibility, seniority, skills and other requirements against your profile, using the engine selected below.</div>`;
-  return `<div id="evalbox" class="evalbox"><div class="evaltop"><span class="sectionhead">Fit evaluation</span>${meta}${button}</div>${body}</div>`;
+  }else if(queued)body=`<div class="dim">Queued for automatic review (${EVAL_QUEUE.pending.indexOf(j.url)+1} of ${EVAL_QUEUE.pending.length}).</div>`;
+  // Nothing to show yet: no box at all, the action bar carries the button.
+  if(!body)return '<div id="evalbox" hidden></div>';
+  return `<div id="evalbox" class="evalbox"><div class="evaltop"><span class="sectionhead">Fit evaluation</span>${meta}</div>${body}</div>`;
 }
-function paintEval(j){if(selectedJob()?.url!==j.url||VIEW)return;const box=el("evalbox");if(box)box.outerHTML=evalBox(j)}
+// Evaluate / Re-evaluate, in the action bar under the posting.
+function evalButton(j){
+  const info=EVAL_CACHE.get(j.url)||{},res=info.evaluation?.result,running=Boolean(info.running)||EVAL_POLLS.has(j.url)||EVAL_QUEUE.running.includes(j.url);
+  const engine=ENGINE_NAMES[chosenEngine("generate")]||"the selected engine";
+  return `<button id="evalbtn" class="secondary evalbtn" data-evaluate="${esc(j.url)}" ${running?"disabled":""} title="Check eligibility, seniority and skills against your profile with ${esc(engine)}">${running?"Evaluating…":res||j.evaluation?"Re-evaluate":"Evaluate fit"}</button>`;
+}
+function paintEval(j){if(selectedJob()?.url!==j.url||VIEW)return;const box=el("evalbox");if(box)box.outerHTML=evalBox(j);const btn=el("evalbtn");if(btn)btn.outerHTML=evalButton(j)}
 async function loadEval(j,force=false){
   if(!j||(!force&&(EVAL_CACHE.has(j.url)||!j.evaluation)))return;
   try{const response=await fetch("/api/evaluate?t="+T+"&url="+encodeURIComponent(j.url));if(!checkAuth(response)||!response.ok)return;EVAL_CACHE.set(j.url,await response.json())}catch(_){return}
@@ -554,6 +556,22 @@ async function startEval(j){
 }
 // The stored reason is one "; "-joined line; each clause is its own fact.
 const whyItems=why=>String(why||"").split(/;\s+/).map(s=>s.trim()).filter(Boolean).map(s=>s[0].toUpperCase()+s.slice(1));
+// The keyword screen, said briefly: why the row is here on one line, and what
+// cost it points as short tags (the full sentence is the tooltip).
+function whyLine(j,why,losses){
+  if(!why.length&&!losses.length)return "";
+  const caps=losses.filter(l=>/^band capped/i.test(l)).map(l=>`<span class="losstag cap" title="${esc(l)}">${esc(l.replace(/^band capped at (\w+):\s*/i,"capped $1: "))}</span>`);
+  const pts=losses.filter(l=>!/^band capped/i.test(l)).map(l=>{const m=l.match(/^-(\d+)\s+([\w ]+?):/);return `<span class="losstag" title="${esc(l)}">${m?"−"+esc(m[1])+" "+esc(m[2]):esc(l)}</span>`});
+  const line=`<span class="whytext">${esc(why.join(" · "))}</span>${caps.length||pts.length?`<span class="losstags">${caps.join("")}${pts.join("")}</span>`:""}`;
+  const score=j.keyword_score!=null?` · ${esc(Math.round(j.keyword_score))}`:"";
+  if(!j.evaluation)return `<div class="whyline"><span class="label" title="${esc(scoreTitle(j))}">Why here${score}</span>${line}</div>`;
+  // The AI evaluation is the explanation that counts; the keyword screen
+  // folds away under it, unless you opened it for this row.
+  const open=WHY_OPEN.get(j.url)===true;
+  return `<details class="whyline whyfold" data-why="${esc(j.url)}" ${open?"open":""}><summary><span class="kwchev">›</span><span class="label" title="${esc(scoreTitle(j))}">Keyword screen${score}</span>${!open&&losses.length?`<span class="dim">${losses.length} deduction${losses.length===1?"":"s"}</span>`:""}</summary>${line}</details>`;
+}
+const WHY_OPEN=new Map();
+document.addEventListener("toggle",event=>{const box=event.target;if(box.matches?.("details.whyfold"))WHY_OPEN.set(box.dataset.why,box.open)},true);
 
 function renderJob(){
   const j=selectedJob(),rows=shown();
@@ -561,14 +579,14 @@ function renderJob(){
   if(!j){el("jobdetail").innerHTML='<div class="panel-empty">Select a job.</div>';el("jobpos").textContent="";return}
   el("jobpos").textContent=`${sel+1} of ${rows.length}`;
   const fitLabel=j.fit||"unranked",score=j.score?Math.round(j.score):null,why=whyItems(j.why),losses=(j.fit_losses||[]).map(w=>w[0].toUpperCase()+w.slice(1)),posted=postedText(j);
-  el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitle" title="${esc(j.title)}">${esc(displayTitle(j.title))}</div>
+  const href=j.open_url||j.url;
+  el("jobdetail").innerHTML=`<div class="jobsummary"><div class="jobtitlerow"><div class="jobtitle" title="${esc(j.title)}">${esc(displayTitle(j.title))}</div><a class="posting-anchor" href="${esc(href)}" target="_blank" rel="noopener" title="${esc(href)}">${esc(postingLinkLabel(href))} ↗</a></div>
     <div class="jobmeta"><strong>${esc(j.company)}</strong>${j.location?`<span class="sep">·</span><span>${esc(j.location)}</span>`:""}${posted?`<span class="sep">·</span><span>Posted ${esc(posted)}</span>`:""}</div>
     <div class="badges"><span class="fitpill ${esc(j.fit||"none")}" title="${esc(scoreTitle(j))}"><span class="fitdot"></span>${esc(fitLabel)}${score!=null?`<span class="fitscore">${esc(score)}</span>`:""}</span><span class="badge">${esc(sourceLabel(j.primary_source||j.portal)||"Source unknown")}</span>${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">Title only</span>':""}</div>
-    <div class="posting-link"><a href="${esc(j.open_url||j.url)}" target="_blank" rel="noopener" title="${esc(j.open_url||j.url)}">${esc(postingLinkLabel(j.open_url||j.url))} ↗</a><span class="posting-actions"><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button><span class="sep">·</span><button class="linkish" data-follow-company="${esc(j.url)}" ${FOLLOW_BUSY?"disabled":""}>Follow company</button></span></div></div>
-    ${emailBox(j)}
-    <div class="posting">${evalBox(j)}<details class="kwbox" data-kw="${esc(j.url)}" ${keywordOpen(j)?"open":""}><summary><span class="kwchev">›</span><span class="sectionhead">Keyword screen</span><span class="kwmeta">${j.keyword_score!=null?`score ${esc(Math.round(j.keyword_score))} · `:""}${why.length} reason${why.length===1?"":"s"}${losses.length?` · ${losses.length} deduction${losses.length===1?"":"s"}`:""}</span></summary>
-      <div class="whybox${losses.length?" split":""}"><div><div class="sectionhead">Why it's here</div>${why.length?`<ul class="whylist">${why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>`:'<div class="dim">No reason was stored.</div>'}</div>${losses.length?`<div><div class="sectionhead">Where it lost points</div><ul class="whylist losslist">${losses.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>`:""}</div></details><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div>
-    <div class="jobactions"><div class="statusbuttons">${markButtons(j)}</div>
+    ${attrsBox(j)}${emailBox(j)}
+    <div class="posting-link"><span class="posting-actions"><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button><span class="sep">·</span><button class="linkish" data-follow-company="${esc(j.url)}" ${FOLLOW_BUSY?"disabled":""}>Follow company</button></span></div></div>
+    <div class="posting"><div class="jobinfo">${whyLine(j,why,losses)}${evalBox(j)}</div><div class="splitter vertical infosplit" data-info-split role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize evaluation and posting" title="Drag to resize · double-click to reset"></div><div class="jobjd"><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div></div>
+    <div class="jobactions"><div class="statusbuttons">${markButtons(j)}<button class="linkish missbtn" data-miss="${esc(j.url)}" title="This job should have been filtered - teach the rules">Report a miss</button>${evalButton(j)}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
       ${applicationCard(j)}</div>`;
   loadPosting(j);loadEval(j);
@@ -914,7 +932,11 @@ function appHeader(run,step){
   const job=jobOfRun(run);
   const id=job?`<button class="app-id app-id-link" data-board-job="${esc(job.url)}" title="Show this job on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)} <span class="app-id-arrow">↗ Board</span></p></button>`
     :`<div class="app-id" title="This posting is no longer on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)}</p></div>`;
-  return `<header class="app-head">${id}
+  const jobId=(job&&job.job_id)||run.job_id||"";
+  const copyId=jobId?`<button type="button" class="jobid" data-copy="${esc(jobId)}" title="Copy job ID - quote it to Claude or Codex to name this job">${esc(jobId)}</button>`:"";
+  const href=(job&&(job.open_url||job.url))||run.job_url||"";
+  const posting=href?`<a class="posting-anchor" href="${esc(href)}" target="_blank" rel="noopener" title="Open the posting · ${esc(href)}">${esc(postingLinkLabel(href))} ↗</a>`:"";
+  return `<header class="app-head">${id}${copyId}${posting}
     <nav class="app-steps" aria-label="Steps">${stepBtn("review",1,"Review",reviewState)}<span class="app-step-sep">→</span>${stepBtn("send",2,"Send",sendState)}</nav>
     ${status}<span class="spacer"></span>${attemptTabs(run)}${menu}</header>${run.archived_at?`<div class="archive-banner"><strong>Archived · not applying</strong>${run.archive_reason?`<span>${esc(run.archive_reason)}</span>`:""}<span>Documents and history are kept.</span><button class="secondary" data-unarchive-app="${esc(run.id)}">Restore application</button></div>`:""}`;
 }
@@ -1453,12 +1475,12 @@ addEventListener("hashchange",()=>{if(SELF_WRITE){SELF_WRITE=false;return}applyR
 const LAYOUT_KEY="jobflow.layout.v1";
 // The Board has no left rail any more (APPLICATIONS_PLAN.md §4.1); its keys are
 // stripped from a stored blob the same way `expanded` and `applications` are.
-const DEFAULT_LAYOUT={version:1,right:452,appsW:264,screenW:300,checkW:280,rightCollapsed:false,autoRight:false,appsCollapsed:false,shortcutsHidden:false};
+const DEFAULT_LAYOUT={version:1,right:452,infoPct:50,appsW:264,screenW:300,checkW:280,rightCollapsed:false,autoRight:false,appsCollapsed:false,shortcutsHidden:false};
 function loadLayout(){try{const value=JSON.parse(localStorage.getItem(LAYOUT_KEY));if(value?.version===1){const merged={...DEFAULT_LAYOUT,...value};for(const stale of ["expanded","applications","collect","left","leftCollapsed","autoLeft"])delete merged[stale];return merged}localStorage.removeItem(LAYOUT_KEY)}catch(_){try{localStorage.removeItem(LAYOUT_KEY)}catch(__){}}return {...DEFAULT_LAYOUT}}
 let layout=loadLayout();
 function saveLayout(){try{localStorage.setItem(LAYOUT_KEY,JSON.stringify(layout))}catch(_){}}
 function applyLayout(){
-  const app=el("app");app.style.setProperty("--right",layout.right+"px");
+  const app=el("app");app.style.setProperty("--right",layout.right+"px");app.style.setProperty("--info-pct",layout.infoPct+"%");
   for(const [key,spec] of Object.entries(RAIL_SPLITS))app.style.setProperty(spec.css,layout[key]+"px");
   app.classList.toggle("right-collapsed",layout.rightCollapsed||layout.autoRight);
   el("right-rail").classList.toggle("collapsed",layout.rightCollapsed||layout.autoRight);
@@ -1473,11 +1495,11 @@ function toggleCollapse(side){
 function resetLayout(){layout={...DEFAULT_LAYOUT};applyLayout();autoCollapse();saveLayout();toast("layout reset")}
 function autoCollapse(){
   const width=el("workspace").clientWidth||innerWidth;
-  layout.autoRight=!layout.rightCollapsed&&width<layout.right+482;
+  layout.autoRight=!layout.rightCollapsed&&width<320+482;
   applyLayout();saveLayout();
 }
 function updateSeparatorAria(){
-  const specs={"right-split":[layout.right,320,640]};
+  const specs={"right-split":[layout.right,320,Math.max(320,(el("workspace").clientWidth||innerWidth)-482)]};
   Object.entries(specs).forEach(([id,[now,min,max]])=>{const node=el(id);node.setAttribute("aria-valuenow",Math.round(now));node.setAttribute("aria-valuemin",min);node.setAttribute("aria-valuemax",Math.round(max))});
 }
 const RAIL_SPLITS={
@@ -1486,7 +1508,7 @@ const RAIL_SPLITS={
   checkW:{css:"--check-w",sign:-1,min:240,max:440,def:280},
 };
 const splitSpecs={
-  "right-split":{key:"right",axis:"x",sign:-1,min:320,max:640,def:452}
+  "right-split":{key:"right",axis:"x",sign:-1,min:320,max:4000,def:452}
 };
 function clampSplit(spec,value){
   let max=typeof spec.max==="function"?spec.max():spec.max;
@@ -1519,6 +1541,19 @@ document.addEventListener("pointerdown",event=>{
   const up=()=>{document.body.classList.remove("resizing");document.querySelector(`[data-split="${key}"]`)?.classList.remove("dragging");removeEventListener("pointermove",move);removeEventListener("pointerup",up);removeEventListener("pointercancel",up);saveLayout()};
   addEventListener("pointermove",move);addEventListener("pointerup",up);addEventListener("pointercancel",up);
 });
+// The wide Job panel's split between the evaluation and the posting, as a
+// share of the panel so it holds when the panel itself is resized.
+const INFO_MIN=25,INFO_MAX=75;
+const setInfoPct=value=>{layout.infoPct=Math.round(Math.max(INFO_MIN,Math.min(INFO_MAX,value)));applyLayout()};
+document.addEventListener("pointerdown",event=>{
+  const node=event.target.closest?.("[data-info-split]");if(!node||event.button!==0)return;event.preventDefault();
+  const box=node.parentElement.getBoundingClientRect();node.classList.add("dragging");document.body.classList.add("resizing");
+  const move=e=>setInfoPct((e.clientX-box.left)/box.width*100);
+  const up=()=>{document.body.classList.remove("resizing");node.classList.remove("dragging");removeEventListener("pointermove",move);removeEventListener("pointerup",up);removeEventListener("pointercancel",up);saveLayout()};
+  addEventListener("pointermove",move);addEventListener("pointerup",up);addEventListener("pointercancel",up);
+});
+document.addEventListener("dblclick",event=>{if(event.target.closest?.("[data-info-split]")){setInfoPct(50);saveLayout()}});
+document.addEventListener("keydown",event=>{if(!event.target.matches?.("[data-info-split]")||!["ArrowLeft","ArrowRight"].includes(event.key))return;event.preventDefault();event.stopPropagation();setInfoPct(layout.infoPct+(event.key==="ArrowRight"?1:-1)*(event.shiftKey?10:2));saveLayout()},true);
 document.addEventListener("dblclick",event=>{const node=railSplit(event);if(!node)return;setRail(node.dataset.split,RAIL_SPLITS[node.dataset.split].def);saveLayout()});
 document.addEventListener("keydown",event=>{
   const node=railSplit(event);if(!node||!["ArrowLeft","ArrowRight","Home"].includes(event.key))return;

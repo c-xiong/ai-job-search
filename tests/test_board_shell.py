@@ -36,7 +36,7 @@ class ShellMarkupTest(unittest.TestCase):
         for gone in ('id="runs"', 'id="runlist"', 'id="left-rail"', 'id="left-split"',
                      'id="applications-panel"', 'apptable'):
             self.assertNotIn(gone, self.html)
-        self.assertIn("grid-template-columns:minmax(480px,1fr) 1px var(--right)", self.css)
+        self.assertIn("grid-template-columns:minmax(480px,1fr) 1px min(var(--right),calc(100% - 481px))", self.css)
 
     def test_the_remaining_gap_is_an_accessible_splitter(self):
         self.assertIn('id="right-split"', self.html)
