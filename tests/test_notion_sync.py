@@ -14,6 +14,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
+import jobs_md  # noqa: E402
 from board import docs, notion, run_registry  # noqa: E402
 
 
@@ -60,7 +61,8 @@ class NotionSyncTest(unittest.TestCase):
             json.dumps({"token": "t", "data_source_id": "ds"}))
         for target, name, value in ((run_registry, "ROOT", home),
                                     (docs, "TRACKER", home / "job_search_tracker.csv"),
-                                    (docs, "TRACKER_LOCK", home / ".tracker.lock")):
+                                    (docs, "TRACKER_LOCK", home / ".tracker.lock"),
+                                    (jobs_md, "SEEN", home / "job_scraper" / "seen_jobs.json")):
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -129,7 +131,8 @@ class NotionSyncTest(unittest.TestCase):
                             "status": "drafted", "cv_file": "cv/main_acme.tex",
                             "source": "https://jobs.lever.co/acme/1"})
         result = notion.pull()
-        self.assertEqual(result, {"pages": 3, "derived": 2, "documents": 0, "tracker": 2})
+        # p3 has nothing Stage-derived, but its title still fills Job Type.
+        self.assertEqual(result, {"pages": 3, "derived": 3, "documents": 0, "tracker": 2})
         patches = {path: body["properties"] for method, path, body in fake.calls
                    if method == "PATCH"}
         p1 = patches["/pages/p1"]
@@ -155,6 +158,47 @@ class NotionSyncTest(unittest.TestCase):
         self.assertEqual(notion.pull()["tracker"], 1)
         self.assertEqual(notion.pull(), {"pages": 1, "derived": 0, "documents": 0, "tracker": 0})
 
+    def write_seen(self, **entries):
+        jobs_md.SEEN.write_text(json.dumps({"seen": entries}))
+
+    def test_pull_fills_empty_job_attributes_from_the_board(self):
+        url = "https://jobs.lever.co/acme/1"
+        self.write_seen(**{url: {
+            "title": "ML Engineer", "location": "Zurich",
+            "attrs": {"job_type": ["intern", "working_student"], "work_mode": "hybrid",
+                      "remote_scope": "", "country": "CH", "language": "unknown",
+                      "visa": "none", "timing": "6 months"},
+            "attrs_manual": {"language": "en"}}})
+        row = page("p1", Position_Title="ML Engineer", Company="Acme", Stage="Interested",
+                   Job_Posting_URL=url, Visa="Sponsored")       # typed in Notion: kept
+        manual = page("p2", Position_Title="Data Science Intern", Company="Beta",
+                      Stage="Interested")                        # not on the board
+        fake = self.fake([row, manual])
+        with mock.patch.object(notion, "_schema_ready", set()):
+            self.assertEqual(notion.pull()["derived"], 2)
+        patches = {path: body["properties"] for method, path, body in fake.calls
+                   if method == "PATCH" and path.startswith("/pages/")}
+        self.assertEqual(patches["/pages/p1"], {
+            "Job Type": {"multi_select": [{"name": "Internship"}, {"name": "Working Student"}]},
+            "Work Mode": {"select": {"name": "Hybrid"}},
+            "German": {"select": {"name": "Not needed"}},
+            "Timing": {"rich_text": [{"text": {"content": "6 months"}}]}})
+        self.assertEqual(patches["/pages/p2"],
+                         {"Job Type": {"multi_select": [{"name": "Internship"}]}})
+        schema = [b for m, p, b in fake.calls if m == "PATCH" and "data_sources" in p]
+        self.assertIn("Job Type", schema[0]["properties"])
+
+    def test_push_writes_job_type_on_create(self):
+        fake = self.fake([])
+        record = {"job_url": "https://jobs.lever.co/acme/2", "company": "Acme",
+                  "role": "Software Engineer", "targets": {}}
+        entry = {"attrs": {"job_type": ["full_time"], "work_mode": "unknown"}}
+        with mock.patch.object(notion, "_schema_ready", set()):
+            self.assertEqual(notion.push(record, entry), "created")
+        props = [b for m, p, b in fake.calls if m == "POST" and p == "/pages"][0]["properties"]
+        self.assertEqual(props["Job Type"], {"multi_select": [{"name": "Full-time"}]})
+        self.assertNotIn("Work Mode", props)
+
     def test_pull_attaches_pdfs_once_and_replaces_rebuilt_ones(self):
         build = run_registry.ROOT / "cv" / "build"
         build.mkdir(parents=True)
@@ -172,8 +216,8 @@ class NotionSyncTest(unittest.TestCase):
                                   lambda cfg, path, name: sent.append(name) or "up1"):
             self.assertEqual(notion.pull()["documents"], 1)
             schema = [b for m, p, b in fake.calls if m == "PATCH" and "data_sources" in p]
-            self.assertEqual(schema, [{"properties": {"CV": {"files": {}},
-                                                      "Cover Letter": {"files": {}}}}])
+            self.assertIn({"properties": {"CV": {"files": {}}, "Cover Letter": {"files": {}}}},
+                          schema)
             attach = [b for m, p, b in fake.calls if p == "/pages/p1"][-1]["properties"]
             self.assertEqual(list(attach), ["CV"])
             self.assertEqual(attach["CV"]["files"][0]["file_upload"], {"id": "up1"})
@@ -329,6 +373,21 @@ class NotionSyncTest(unittest.TestCase):
             notion.save_owner_fields(record, {"apply_email": ""})
         self.assertEqual(fake.calls[-1][2]["properties"], {"Application Email": {"email": None}})
 
+    def test_multiple_recipients_sync_without_invalid_notion_email(self):
+        record = {"job_url": "https://example.test/1", "company": "Acme", "role": "Engineer"}
+        row = page("p1", Position_Title="Engineer", Company="Acme", Stage="Applied",
+                   Job_Posting_URL="https://example.test/1")
+        fake = self.fake([row])
+        with mock.patch.object(notion, "_schema_ready", set()):
+            notion.save_owner_fields(record, {"apply_email": "one@example.com, two@example.com"})
+        props = fake.calls[-1][2]["properties"]
+        row["properties"]["Application Recipients"] = {"type": "rich_text", "rich_text": [{"plain_text": "one@example.com, two@example.com"}]}
+        self.assertEqual(notion._owner_read(row, "apply_email", "Application Email"),
+                         "one@example.com, two@example.com")
+        self.assertEqual(props["Application Email"], {"email": "one@example.com"})
+        self.assertEqual(props["Application Recipients"],
+                         {"rich_text": [{"text": {"content": "one@example.com, two@example.com"}}]})
+
     def test_owner_values_accepts_web_links_only(self):
         from board import server
         self.assertEqual(server.run_route("/api/runs/r-20260928-101010-acme-abc123/owner"),
@@ -340,6 +399,10 @@ class NotionSyncTest(unittest.TestCase):
         self.assertEqual(server.owner_values({"portal_url": ""}), ({"portal_url": ""}, None))
         self.assertEqual(server.owner_values({"apply_email": " jobs@acme.ch "}),
                          ({"apply_email": "jobs@acme.ch"}, None))
+        self.assertEqual(server.owner_values({"apply_email": "one@example.com, two@example.com"}),
+                         ({"apply_email": "one@example.com, two@example.com"}, None))
+        for bad_email in ("one@example.com,", "one@example.com, invalid", "one@example.com?bcc=two@example.com"):
+            self.assertIsNotNone(server.owner_values({"apply_email": bad_email})[1])
         for bad in ({"portal_url": "javascript:alert(1)"}, {"my_notes": 3}, {},
                     {"my_notes": "x" * 2001}, {"apply_email": "not an address"}):
             values, error = server.owner_values(bad)

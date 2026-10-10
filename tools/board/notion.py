@@ -32,6 +32,13 @@ writer, so the two sides never conflict:
                             value from the tracker (a board save made while
                             sync was off). Both properties are created on
                             first use.
+    job attributes (repo -> Notion) on push *and* pull: the board's detected
+                            or hand-set job type, work mode, German, visa
+                            and timing (tools/job_attrs.py) fill the "Job
+                            Type", "Work Mode", "German", "Visa" and
+                            "Timing" properties - only when empty, so a
+                            value edited in Notion stays. A row that is not
+                            on the board gets its Job Type from the title.
 
 Silently optional: with no token or data source configured every entry point is
 a no-op. Configuration lives in the gitignored `job_scraper/notion_sync.json`
@@ -73,6 +80,30 @@ STAGE_STATUS = {
 }
 RESPONSE_STAGES = {"OA", "Phone Screen", "Onsite", "Offer", "Rejected"}
 FURTHEST_RANK = {"OA": 1, "Phone Screen": 2, "Onsite": 3, "Offer": 4}
+
+# Board job attributes (tools/job_attrs.py) -> Notion: property, schema, value
+# labels. A detected "unknown" is never written; Job Type is the one list.
+ATTR_PROPS = {
+    "job_type": ("Job Type", {"multi_select": {"options": [
+        {"name": "Full-time", "color": "blue"}, {"name": "Internship", "color": "orange"},
+        {"name": "Working Student", "color": "purple"}]}},
+        {"full_time": "Full-time", "intern": "Internship", "working_student": "Working Student"}),
+    "work_mode": ("Work Mode", {"select": {"options": [
+        {"name": "Onsite", "color": "gray"}, {"name": "Hybrid", "color": "yellow"},
+        {"name": "Remote", "color": "green"}]}},
+        {"onsite": "Onsite", "hybrid": "Hybrid", "remote": "Remote"}),
+    "language": ("German", {"select": {"options": [
+        {"name": "Not needed", "color": "green"}, {"name": "Plus", "color": "yellow"},
+        {"name": "German posting", "color": "orange"}, {"name": "Required", "color": "red"}]}},
+        {"en": "Not needed", "de_plus": "Plus", "de_posting": "German posting",
+         "de_required": "Required"}),
+    "visa": ("Visa", {"select": {"options": [
+        {"name": "Sponsored", "color": "green"}, {"name": "Permit required", "color": "orange"},
+        {"name": "No sponsorship", "color": "red"}, {"name": "Citizenship", "color": "red"}]}},
+        {"offered": "Sponsored", "permit_required": "Permit required",
+         "none": "No sponsorship", "citizenship": "Citizenship"}),
+    "timing": ("Timing", {"rich_text": {}}, None),
+}
 
 COUNTRY_WORDS = (
     ("🇨🇭 CH", ("switzerland", "schweiz", "suisse", "zurich", "zürich", "zug", "baden",
@@ -190,6 +221,8 @@ def read(page, name):
         return prop.get(kind)
     if kind == "files":
         return [f.get("name") for f in prop.get("files") or []]
+    if kind == "multi_select":
+        return [o.get("name") for o in prop.get("multi_select") or []]
     return None
 
 
@@ -297,6 +330,43 @@ def _owner_value(column, value):
     return _text(value) if value else {"rich_text": []}
 
 
+# -- job attributes ------------------------------------------------------------
+
+def _ensure_attr_properties(cfg):
+    _ensure_properties(cfg, "attrs", {name: schema for name, schema, _ in ATTR_PROPS.values()})
+
+
+def _board_attrs(entry, title):
+    """The board's effective attributes for a row; title-only when it is not on the board."""
+    import job_attrs   # late: pulls in the scoring stack, which the sync rarely needs
+
+    if entry:
+        attrs = job_attrs.effective(entry)
+        if attrs is None:                  # a row never scored with attributes
+            attrs = job_attrs.effective(job_attrs.apply(dict(entry)))
+        return attrs or {}
+    # Added by hand in Notion: the title alone still separates intern from full-time.
+    return {"job_type": job_attrs.job_type(title, "")} if title else {}
+
+
+def _attr_props(page, attrs):
+    """Notion values for the attributes the page leaves empty; unknowns are skipped."""
+    props = {}
+    for key, (name, _schema, labels) in ATTR_PROPS.items():
+        value = attrs.get(key)
+        if not value or (page is not None and read(page, name)):
+            continue
+        if key == "job_type":
+            names = [labels[v] for v in value if v in labels]
+            if names:
+                props[name] = {"multi_select": [{"name": n} for n in names]}
+        elif labels is None:
+            props[name] = _text(value)
+        elif value in labels:
+            props[name] = _select(labels[value])
+    return props
+
+
 def _pdf_for(tex):
     """The compiled PDF of a tracker .tex path, or None when it was never built."""
     if not tex:
@@ -383,6 +453,10 @@ def push(record, entry=None, brief=None):
     }
     page = find_page(query_all(cfg), url, company, role)
     documents = _doc_props(cfg, page, record.get("targets"))
+    attrs = _attr_props(page, _board_attrs(entry, role))
+    if attrs:
+        _ensure_attr_properties(cfg)
+    documents.update(attrs)
     if page is None:
         props = {name: codec(value) for name, (value, codec) in wanted.items() if value}
         props.update(documents)
@@ -610,11 +684,21 @@ def pull():
     cfg = load_config()
     if cfg is None:
         return None
+    import jobs_md                 # late, like the other board-state readers
+    from . import state as board_state
+
     today = date.today().isoformat()
     pages = query_all(cfg)
+    seen = board_state.load()
     derived = 0
     for page in pages:
         props = _derive(page, today)
+        key = jobs_md.entry_key(seen, read(page, "Job Posting URL"))
+        attrs = _attr_props(page, _board_attrs(seen.get(key) if key else None,
+                                               read(page, "Position Title") or ""))
+        if attrs:
+            _ensure_attr_properties(cfg)
+            props.update(attrs)
         if props:
             _call(cfg, "PATCH", "/pages/%s" % page["id"], {"properties": props})
             for name, value in props.items():   # keep the cached copy current
