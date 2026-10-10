@@ -17,7 +17,7 @@ const assert=require('assert/strict'),fs=require('fs'),vm=require('vm');
 const src=fs.readFileSync(process.argv[1],'utf8');
 const block=(start,end)=>src.slice(src.indexOf(start),src.indexOf(end,src.indexOf(start)));
 const run={id:'example',company:'Example',role:'Engineer'};
-const ctx={RUNS:[run],ACTIVE_RUN:run.id,APPS_Q:'',APPS_SHOW_APPLIED:true,
+const ctx={RUNS:[run],ACTIVE_RUN:run.id,APPS_Q:'',APPS_SHOW_APPLIED:true,APPS_SHOW_ARCHIVED:false,
  layout:{appsCollapsed:false},esc:String,
  appsOrdered:()=>[['applied','Applied',[run]]],saved:0,opened:0,
  appRowMeta:()=>'',el:()=>null};
@@ -40,6 +40,15 @@ assert.equal(ctx.APPS_SHOW_APPLIED,false);
 assert(ctx.appsGroupsHtml().includes('aria-expanded="false"'));
 assert(!ctx.appsGroupsHtml().includes('data-app="example"'),'selected application must not force group open');
 ctx.renderAppsList();assert(!ctx.appsGroupsHtml().includes('data-app="example"'));
+ctx.appsOrdered=()=>[['archived','Archived',[run]]];
+assert(ctx.appsGroupsHtml().includes('data-apps-archived'));
+assert(!ctx.appsGroupsHtml().includes('data-app="example"'));
+const archiveToggle=block('  if(event.target.closest("[data-apps-archived]"))','  const archiveAppButton=');
+vm.runInContext('(function(){'+archiveToggle+'})()',ctx);
+assert.equal(ctx.APPS_SHOW_ARCHIVED,true);
+assert(ctx.appsGroupsHtml().includes('data-app="example"'));
+ctx.appsOrdered=()=>[['applied','Applied',[run]]];
+
 vm.runInContext('(function(){'+toggle+'})()',ctx);
 assert(ctx.appsGroupsHtml().includes('aria-expanded="true"'));
 assert(ctx.appsGroupsHtml().includes('data-app="example"'));

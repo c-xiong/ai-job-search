@@ -46,7 +46,7 @@ import job_attrs  # noqa: E402
 import linkedin_inbox  # noqa: E402
 import search_prefs  # noqa: E402
 
-from . import (activity, add_job, companies, docs, fit_eval, learn, notion, review,  # noqa: E402
+from . import (activity, archive, add_job, companies, docs, fit_eval, learn, notion, review,  # noqa: E402
                run_registry, runs, state, trash)
 
 TOKEN_FILE = jobs_md.ROOT / "job_scraper" / ".board-token"
@@ -255,7 +255,7 @@ def fetch_status():
 # id never reaches the supervisor.
 RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore|retry|continue"
-                      r"|marks|reveal|applied|owner|delete))?$")
+                      r"|marks|reveal|applied|owner|delete|archive|unarchive))?$")
 PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"/(?P<kind>cv|cover)$")
 COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
@@ -264,7 +264,7 @@ COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
 
 # Run actions a POST may reach; anything else is refused before the body is read.
 RUN_POST_ACTIONS = ("approve", "cancel", "kill", "compile", "restore", "retry", "continue",
-                    "marks", "reveal", "applied", "owner", "delete")
+                    "marks", "reveal", "applied", "owner", "delete", "archive", "unarchive")
 
 
 def run_route(path):
@@ -320,6 +320,7 @@ def mark_board_applied(job_url):
         if jobs_md.user_status(seen[key]) == "applied":
             return "unchanged"
         seen[key]["user_status"] = "applied"
+        seen[key].pop("application_archive", None)
         state.save(seen, "%s -> applied" % (seen[key].get("company") or "job"))
     return "updated"
 
@@ -578,6 +579,14 @@ class Handler(BaseHTTPRequestHandler):
         if run_id and trash.is_deleted(runs.get(run_id)):
             # A deleted run answers to nothing but undo.
             return self._send(404, json.dumps({"error": "this run was deleted"}))
+        if run_id and action in ("archive", "unarchive"):
+            try:
+                body = archive.set_archived(run_id, action == "archive", payload.get("reason", ""))
+            except archive.ArchiveError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            return self._send(200, json.dumps(body))
+        if run_id and (runs.get(run_id) or {}).get("archived_at") and action not in ("delete", "reveal"):
+            return self._send(409, json.dumps({"error": "Restore this archived application before changing it"}))
         if run_id and action == "delete":
             try:
                 deleted = trash.delete(run_id, payload.get("scope") or "application",
@@ -782,6 +791,7 @@ class Handler(BaseHTTPRequestHandler):
                 if status not in state.LOCK_STATUSES:
                     return self._send(400, json.dumps({"error": "bad status"}))
                 seen[url]["user_status"] = status
+                seen[url].pop("application_archive", None)
                 why.append("%s -> %s" % (seen[url].get("company") or "job", status))
             if "note" in payload:
                 seen[url]["user_note"] = str(payload["note"])[:500]

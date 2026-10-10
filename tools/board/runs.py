@@ -282,7 +282,7 @@ class Supervisor:
         parent = None
         if kind != "apply":
             parent = get(payload.get("parent"))
-            if parent is None or parent.get("phase") != "done" or parent.get("deleted_at"):
+            if parent is None or parent.get("phase") != "done" or parent.get("deleted_at") or parent.get("archived_at"):
                 return 409, {"error": "revise/redraft needs a completed parent run"}
             if parent.get("job_url") != job_url:
                 return 409, {"error": "parent belongs to a different posting"}
@@ -740,7 +740,7 @@ class Supervisor:
         # A deleted run keeps its record as a tombstone (its cost still counts);
         # it is simply no longer shown.
         shown = sorted((r for r in data["runs"] if not r.get("deleted_at")),
-                       key=lambda r: r.get("started_at") or "", reverse=True)[:50]
+                       key=lambda r: r.get("started_at") or "", reverse=True)
         runs = []
         tracker = docs.tracker_rows()
         for record in shown:

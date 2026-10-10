@@ -714,18 +714,19 @@ function latestApplications(){
 // the owner's: check the PDFs (review), send it (ready), record it (applied).
 function appState(r){
   if(!r)return null;
+  if(r.archived_at)return "archived";
   if(RUNNING.includes(r.phase)||QUEUE.includes(r.id))return "generating";
   if(r.phase!=="done")return "failed";
   if(r.tracker_status&&r.tracker_status!=="drafted")return "applied";
   const review=r.review;return review&&review.total&&review.done>=review.total?"ready":"review";
 }
-const APP_GROUPS=[["generating","Generating"],["failed","Failed"],["review","To review"],["ready","Ready to send"],["applied","Applied"]];
+const APP_GROUPS=[["generating","Generating"],["failed","Failed"],["review","To review"],["ready","Ready to send"],["applied","Applied"],["archived","Archived"]];
 function appsByJob(){const map=new Map();latestApplications().forEach(r=>{if(r.job_url&&!map.has(r.job_url))map.set(r.job_url,r)});return map}
 const applicationFor=(j,map=appsByJob())=>j?jobUrls(j).map(url=>map.get(url)).find(Boolean)||null:null;
 // The Draft cell: empty until a job has documents; applied clears it again,
 // because the Status column already says so.
 function draftCell(r){
-  const state=appState(r);if(!r||state==="applied")return "";
+  const state=appState(r);if(!r||state==="applied"||state==="archived")return "";
   const label={generating:`◐ ${PHASE_STEP[r.phase]||1}/${STAGE_COUNT}`,failed:"✕ failed",review:"● review",ready:"✓ ready"}[state];
   return `<button class="draftlink ${state}" data-app="${esc(r.id)}" title="Open the application">${label}</button>`;
 }
@@ -735,7 +736,7 @@ function applicationCard(j){
   const r=applicationFor(j);
   if(!r)return `${generatePicker(j.url)}<div class="hint">posting → write and check → build and verify · no scoring, no approval pause</div>`;
   const state=appState(r),when=(r.tracker_date||"").slice(5).replace("-","/");
-  const text={generating:`Generating · stage ${PHASE_STEP[r.phase]||1} of ${STAGE_COUNT}`,failed:"Generation stopped — continue or regenerate it",review:"Documents are ready to review",ready:"Checked — ready to send",applied:"Applied"+(when?" "+when:"")}[state];
+  const text={generating:`Generating · stage ${PHASE_STEP[r.phase]||1} of ${STAGE_COUNT}`,failed:"Generation stopped — continue or regenerate it",review:"Documents are ready to review",ready:"Checked — ready to send",applied:"Applied"+(when?" "+when:""),archived:"Archived — not applying"}[state];
   return `<div class="appcard ${state}"><div class="appcard-text"><span class="label">Application</span><span>${esc(text)}</span></div><button class="primary" data-app="${esc(r.id)}">Open application →</button></div>`;
 }
 let PREV_PHASE=null;
@@ -840,7 +841,7 @@ function progressPanel(run){
 // one, so while it runs the application shows its progress and log, and when it
 // finishes the view moves to Review on its own.
 const APP_VIEWS=["tailor","preview","send","revise"];
-let APPS_Q="",APPS_SHOW_APPLIED=false;
+let APPS_Q="",APPS_SHOW_APPLIED=false,APPS_SHOW_ARCHIVED=false;
 // Every attempt of an application: the same application id, plus anything that
 // continues or regenerates an attempt already in the set.
 function lineageOf(run){
@@ -857,6 +858,7 @@ function lineageOf(run){
 }
 function appRowMeta(r,state){
   if(state==="generating")return r.phase==="queued"?"queued":"stage "+(PHASE_STEP[r.phase]||1)+"/"+STAGE_COUNT;
+  if(state==="archived")return r.archive_reason||"Not applying";
   if(state==="failed")return (r.phase||"").replaceAll("_"," ")+(r.started_at?" · "+r.started_at.slice(5,10):"");
   if(state==="review")return r.review?.total?r.review.done+"/"+r.review.total+" checked":"not checked";
   if(state==="applied")return (r.tracker_status||"applied").replaceAll("_"," ")+(r.tracker_date?" · "+r.tracker_date.slice(5):"");
@@ -872,8 +874,8 @@ function appsGroupsHtml(){
   const groups=appsOrdered().filter(([, ,rows])=>rows.length);
   if(!groups.length)return `<div class="panel-empty">${APPS_Q?"No application matches.":"No applications yet — press Generate on a job."}</div>`;
   return groups.map(([key,label,rows])=>{
-    const folded=key==="applied"&&!APPS_SHOW_APPLIED;
-    const head=key==="applied"?`<button class="app-group-head linkish" data-apps-applied aria-expanded="${!folded}">${label} <span class="n">${rows.length}</span> ${folded?"▸":"▾"}</button>`:`<div class="app-group-head">${label} <span class="n">${rows.length}</span></div>`;
+    const folded=(key==="applied"&&!APPS_SHOW_APPLIED)||(key==="archived"&&!APPS_SHOW_ARCHIVED);
+    const head=["applied","archived"].includes(key)?`<button class="app-group-head linkish" ${key==="applied"?"data-apps-applied":"data-apps-archived"} aria-expanded="${!folded}">${label} <span class="n">${rows.length}</span> ${folded?"▸":"▾"}</button>`:`<div class="app-group-head">${label} <span class="n">${rows.length}</span></div>`;
     return `<div class="app-group ${key}">${head}${folded?"":rows.map(r=>`<button class="app-row ${key}${(r.application_id||r.id)===currentApp?" on":""}" data-app="${esc(r.id)}"><span class="app-row-top"><strong>${esc(r.company)}</strong><span class="app-row-meta">${esc(appRowMeta(r,key))}</span></span><span class="app-row-role">${esc(r.role)}</span></button>`).join("")}</div>`;
   }).join("");
 }
@@ -900,20 +902,21 @@ function appHeader(run,step){
   const state=appState(run),done=run.phase==="done",review=run.review||{};
   const reviewState=!done?"todo":review.total&&review.done>=review.total?"done":step==="review"?"live":"todo";
   const sendState=state==="applied"?"done":step==="send"?"live":"todo";
-  const stepBtn=(key,n,label,st)=>`<button class="app-step ${st}${step===key?" on":""}" data-app-step="${key}" ${done?"":"disabled"}><span class="stepdot">${st==="done"?"✓":n}</span>${label}</button>`;
+  const stepBtn=(key,n,label,st)=>`<button class="app-step ${st}${step===key?" on":""}" data-app-step="${key}" ${done&&!(run.archived_at&&key==="send")?"":"disabled"}><span class="stepdot">${st==="done"?"✓":n}</span>${label}</button>`;
   const status=state==="generating"?`<span class="app-status generating">◐ Generating · stage ${PHASE_STEP[run.phase]||1} of ${STAGE_COUNT}</span>`
     :state==="failed"?`<span class="app-status failed">✕ ${esc((run.phase||"").replaceAll("_"," "))}</span>`:"";
   const alone=["failed","cancelled"].includes(run.phase)&&lineageOf(run).length>1;
   const menu=`<details class="app-menu"><summary class="secondary" title="More">⋯</summary><div class="app-menu-body">
-    <button data-app-step="log">Run log</button>${done?`<button data-app-step="revise">Versions</button>`:""}
+    <button data-app-step="log">Run log</button>${done&&!run.archived_at?`<button data-app-step="revise">Versions</button>`:""}
     ${alone?`<button class="danger" data-delete-attempt="${esc(run.id)}">Delete Run ${lineageOf(run).findIndex(r=>r.id===run.id)+1}…</button>`:""}
+    ${run.archived_at?`<button data-unarchive-app="${esc(run.id)}">Restore application</button>`:state!=="applied"?`<button data-archive-app="${esc(run.id)}" ${["generating"].includes(state)||run.phase==="orphaned"?"disabled":""}>Archive · not applying…</button>`:""}
     <button class="danger" data-delete-app="${esc(run.id)}">Delete application…</button></div></details>`;
   const job=jobOfRun(run);
   const id=job?`<button class="app-id app-id-link" data-board-job="${esc(job.url)}" title="Show this job on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)} <span class="app-id-arrow">↗ Board</span></p></button>`
     :`<div class="app-id" title="This posting is no longer on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)}</p></div>`;
   return `<header class="app-head">${id}
     <nav class="app-steps" aria-label="Steps">${stepBtn("review",1,"Review",reviewState)}<span class="app-step-sep">→</span>${stepBtn("send",2,"Send",sendState)}</nav>
-    ${status}<span class="spacer"></span>${attemptTabs(run)}${menu}</header>`;
+    ${status}<span class="spacer"></span>${attemptTabs(run)}${menu}</header>${run.archived_at?`<div class="archive-banner"><strong>Archived · not applying</strong>${run.archive_reason?`<span>${esc(run.archive_reason)}</span>`:""}<span>Documents and history are kept.</span><button class="secondary" data-unarchive-app="${esc(run.id)}">Restore application</button></div>`:""}`;
 }
 // The frame every application view renders into. Only the detail is repainted
 // by a view; the list refreshes on its own (renderAppsList) so a poll never
@@ -923,13 +926,14 @@ function mountApp(run,step,body){
   // list - typing a filter, scrolled down, the ⋯ menu open.
   const query=document.activeElement?.id==="apps-q"?document.activeElement.selectionStart:null;
   const scrolled=el("apps-groups")?.scrollTop||0,menuOpen=!!document.querySelector(".app-menu[open]");
-  el("tailor-view").innerHTML=`<div class="apps-shell${appsListCollapsed(step)?" list-collapsed":""}"><aside class="apps-list"><div class="splitter vertical edge" data-split="appsW" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize applications list" title="Drag to resize · double-click to reset"></div><button class="spine" data-apps-collapse title="Show applications ( [ )"><span>Applications</span><b>›</b></button><div class="panelhead"><span class="label">Applications</span><span class="count">${latestApplications().length}</span><span class="spacer"></span><button class="linkish" data-apps-collapse title="Hide the list ( [ )">‹</button></div><label class="search apps-search"><span>⌕</span><input type="search" id="apps-q" placeholder="filter…" value="${esc(APPS_Q)}"></label><div class="apps-groups" id="apps-groups">${appsGroupsHtml()}</div></aside><div class="apps-detail">${appHeader(run,step)}<div class="apps-body">${body}</div></div></div>`;
+  el("tailor-view").innerHTML=`<div class="apps-shell${appsListCollapsed(step)?" list-collapsed":""}"><aside class="apps-list"><div class="splitter vertical edge" data-split="appsW" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize applications list" title="Drag to resize · double-click to reset"></div><button class="spine" data-apps-collapse title="Show applications ( [ )"><span>Applications</span><b>›</b></button><div class="panelhead"><span class="label">Applications</span><span class="count">${latestApplications().filter(r=>!r.archived_at).length}</span><span class="spacer"></span><button class="linkish" data-apps-collapse title="Hide the list ( [ )">‹</button></div><label class="search apps-search"><span>⌕</span><input type="search" id="apps-q" placeholder="filter…" value="${esc(APPS_Q)}"></label><div class="apps-groups" id="apps-groups">${appsGroupsHtml()}</div></aside><div class="apps-detail">${appHeader(run,step)}<div class="apps-body">${body}</div></div></div>`;
   el("apps-groups").scrollTop=scrolled;if(menuOpen)document.querySelector(".app-menu")?.setAttribute("open","");
   if(query!==null){const input=el("apps-q");input.focus();try{input.setSelectionRange(query,query)}catch(_){}}
 }
 // Opening an application lands on what it needs from you now.
 function openApp(run,step){
   if(!run)return;
+  if(run.archived_at&&["send","revise"].includes(step))step="review";
   if(!step)step=run.phase!=="done"?"log":["ready","applied"].includes(appState(run))?"send":"review";
   if(run.phase!=="done"&&step!=="log")step="log";
   if(step==="review")renderPreview(run);else if(step==="send")renderSend(run);else if(step==="revise")renderRevise(run);else renderTailor(run);
@@ -937,12 +941,12 @@ function openApp(run,step){
 // The Applications tab reopens the application you last looked at, else the
 // first one that wants you.
 function openRuns(){
-  const order=appsOrdered().flatMap(([key, ,rows])=>key==="applied"?[]:rows);
+  const order=appsOrdered().flatMap(([key, ,rows])=>["applied","archived"].includes(key)?[]:rows);
   const run=RUNS.find(r=>r.id===ACTIVE_RUN)||order.find(r=>["review","ready"].includes(appState(r)))||order[0]||latestApplications()[0];
   if(run)openApp(run);else toast("No applications yet — press Generate on a job.",{ms:3000});
 }
 function stepApp(delta){
-  const order=appsOrdered().flatMap(([key, ,rows])=>key==="applied"&&!APPS_SHOW_APPLIED?[]:rows);if(!order.length)return;
+  const order=appsOrdered().flatMap(([key, ,rows])=>(key==="applied"&&!APPS_SHOW_APPLIED)||(key==="archived"&&!APPS_SHOW_ARCHIVED)?[]:rows);if(!order.length)return;
   const current=RUNS.find(r=>r.id===ACTIVE_RUN),app=current&&(current.application_id||current.id);
   const index=order.findIndex(r=>(r.application_id||r.id)===app);
   openApp(order[Math.max(0,Math.min(order.length-1,index<0?0:index+delta))]);
@@ -974,7 +978,7 @@ function renderTailor(run){
   // reach a new attempt; hidden once a newer attempt already follows this one.
   if(run.phase==="done"){
     actions.push(`<button class="primary" data-app-step="review">Review the PDFs</button>`);
-    if(run.kind==="apply"&&!continuedBy)actions.push(`<button class="secondary retryrun" data-run-id="${esc(run.id)}" data-done="1" title="New attempt from the saved posting, using the current CV master and cover base">Regenerate</button>`);
+    if(run.kind==="apply"&&!continuedBy&&!run.archived_at)actions.push(`<button class="secondary retryrun" data-run-id="${esc(run.id)}" data-done="1" title="New attempt from the saved posting, using the current CV master and cover base">Regenerate</button>`);
   }
   mountApp(run,"log",`<section class="runoutput"><div class="panelhead"><span class="label">Run output · ${esc(ENGINE_NAMES[run.provider||"claude"]||"Unknown engine")}</span><span class="dim">${run.provider==="codex"?"Account usage · dollar cost not reported":""}</span><span class="dim">stage ${PHASE_STEP[run.phase]||1} of ${STAGE_COUNT}</span><span class="spacer"></span><label class="source"><input type="checkbox" data-run-follow ${RUN_FOLLOW?"checked":""}> follow</label><span class="phase ${esc(run.phase)}">${esc(run.phase.replaceAll("_"," "))}</span></div>
       ${origin}${fitCard}${progressPanel(run)}${notes?`<div class="whybox"><span class="label">Tailoring choices</span>${notes}</div>`:""}
@@ -1054,6 +1058,23 @@ async function saveSendForm(form){
 }
 // Deleting is soft (trash + tombstone) and says exactly what goes and what
 // stays; a sent application also needs its company name typed.
+async function archiveApp(runId,restore=false){
+  const run=RUNS.find(r=>r.id===runId);if(!run)return;
+  let reason="";
+  if(!restore){
+    reason=await openTextModal({eyebrow:"Archive application",title:`${run.company} · ${run.role}`,label:"Reason (optional)",hint:"Keep all documents and history. Move this application to Archived and mark the job as No on the Board.",submit:"Archive · mark job No"});
+    if(reason===null)return;
+  }
+  try{
+    const result=await postRun("/api/runs/"+encodeURIComponent(runId)+(restore?"/unarchive":"/archive"),{reason});
+    if(!result.ok)return;
+    await reloadJobs();
+    APPS_SHOW_ARCHIVED=!restore;
+    const fresh=RUNS.find(r=>r.id===runId);if(fresh)openApp(fresh);render();
+    toast(restore?"Application restored"+(result.board==="restored"?" · previous Board status restored":" · Board status kept"):
+      "Archived"+(result.board==="missing"?" · job is no longer on the Board":" · Board marked No"),{ms:4000});
+  }catch(error){toast("Could not finish the archive update. Refresh to check its status.",{warn:true,ms:6000})}
+}
 async function deleteApp(runId,scope){
   const run=RUNS.find(r=>r.id===runId);if(!run)return;
   const lineage=lineageOf(run),latest=lineage[lineage.length-1],name=`${run.company} · ${run.role}`;
@@ -1910,6 +1931,9 @@ document.addEventListener("click",event=>{
   const nav=event.target.closest("[data-nav]");if(nav)return void(nav.dataset.nav==="companies"?renderCompanies():nav.dataset.nav==="inbox"?renderInbox():nav.dataset.nav==="runs"?openRuns():restoreWorkspace());
   const collapse=event.target.closest("[data-collapse]");if(collapse)return void toggleCollapse(collapse.dataset.collapse);
   if(event.target.closest("[data-apps-collapse]"))return void toggleAppsList();
+  if(event.target.closest("[data-apps-archived]")){APPS_SHOW_ARCHIVED=!APPS_SHOW_ARCHIVED;renderAppsList();return}
+  const archiveAppButton=event.target.closest("[data-archive-app]");if(archiveAppButton)return void archiveApp(archiveAppButton.dataset.archiveApp);
+  const unarchiveAppButton=event.target.closest("[data-unarchive-app]");if(unarchiveAppButton)return void archiveApp(unarchiveAppButton.dataset.unarchiveApp,true);
   if(event.target.closest("[data-apps-applied]")){APPS_SHOW_APPLIED=!APPS_SHOW_APPLIED;renderAppsList();return}
   const delApp=event.target.closest("[data-delete-app]");if(delApp){delApp.closest("details")?.removeAttribute("open");return void deleteApp(delApp.dataset.deleteApp,"application")}
   const delAttempt=event.target.closest("[data-delete-attempt]");if(delAttempt){delAttempt.closest("details")?.removeAttribute("open");return void deleteApp(delAttempt.dataset.deleteAttempt,"attempt")}
