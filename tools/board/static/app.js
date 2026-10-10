@@ -249,7 +249,7 @@ const COUNTRIES=[["ch","Country: CH"],["de","Country: DE"]];
 // Chosen before the run starts: there is no evaluation to wait for any more.
 // The CV is one of the two master variants, chosen here; the default follows
 // the title the same way the supervisor's `auto` would.
-const AI_TITLE=/\b(machine learning|ml engineer|ml scientist|data scientist|ai|artificial intelligence|llm|nlp|generative ai)\b/i;
+const AI_TITLE=/\b(machine[ -]learning|deep[ -]learning|ml|mlops|data[ -]scien(?:tist|ce)|ai|artificial intelligence|llms?|nlp|computer vision|genai|generative[ -]ai)\b/i;
 const variantOptions=url=>{const title=(JOBS.find(j=>j.url===url)||{}).title||"",pick=AI_TITLE.test(title)?"ai":"sde";
   return [["sde","CV: SDE"],["ai","CV: AI"]].map(([value,label])=>`<option value="${value}" ${pick===value?"selected":""}>${label}</option>`).join("")};
 let DEFAULT_PROVIDER="codex";

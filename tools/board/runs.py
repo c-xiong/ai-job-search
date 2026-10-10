@@ -2097,8 +2097,8 @@ class Supervisor:
         title = (role or "").lower()
         # ML/data-science titles share the `ai` base: it already leads with the
         # research, modelling and evaluation evidence those postings ask for.
-        if re.search(r"\b(machine learning|ml engineer|ml scientist|data scientist"
-                     r"|ai|artificial intelligence|llm|nlp|generative ai)\b", title):
+        if re.search(r"\b(machine[ -]learning|deep[ -]learning|ml|mlops|data[ -]scien(?:tist|ce)"
+                     r"|ai|artificial intelligence|llms?|nlp|computer vision|genai|generative[ -]ai)\b", title):
             return "ai"
         return "sde"
 
