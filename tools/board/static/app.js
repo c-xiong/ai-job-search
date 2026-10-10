@@ -1708,7 +1708,6 @@ try{
     else take();
   };
 }catch(_){}
-function selectJobByUrl(url){const i=shown().findIndex(j=>j.url===url);if(i<0)return false;sel=i;render();return true}
 async function submitAddJob(allowNoDescription=false){
   const form=el("add-form");if(form.classList.contains("busy"))return;
   const body={allow_no_description:allowNoDescription};Object.entries(ADD_FIELDS).forEach(([key,id])=>body[key]=el(id).value.trim());
@@ -1723,7 +1722,11 @@ async function submitAddJob(allowNoDescription=false){
     const notes=[data.outcome==="added"?"Added: "+who:"Already on the board: "+who+" · "+data.status];
     if(data.gated)notes.push("excluded by the language gate");
     if(!data.has_description)notes.push("no description");
-    if(!selectJobByUrl(data.url))notes.push("hidden by the current filters");
+    // A job you just added by hand is the one you want to see, so it outranks
+    // whichever chip or facet would hide it (a low band, a hidden source...).
+    const hidden=!shown().some(j=>j.url===data.url);
+    if(!showJobOnBoard(data.url))notes.push("not found on the board");
+    else if(hidden)notes.push("filters reset to show it");
     toast(notes.join(" · "),{ms:7000,warn:data.gated});void pollActivity();return;
   }
   if(response?.status===422){
@@ -1740,7 +1743,7 @@ async function submitAddJob(allowNoDescription=false){
 // The bookmarklet reads the page you are on - LinkedIn's detail pane, an <h1>
 // anywhere else, or your text selection - and hands it to static/add.html.
 function bookmarkletHref(){
-  const code=`(()=>{const q=s=>{for(const x of s.split("|")){const n=document.querySelector(x);if(n&&n.innerText.trim())return n.innerText.trim()}return ""};const sel=String(getSelection()).trim();const d={job_url:location.href,title:q(".job-details-jobs-unified-top-card__job-title|.jobs-unified-top-card__job-title|.top-card-layout__title|h1"),company:q(".job-details-jobs-unified-top-card__company-name|.jobs-unified-top-card__company-name|.topcard__org-name-link"),description:(sel||q(".jobs-description__content|#job-details|.jobs-box__html-content|.description__text")).slice(0,20000)};window.open(${JSON.stringify(location.origin+"/static/add.html#")}+encodeURIComponent(JSON.stringify(d)),"_blank")})()`;
+  const code=`(()=>{const q=s=>{for(const x of s.split("|")){const n=document.querySelector(x);if(n&&n.innerText.trim())return n.innerText.trim()}return ""};const sel=String(getSelection()).trim();const d={job_url:location.href,title:q(".job-details-jobs-unified-top-card__job-title|.jobs-unified-top-card__job-title|.top-card-layout__title|h1"),company:q(".job-details-jobs-unified-top-card__company-name|.jobs-unified-top-card__company-name|.topcard__org-name-link")||((document.querySelector('meta[property="og:site_name"]')||{}).content||"").trim(),location:(()=>{for(const n of document.querySelectorAll("dt,th,strong,b,label,h3,h4")){const t=n.innerText.trim().replace(/:$/,"");if(/^((job )?locations?|standorte?|arbeitsort|einsatzort|office)$/i.test(t)){const v=(n.nextElementSibling||{}).innerText||"";if(v.trim())return v.trim().slice(0,120)}}return ""})(),description:(sel||q(".jobs-description__content|#job-details|.jobs-box__html-content|.description__text")).slice(0,20000)};window.open(${JSON.stringify(location.origin+"/static/add.html#")}+encodeURIComponent(JSON.stringify(d)),"_blank")})()`;
   return "javascript:"+code;
 }
 el("add-bookmarklet").href=bookmarkletHref();

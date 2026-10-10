@@ -257,6 +257,106 @@ def _json_ld_identity(html):
     return {}
 
 
+# Where a posting names its place when it has no JSON-LD: a labelled field
+# ("Location", "Standort", ...) in a definition list or table, a JSON key the
+# page's own data carries, or a "Location: ..." line in the text.
+_PLACE_LABEL = r"(?:job\s+)?locations?|standort(?:e)?|arbeitsort|einsatzort|office|lieu|place\s+of\s+work"
+_PLACE_HTML = (
+    re.compile(r"(?is)<(dt|th)[^>]*>\s*(?:<[^>]+>\s*)*(?:%s)\s*:?\s*(?:<[^>]+>\s*)*</\1>\s*"
+               r"<(?:dd|td)[^>]*>(.*?)</(?:dd|td)>" % _PLACE_LABEL),
+    re.compile(r'(?i)"(?:addressLocality|jobLocation|job_location|location(?:Name)?)"\s*:\s*"([^"]{2,120})"'),
+)
+_PLACE_TEXT = re.compile(r"(?im)^\s*(?:%s)\s*[:|\-–]\s*(.{2,120})$" % _PLACE_LABEL)
+# Names an ATS or job board gives itself - never the employer.
+_NOT_EMPLOYERS = {"greenhouse", "lever", "workday", "ashby", "smartrecruiters", "personio",
+                  "recruitee", "teamtailor", "workable", "linkedin", "indeed", "join", "jobs",
+                  "careers", "career", "bamboohr", "jobvite", "softgarden", "successfactors",
+                  "icims", "taleo", "stepstone", "glassdoor", "welcome to the jungle", "jobs.ch",
+                  "freehire", "arbeitnow", "myworkdayjobs", "breezy", "comeet", "pinpoint"}
+# Hosts whose first path segment (or subdomain) is the employer's slug.
+_ATS_PATH = ("boards.greenhouse.io", "job-boards.greenhouse.io", "job-boards.eu.greenhouse.io",
+             "jobs.lever.co", "jobs.eu.lever.co", "jobs.ashbyhq.com", "apply.workable.com",
+             "jobs.smartrecruiters.com", "careers.smartrecruiters.com", "jobs.jobvite.com",
+             "join.com", "app.join.com", "jobs.personio.de", "www.comeet.com")
+_ATS_SUBDOMAIN = ("recruitee.com", "personio.de", "personio.com", "teamtailor.com",
+                  "bamboohr.com", "myworkdayjobs.com", "softgarden.io", "breezy.hr",
+                  "pinpointhq.com", "workable.com", "factorial.co", "rippling-ats.com")
+_HOST_NOISE = {"www", "jobs", "job", "careers", "career", "karriere", "apply", "recruiting",
+               "join", "work", "talent", "hiring", "en", "de", "boards", "app", "stellen", "eu"}
+
+
+def _clean_html(fragment):
+    text = re.sub(r"<[^>]+>", " ", fragment or "")
+    text = re.sub(r"&nbsp;|&#160;", " ", text)
+    text = re.sub(r"&amp;", "&", text)
+    return " ".join(text.split())[:120]
+
+
+def page_location(html, text=""):
+    """A posting's place from its HTML or text when there is no JSON-LD."""
+    for rx in _PLACE_HTML:
+        match = rx.search(html or "")
+        if match:
+            value = _clean_html(match.group(match.lastindex))
+            if value and len(value) <= 120:
+                return value
+    match = _PLACE_TEXT.search(text or "")
+    return " ".join(match.group(1).split()) if match else ""
+
+
+def _pretty(slug):
+    words = re.split(r"[-_+.]+|%20", slug or "")
+    words = [w for w in words if w and not w.isdigit()]
+    if not words:
+        return ""
+    return " ".join(w if (w.isupper() or any(c.isupper() for c in w[1:])) else w.capitalize()
+                    for w in words)[:80]
+
+
+def company_from_url(url):
+    """The employer a job URL names: an ATS slug, or the careers site's domain."""
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower().rstrip(".")
+    if not host or host == "linkedin.com" or host.endswith(".linkedin.com"):
+        return ""
+    segments = [seg for seg in parts.path.split("/") if seg]
+    if host in _ATS_PATH:
+        skip = {"companies", "company", "o", "en", "de", "jobs", "j"}
+        slug = next((seg for seg in segments if seg.lower() not in skip), "")
+        return _pretty(slug) if slug else ""
+    for suffix in _ATS_SUBDOMAIN:
+        if host.endswith("." + suffix):
+            label = host[:-len(suffix) - 1].split(".")[0]
+            return _pretty(label) if label not in _HOST_NOISE else ""
+    labels = host.split(".")
+    if len(labels) < 2:
+        return ""
+    # careers.acme.com / acme.com/careers / jobs.acme.co.uk: the registrable name.
+    core = labels[:-1]
+    if len(core) >= 2 and core[-1] in ("co", "com", "org", "ac"):
+        core = core[:-1]
+    name = next((label for label in reversed(core) if label not in _HOST_NOISE), "")
+    return _pretty(name) if name and name not in _NOT_EMPLOYERS else ""
+
+
+def page_company(html):
+    """The site's own name (og:site_name / application-name), unless it is an ATS."""
+    for attr in ("og:site_name", "application-name"):
+        match = re.search(r'(?is)<meta[^>]+(?:property|name)=["\']%s["\'][^>]*>' % re.escape(attr),
+                          html or "")
+        if match:
+            content = re.search(r'(?is)content=["\']([^"\']{2,80})["\']', match.group(0))
+            value = _clean_html(content.group(1)) if content else ""
+            value = re.sub(r"(?i)\s*(?:[-|·–]\s*)?(careers?|jobs?|karriere)\b.*$", "", value).strip()
+            value = re.sub(r"(?i)^(careers?|jobs?)\s+(at|bei)\s+", "", value).strip()
+            if value and value.lower() not in _NOT_EMPLOYERS:
+                return value
+    return ""
+
+
 def resolve_page(url):
     try:
         final, status, html = fetch_url.fetch(url)
@@ -268,6 +368,15 @@ def resolve_page(url):
     extraction = posting_text.extract(html)
     if extraction.ok:
         found["description"] = extraction.text
+    # No JSON-LD (many careers sites): the page's labelled place and own name.
+    if not found.get("location"):
+        place = page_location(html, found.get("description", ""))
+        if place:
+            found["location"] = place
+    if not found.get("company"):
+        name = page_company(html)
+        if name:
+            found["company"] = name
     return found
 
 
@@ -370,6 +479,12 @@ def add(payload, today=None):
         for key in ("title", "company", "location"):
             if not found.get(key) and _text(payload, key):
                 found[key] = _text(payload, key)
+        # Last resort for the employer: the link itself usually names it
+        # (jobs.northwind.com, boards.greenhouse.io/acme, acme.recruitee.com).
+        if not found.get("company"):
+            guess = company_from_url(company_url) or company_from_url(_text(payload, "job_url", 2000))
+            if guess:
+                found["company"] = guess
         typed = _text(payload, "description", MAX_TEXT)
         if not found.get("description") and typed:
             ok, reason = posting_text.check(typed)

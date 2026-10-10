@@ -148,3 +148,31 @@ class AddJobTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompanyAndPlaceFallbackTest(unittest.TestCase):
+    """Careers pages without JSON-LD: the link and the page still name the employer and place."""
+
+    def test_company_from_url(self):
+        from board import add_job as A
+        cases = {
+            "https://jobs.northwind.com/en/jobs/2725799-Backend": "Northwind",
+            "https://boards.greenhouse.io/deepmind/jobs/123": "Deepmind",
+            "https://jobs.ashbyhq.com/cognigy/abc": "Cognigy",
+            "https://acme.recruitee.com/o/ml-engineer": "Acme",
+            "https://globex.wd3.myworkdayjobs.com/en-US/x": "Globex",
+            "https://careers.initech.com/global/en/job/1": "Initech",
+            "https://join.com/companies/flink/123": "Flink",
+            "https://www.linkedin.com/jobs/view/123": "",
+        }
+        for url, name in cases.items():
+            self.assertEqual(A.company_from_url(url), name, url)
+
+    def test_page_location_and_site_name(self):
+        from board import add_job as A
+        html = ('<meta property="og:site_name" content="Acme Careers"><h1>Engineer</h1>'
+                '<dl><dt class="b">Location</dt><dd class="m">Germany - Dortmund, Germany - Berlin</dd></dl>')
+        self.assertEqual(A.page_location(html), "Germany - Dortmund, Germany - Berlin")
+        self.assertEqual(A.page_company(html), "Acme")
+        self.assertEqual(A.page_location("", "About us\nStandort: Zürich\nMore"), "Zürich")
+        self.assertEqual(A.page_company('<meta property="og:site_name" content="Greenhouse">'), "")
