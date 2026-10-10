@@ -400,6 +400,7 @@ class Supervisor:
                     "continue_of": lineage.get("continue_of"),
                     "session_id": None,
                     "job_url": job_url,
+                    "job_id": entry.get("job_id"),
                     "company": company,
                     "role": role,
                     "job_location": entry.get("location") or (parent or {}).get("job_location"),

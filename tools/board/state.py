@@ -83,6 +83,7 @@ def _shape(items):
         why = " · ".join(part for part in parts if part)
         rows.append({
             "url": url,
+            "job_id": entry.get("job_id", ""),
             "open_url": primary_url(entry),
             "posting_url": entry.get("user_posting_url") or "",
             "default_open_url": primary_url(entry, use_override=False),

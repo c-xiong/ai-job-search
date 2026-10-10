@@ -7,6 +7,8 @@ optional snapshots and are never read back into state.
 
     python3 tools/jobs_md.py export-md   # write job_scraper/jobs.md
     python3 tools/jobs_md.py export-csv  # write active/excluded CSV snapshots
+    python3 tools/jobs_md.py show J-7K3M9Q   # one row by job ID (or posting URL), as JSON
+    python3 tools/jobs_md.py assign-ids  # give every row without one a job ID
 
 Stdlib only, Python 3.9+.
 """
@@ -15,6 +17,7 @@ import csv
 import json
 import os
 import re
+import secrets
 import sys
 import tempfile
 import threading
@@ -243,15 +246,55 @@ def write_json_atomic(path, data):
         raise
 
 
+# Job IDs: a short handle for one board row, so a job can be named in a chat,
+# a run record or a folder without pasting its URL. Crockford base32 without
+# I/L/O/U, so an ID read aloud or retyped cannot be misread. 32^6 is about a
+# billion, and assignment retries on a clash, so uniqueness is guaranteed
+# rather than probable. An ID never changes once given, like the board key.
+_JOB_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+JOB_ID_PATTERN = re.compile(r"^J-[%s]{6}$" % _JOB_ID_ALPHABET)
+
+
+def assign_job_ids(seen):
+    """Give every row without a `job_id` a new unique one. Returns how many."""
+    taken = {entry.get("job_id") for entry in seen.values() if isinstance(entry, dict)}
+    added = 0
+    for entry in seen.values():
+        if not isinstance(entry, dict) or entry.get("job_id"):
+            continue
+        while True:
+            job_id = "J-" + "".join(secrets.choice(_JOB_ID_ALPHABET) for _ in range(6))
+            if job_id not in taken:
+                break
+        taken.add(job_id)
+        entry["job_id"] = job_id
+        added += 1
+    return added
+
+
+def find_job(seen, ref):
+    """The (key, entry) a job ID or a posting link names, else (None, None)."""
+    ref = (ref or "").strip()
+    if JOB_ID_PATTERN.match(ref.upper()):
+        for key, entry in seen.items():
+            if isinstance(entry, dict) and entry.get("job_id") == ref.upper():
+                return key, entry
+        return None, None
+    key = entry_key(seen, ref)
+    return (key, seen[key]) if key is not None else (None, None)
+
+
 def save_seen(seen):
     """Persist the board state atomically. The one writer every tool goes through.
 
     Legacy statuses are rewritten here, so the file converges on the current
-    vocabulary whichever tool saves first.
+    vocabulary whichever tool saves first. Rows are given their job ID here for
+    the same reason: every collector inserts through this one writer.
     """
     for entry in seen.values():
         if isinstance(entry, dict) and entry.get("user_status") in LEGACY_STATUSES:
             entry["user_status"] = LEGACY_STATUSES[entry["user_status"]]
+    assign_job_ids(seen)
     write_json_atomic(SEEN, {"seen": seen})
 
 
@@ -465,14 +508,29 @@ def write_csv(seen):
 
 def main(argv):
     mode = argv[1] if len(argv) > 1 else None
-    if mode not in ("export-md", "export-csv"):
+    if mode not in ("export-md", "export-csv", "show", "assign-ids") or \
+            (mode == "show" and len(argv) < 3):
         print(__doc__)
         return 2
     if not SEEN.exists():
         print("no %s yet - run /scrape first" % SEEN.relative_to(ROOT))
         return 1
+    if mode == "show":
+        seen = json.loads(SEEN.read_text(encoding="utf-8")).get("seen", {})
+        key, entry = find_job(seen, argv[2])
+        if entry is None:
+            print("no board row for %r" % argv[2])
+            return 1
+        print(json.dumps(dict(entry, board_key=key), indent=2, ensure_ascii=False))
+        return 0
     with board_lock():
         seen = json.loads(SEEN.read_text(encoding="utf-8")).get("seen", {})
+        if mode == "assign-ids":
+            added = assign_job_ids(seen)
+            if added:
+                save_seen(seen)
+            print("assigned %d job IDs (%d rows)" % (added, len(seen)))
+            return 0
         if mode == "export-md":
             MD.parent.mkdir(parents=True, exist_ok=True)
             MD.write_text(render(seen), encoding="utf-8")

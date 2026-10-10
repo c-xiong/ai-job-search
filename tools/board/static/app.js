@@ -544,6 +544,7 @@ const whyItems=why=>String(why||"").split(/;\s+/).map(s=>s.trim()).filter(Boolea
 
 function renderJob(){
   const j=selectedJob(),rows=shown();
+  const jobid=el("jobid");jobid.hidden=!(j&&j.job_id);jobid.textContent=j&&j.job_id||"";jobid.dataset.copy=j&&j.job_id||"";
   if(!j){el("jobdetail").innerHTML='<div class="panel-empty">Select a job.</div>';el("jobpos").textContent="";return}
   el("jobpos").textContent=`${sel+1} of ${rows.length}`;
   const fitLabel=j.fit||"unranked",score=j.score?Math.round(j.score):null,why=whyItems(j.why),losses=(j.fit_losses||[]).map(w=>w[0].toUpperCase()+w.slice(1)),posted=postedText(j);
@@ -1655,6 +1656,8 @@ function selectCompanyRow(row){
 const closePopovers=(except=null)=>document.querySelectorAll("details.popover[open],details.app-menu[open]").forEach(node=>{if(node!==except)node.removeAttribute("open")});
 document.addEventListener("click",event=>{
   closePopovers(event.target.closest("details.popover,details.app-menu"));
+  const copyText=event.target.closest("[data-copy]");
+  if(copyText&&copyText.dataset.copy){const text=copyText.dataset.copy;return void navigator.clipboard.writeText(text).then(()=>toast("copied "+text),()=>toast("could not copy",{warn:true}))}
   const copyEmail=event.target.closest("[data-copy-email]");
   if(copyEmail){const address=copyEmail.dataset.copyEmail;return void navigator.clipboard.writeText(address).then(()=>toast("copied "+address),()=>toast("could not copy",{warn:true}))}
   const postingUrl=event.target.closest("[data-posting-url]");if(postingUrl)return void openPostingUrl(JOBS.find(j=>j.url===postingUrl.dataset.postingUrl));
