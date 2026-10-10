@@ -180,6 +180,7 @@ def resolve_linkedin_detail(job_id):
     if not isinstance(job_id, str) or not LINKEDIN_ID.fullmatch(job_id):
         raise LinkedInDetailError("Invalid LinkedIn job ID", retryable=False)
     try:
+        collectors.linkedin_pace()
         proc = subprocess.run(["bun", "run", collectors.LINKEDIN, "detail", job_id,
                                "--format", "json"], cwd=str(jobs_md.ROOT),
                               timeout=45, capture_output=True, text=True)

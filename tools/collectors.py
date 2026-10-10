@@ -14,6 +14,8 @@ Stdlib only, Python 3.9+. Requires `bun` on PATH for the portal CLIs.
 
 import json
 import hashlib
+import os
+import random
 import re
 import subprocess
 import sys
@@ -49,6 +51,46 @@ LINKEDIN = ".agents/skills/linkedin-search/cli/src/cli.ts"
 FREEHIRE = ".agents/skills/freehire-search/cli/src/cli.ts"
 ATS = ".agents/skills/ats-search/cli/src/cli.ts"
 ARBEITNOW = "https://www.arbeitnow.com/api/job-board-api"
+
+
+# LinkedIn's guest endpoints answer a burst with HTTP 429, and a fetch used to
+# make one: every search page, then every `detail`, back to back. Spacing the
+# requests is what keeps the run under the limit; one long cooldown after a 429
+# is the second chance before the run gives up on LinkedIn. The gap is shared
+# by search and detail because LinkedIn counts them against the same budget.
+# `LINKEDIN_PACE=0` turns pacing off (the test suite does; nothing else should).
+LINKEDIN_GAP = (3.0, 6.0)        # seconds between two LinkedIn requests, jittered
+LINKEDIN_COOLDOWN = 75.0         # seconds to wait after a 429 before the one retry
+_linkedin_last = [0.0]
+
+
+def _pacing_on():
+    return os.environ.get("LINKEDIN_PACE", "1") != "0"
+
+
+def linkedin_pace():
+    """Sleep until the jittered gap since the previous LinkedIn request has passed."""
+    if not _pacing_on():
+        return
+    gap = random.uniform(*LINKEDIN_GAP)
+    wait = _linkedin_last[0] + gap - time.monotonic()
+    if _linkedin_last[0] and wait > 0:
+        time.sleep(wait)
+    _linkedin_last[0] = time.monotonic()
+
+
+def linkedin_cooldown(log):
+    """The one long wait after a 429. Returns False when pacing is off."""
+    if not _pacing_on():
+        return False
+    log("  . LinkedIn returned 429 - cooling down %ds before one retry" % LINKEDIN_COOLDOWN)
+    time.sleep(LINKEDIN_COOLDOWN)
+    _linkedin_last[0] = time.monotonic()
+    return True
+
+
+def _rate_limited(text):
+    return "429" in (text or "") or "RATE_LIMITED" in (text or "")
 
 
 def bounded(value, default, low, high):
@@ -325,7 +367,11 @@ def collect_linkedin(cfg, log):
         if spec.get("remote"):
             args.extend(["--remote", spec["remote"]])
         session.last_error = None
+        linkedin_pace()
         payload = bun(args, log)
+        if _rate_limited(session.last_error) and linkedin_cooldown(log):
+            session.last_error = None
+            payload = bun(args, log)
         rows = results_of(payload)
         error = session.last_error or ("unusable CLI output" if not isinstance(payload, dict)
                                       or not isinstance(payload.get("results"), list) else None)
@@ -535,8 +581,14 @@ def screen(record, log, budget=None):
                   else "the run's detail budget was spent")
         return "new", "AUTO-SCREEN: not screened - %s" % reason, ""
     try:
+        linkedin_pace()
         proc = subprocess.run(["bun", "run", cli, "detail", ident, "--format", "json"],
                               cwd=str(ROOT), timeout=90, capture_output=True, text=True)
+        if (proc.returncode != 0 and _rate_limited(proc.stderr) and budget is not None
+                and not budget.cooled and linkedin_cooldown(log)):
+            budget.cooled = True
+            proc = subprocess.run(["bun", "run", cli, "detail", ident, "--format", "json"],
+                                  cwd=str(ROOT), timeout=90, capture_output=True, text=True)
     except (OSError, subprocess.TimeoutExpired) as exc:
         if budget is not None:
             budget.failed += 1
@@ -582,6 +634,7 @@ class Budget:
         self.deferred = 0
         self.failed = 0
         self.blocked = False
+        self.cooled = False  # the run's one post-429 cooldown has been spent
         self.http_attempts = 0
         self.retries = 0
 

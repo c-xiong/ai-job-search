@@ -1508,13 +1508,13 @@ applyLayout();autoCollapse();addEventListener("resize",autoCollapse);
 
 // Fetching: one action, truthful status, optional settings.
 const FETCH_SETTINGS_KEY="jobflow.fetch.v1";
-const FETCH_DEFAULTS={sources:["ats","freehire","linkedin","arbeitnow"],mc:8,mn:40,md:15};
+const FETCH_DEFAULTS={sources:["ats","freehire","linkedin","arbeitnow"],mc:8,mn:40,md:30};
 let FETCH_STARTING=false,FETCH_POLLING=false;
 const chosenSources=()=>["ats","freehire","linkedin","arbeitnow"].filter(s=>el("s-"+s).checked);
 function fetchSettings(){return {sources:chosenSources(),mc:+el("mc").value,mn:+el("mn").value,md:+el("md").value}}
 function applyFetchSettings(value){
   ["ats","freehire","linkedin","arbeitnow"].forEach(s=>el("s-"+s).checked=(value.sources||FETCH_DEFAULTS.sources).includes(s));
-  for(const [id,min,max] of [["mc",1,20],["mn",1,200],["md",0,20]]){const n=value[id];el(id).value=Number.isInteger(n)?Math.max(min,Math.min(max,n)):FETCH_DEFAULTS[id]}
+  for(const [id,min,max] of [["mc",1,20],["mn",1,200],["md",0,40]]){const n=value[id];el(id).value=Number.isInteger(n)?Math.max(min,Math.min(max,n)):FETCH_DEFAULTS[id]}
 }
 try{applyFetchSettings(JSON.parse(localStorage.getItem(FETCH_SETTINGS_KEY))||FETCH_DEFAULTS)}catch(_){applyFetchSettings(FETCH_DEFAULTS)}
 el("fetch-options").addEventListener("change",()=>{applyFetchSettings(fetchSettings());try{localStorage.setItem(FETCH_SETTINGS_KEY,JSON.stringify(fetchSettings()))}catch(_){}});

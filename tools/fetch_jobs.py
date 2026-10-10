@@ -53,8 +53,8 @@ ATS_NEW_JOBS_CEILING = 200
 # LinkedIn is the one source that costs a request per new posting, to read the
 # description the German screen needs. 15 per run by default, and never more
 # than 20 - the ceiling is not configurable upward on purpose.
-LINKEDIN_DETAIL_DEFAULT = 15
-LINKEDIN_DETAIL_CEILING = 20
+LINKEDIN_DETAIL_DEFAULT = 30
+LINKEDIN_DETAIL_CEILING = 40
 
 
 
