@@ -37,9 +37,18 @@ class CodexProviderTest(SupervisorCase):
         self.assertFalse(list(run_registry.state_dir(run["id"]).glob("hook-*.jsonl")))
         self.assertEqual(self.supervisor.snapshot()["default_provider"], "claude")
 
-    def test_claude_remains_default(self):
+    def test_explicit_claude_config_remains_supported(self):
         run = self.run_to_end()
         self.assertEqual(run["provider"], "claude")
+        self.assertEqual(run["phase"], "done", run.get("error"))
+
+    def test_shipped_default_uses_codex(self):
+        self.assertEqual(run_registry.DEFAULT_CONFIG["provider"], "codex")
+        self.write_config(provider=run_registry.DEFAULT_CONFIG["provider"],
+                          codex_bin=str(self.codex))
+        self.assertEqual(self.supervisor.snapshot()["default_provider"], "codex")
+        run = self.run_to_end()
+        self.assertEqual(run["provider"], "codex")
         self.assertEqual(run["phase"], "done", run.get("error"))
 
     def test_invalid_provider_and_unavailable_binary(self):

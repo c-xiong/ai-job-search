@@ -141,7 +141,7 @@ class SupervisorCase(unittest.TestCase):
 
     def write_config(self, **extra):
         stage = 25
-        config = {"claude_bin": str(self.fake), "canary_timeout_s": 8,
+        config = {"provider": "claude", "claude_bin": str(self.fake), "canary_timeout_s": 8,
                   "timeout_s": {k: stage for k in ("prepare", "draft", "review", "fix",
                                                    "pass_c", "pass_a", "pass_b")},
                   "inspection_enabled": self.inspection,

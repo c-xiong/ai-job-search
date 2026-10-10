@@ -96,7 +96,7 @@ DEFAULT_CONFIG = {
     "canary_timeout_s": 120,
     "queue_depth": 5,
     "claude_bin": "claude",
-    "provider": "claude",
+    "provider": "codex",
     "claude_model": None,
     "codex_bin": "codex",
     "codex_model": None,

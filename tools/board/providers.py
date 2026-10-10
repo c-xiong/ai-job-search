@@ -32,7 +32,7 @@ def selection(payload, settings, parent=None):
     provider = payload.get("provider")
     if provider is None:
         provider = (parent or {}).get("provider") or (
-            "claude" if parent else settings.get("provider", "claude"))
+            "claude" if parent else settings.get("provider", "codex"))
     if provider not in PROVIDERS:
         raise ValueError("provider must be claude or codex")
     model = settings.get(provider + "_model") or None

@@ -780,7 +780,7 @@ class Supervisor:
             "runs": runs,
             "queue": queued,
             "queue_depth": settings["queue_depth"],
-            "default_provider": settings.get("provider", "claude"),
+            "default_provider": settings.get("provider", "codex"),
             "ledger": {"spent_today_usd": spent_today(data),
                        "reserved_usd": run_registry.reserved(data),
                        "unknown_cost_runs": sum(1 for r in data["runs"]
