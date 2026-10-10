@@ -46,7 +46,7 @@ import job_attrs  # noqa: E402
 import linkedin_inbox  # noqa: E402
 import search_prefs  # noqa: E402
 
-from . import (activity, add_job, companies, docs, fit_eval, notion, review,  # noqa: E402
+from . import (activity, add_job, companies, docs, fit_eval, learn, notion, review,  # noqa: E402
                run_registry, runs, state, trash)
 
 TOKEN_FILE = jobs_md.ROOT / "job_scraper" / ".board-token"
@@ -551,6 +551,24 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             payload = {}
 
+        if parts.path == "/api/learn":
+            # The Rules panel: learn from notes, or accept/reject a suggestion.
+            action = payload.get("action")
+            if action == "run":
+                code, body = learn.start_learning(payload)
+            elif action in ("accept", "reject"):
+                code, body = learn.decide(str(payload.get("id") or ""), action == "accept")
+            else:
+                code, body = 400, {"error": "action must be run, accept or reject"}
+            return self._send(code, json.dumps(body, ensure_ascii=False))
+        if parts.path == "/api/search-config":
+            # The fetch settings panel: search preferences, filter switches and
+            # the per-fetch search budget, written into scrape_config.json.
+            _, error = search_prefs.save(payload)
+            if error:
+                return self._send(400, json.dumps({"error": error}))
+            activity.emit("collect", "fetch settings saved")
+            return self._send(200, json.dumps(search_config_view(), ensure_ascii=False))
         if parts.path == "/api/runs/undelete":
             try:
                 restored = trash.undo([str(i) for i in payload.get("ids") or []])
@@ -768,6 +786,14 @@ class Handler(BaseHTTPRequestHandler):
             if "note" in payload:
                 seen[url]["user_note"] = str(payload["note"])[:500]
                 why.append("note on %s" % (seen[url].get("company") or "job"))
+            if "miss" in payload:
+                # "Report a miss": gate the job and suggest the rule that would
+                # have caught it (learn.py). Nothing is learned without review.
+                result, error = learn.report_miss(
+                    seen, url, payload["miss"] if isinstance(payload["miss"], dict) else {})
+                if error:
+                    return self._send(400, json.dumps({"error": error}))
+                why.append("miss reported on %s" % (seen[url].get("company") or "job"))
             if "attrs" in payload:
                 # Hand-set job type / work mode / country...: a null value
                 # hands the field back to detection. The row is rescored, since
@@ -864,6 +890,7 @@ def main(argv=None):
     trash.purge()              # deleted runs older than trash.TRASH_DAYS
     notion.start_background_pull()   # no-op unless job_scraper/notion_sync.json is set
     fit_eval.start_background()      # no-op per tick unless auto_evaluate is on
+    learn.start_background()         # learns from new notes once they go quiet (auto_learn)
 
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

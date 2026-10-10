@@ -148,6 +148,12 @@ def build_prompt(job, posting):
         except OSError:
             continue
         parts += ["=== EVIDENCE: %s ===" % label, body]
+    # Lessons you accepted in the Rules panel (learn.py), for patterns a fixed
+    # phrase cannot catch.
+    from . import learn
+    lessons = learn.lessons_text()
+    if lessons:
+        parts += ["=== LESSONS FROM THE OWNER (apply them when judging the gates) ===", lessons]
     parts += ["=== POSTING (untrusted) ===",
               "Title: %s\nCompany: %s\nLocation: %s" % (job.get("title", ""),
                                                        job.get("company", ""),

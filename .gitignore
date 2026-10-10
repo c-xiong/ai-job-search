@@ -242,3 +242,9 @@ upskill/*.md
 job_scraper/fit_evals.json
 job_scraper/.fit_evals.*.tmp
 **/job_scraper/fit_evals.json
+
+# Rule suggestions learned from your notes and reported misses (tools/board/learn.py):
+# they quote your notes and posting text, so they never leave this machine.
+job_scraper/rule_suggestions.json
+**/job_scraper/rule_suggestions.json
+job_scraper/.rule_suggestions.*.tmp

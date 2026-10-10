@@ -1518,6 +1518,71 @@ function applyFetchSettings(value){
 }
 try{applyFetchSettings(JSON.parse(localStorage.getItem(FETCH_SETTINGS_KEY))||FETCH_DEFAULTS)}catch(_){applyFetchSettings(FETCH_DEFAULTS)}
 el("fetch-options").addEventListener("change",()=>{applyFetchSettings(fetchSettings());try{localStorage.setItem(FETCH_SETTINGS_KEY,JSON.stringify(fetchSettings()))}catch(_){}});
+// -- Rules that learn (tools/board/learn.py) ---------------------------------
+// Reported misses and your notes become rule suggestions; each one waits here
+// with a preview of what it would gate, and only an accepted one is written.
+let RULES={suggestions:[],notes_pending:0,run:{},reasons:{}},RULES_FAST=null,MISS_JOB=null,RULES_FIRST=true;
+const RULE_KIND={title:"Title word",body:"Posting phrase",lesson:"AI review lesson"};
+async function pollRules(){
+  try{const response=await fetch("/api/learn?t="+T);if(!checkAuth(response)||!response.ok)return;const was=RULES.run?.running,before=RULES.suggestions.length,first=RULES_FIRST;RULES=await response.json();RULES_FIRST=false;
+    if(was&&!RULES.run.running&&RULES.run.error)toast("Learning from notes failed: "+RULES.run.error,{warn:true,ms:5000});
+    // The point of automatic learning: say so when there is something to decide.
+    else if(!first&&RULES.suggestions.length>before)toast(`${RULES.suggestions.length-before} new rule suggestion${RULES.suggestions.length-before===1?"":"s"} - review in Rules (top bar)`,{ms:8000});}catch(_){return}
+  renderRules();
+  if(RULES.run?.running&&!RULES_FAST)RULES_FAST=setInterval(pollRules,4000);
+  if(!RULES.run?.running&&RULES_FAST){clearInterval(RULES_FAST);RULES_FAST=null}
+}
+function renderRules(){
+  const r=RULES,n=r.suggestions.length,box=el("rulesq");if(!box)return;
+  // Learning runs by itself; the pill only asks for attention when there is a
+  // suggestion to decide (or a pass running, or one that failed).
+  box.hidden=!n&&!r.run?.running&&!r.run?.error&&!(r.notes_pending&&!r.auto);
+  el("rules-pill").innerHTML=r.run?.running?`<span>Rules</span><span class="elapsed">learning…</span>`:n?`<span>Rules <strong>${n}</strong></span><span class="elapsed">to review</span>`:r.run?.error?`<span>Rules</span><span class="elapsed">learning failed</span>`:`<span>Rules</span><span class="elapsed">${r.notes_pending} new note${r.notes_pending===1?"":"s"}</span>`;
+  el("rules-pill").classList.toggle("busy",n>0||!!r.run?.running);
+  if(!box.open)return;
+  const learnBtn=`<button class="linkish" data-rules-learn ${!r.notes_pending||r.run?.running?"disabled":""} title="${r.auto?"Learning runs by itself about 10 minutes after your last note change. ":""}Run it now over the ${r.notes_pending} new or changed note${r.notes_pending===1?"":"s"}.">${r.run?.running?"Learning…":r.notes_pending?`Learn now (${r.notes_pending})`:"Up to date"}</button>`;
+  const items=r.suggestions.map(s=>`<div class="rule-item"><div class="rule-top"><span class="attrtag">${esc(RULE_KIND[s.kind])}</span><strong>${esc(s.label||"")}</strong><span class="dim">${s.source==="miss"?"from a reported miss":"from your notes"}</span></div>
+    <div class="rule-value">“${esc(s.value)}”</div>${s.why?`<div class="dim rule-why">${esc(s.why)}</div>`:""}
+    <div class="rule-preview">${s.kind==="lesson"?"Added to the AI fit evaluation's instructions; gates nothing by itself.":s.would_gate?`<details><summary>Would gate <b>${s.would_gate}</b> open job${s.would_gate===1?"":"s"}${s.would_gate_good?` - <span class="warntext">${s.would_gate_good} high/medium</span>`:""}</summary><ul>${s.examples.map(x=>`<li>${esc(x.company)} · ${esc(x.title)}${x.fit?` <span class="dim">(${esc(x.fit)})</span>`:""}</li>`).join("")}</ul></details>`:"Would gate no open job now; it applies to future fetches."}</div>
+    <div class="rule-actions"><button class="primary" data-rule-accept="${esc(s.id)}">Accept</button><button class="secondary" data-rule-reject="${esc(s.id)}">Reject</button></div></div>`).join("");
+  el("rules-body").innerHTML=`<div class="evalq-head"><strong>Rule suggestions</strong>${learnBtn}</div>
+    ${r.run?.error?`<div class="evalerror">${esc(r.run.error)}</div>`:""}
+    ${items||'<div class="dim evalq-more">Nothing to review. Write notes on jobs the board got wrong, or use Report a miss, then learn from them here.</div>'}`;
+}
+el("rulesq")?.addEventListener("toggle",()=>{if(el("rulesq").open){renderRules();void pollRules()}});
+async function rulesAction(body,button){
+  if(button)button.disabled=true;
+  const response=await fetch("/api/learn?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){toast(data.error||"failed",{warn:true});if(button)button.disabled=false;return}
+  if(body.action==="accept")toast(data.gated?`Rule added - ${data.gated} job${data.gated===1?"":"s"} moved to gate`:"Rule added",{ms:3500});
+  if(body.action==="run")toast(`Learning from ${data.rows} job${data.rows===1?"":"s"}…`);
+  await pollRules();if(body.action==="accept")void reloadJobs().catch(()=>{});
+}
+el("rules-body")?.addEventListener("click",event=>{
+  const learnBtn=event.target.closest("[data-rules-learn]");if(learnBtn)return void rulesAction({action:"run",provider:chosenEngine("generate")},learnBtn);
+  const yes=event.target.closest("[data-rule-accept]");if(yes)return void rulesAction({action:"accept",id:yes.dataset.ruleAccept},yes);
+  const no=event.target.closest("[data-rule-reject]");if(no)return void rulesAction({action:"reject",id:no.dataset.ruleReject},no);
+});
+function openMiss(j){
+  MISS_JOB=j.url;const picked=String(window.getSelection?.()||"").trim();
+  const reasons=Object.keys(RULES.reasons||{}).length?RULES.reasons:{citizenship:"Citizenship or clearance required",german:"German required",too_senior:"Too senior",phd:"PhD required",wrong_type:"Wrong job type",remote:"Fully remote",wrong_role:"Not my kind of role",other:"Other"};
+  el("miss-reasons").innerHTML=Object.entries(reasons).map(([key,label],i)=>`<label class="chip miss-reason"><input type="radio" name="miss-reason" value="${key}" ${i===0?"checked":""}> ${esc(label)}</label>`).join("");
+  el("miss-quote").value=picked.length<=300?picked:"";el("miss-word").value="";el("miss-title").textContent=j.company+" — "+displayTitle(j.title);
+  el("miss-modal").hidden=false;document.body.classList.add("modal-open");
+}
+function closeMiss(){el("miss-modal").hidden=true;document.body.classList.remove("modal-open");MISS_JOB=null}
+el("miss-modal")?.addEventListener("click",event=>{if(event.target.closest("[data-miss-close]")||event.target===el("miss-modal"))closeMiss()});
+el("miss-form")?.addEventListener("submit",async event=>{
+  event.preventDefault();const url=MISS_JOB;if(!url)return;
+  const miss={reason:new FormData(event.target).get("miss-reason"),quote:el("miss-quote").value.trim(),word:el("miss-word").value.trim()};
+  const response=await fetch("/api/update?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,miss})});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){toast(data.error||"could not report",{warn:true});return}
+  closeMiss();toast(miss.quote||miss.word?"Moved to gate - a rule suggestion is waiting in Rules":"Moved to gate",{ms:4000});
+  await reloadJobs().catch(()=>{});void pollRules();
+});
+
 // -- Search settings (tools/search_prefs.py, tools/job_filters.py) -----------
 // Roles x job types x locations become the searches; the filters gate what is
 // plainly not for you before a detail fetch is spent on it. Saved into
@@ -1799,6 +1864,8 @@ function selectCompanyRow(row){
 const closePopovers=(except=null)=>document.querySelectorAll("details.popover[open],details.app-menu[open]").forEach(node=>{if(node!==except)node.removeAttribute("open")});
 document.addEventListener("click",event=>{
   closePopovers(event.target.closest("details.popover,details.app-menu"));
+  const miss=event.target.closest("[data-miss]");
+  if(miss){const j=JOBS.find(x=>x.url===miss.dataset.miss);if(j)openMiss(j);return}
   const attrChip=event.target.closest("[data-attr]");
   if(attrChip){const j=selectedJob();if(j)setAttr(j,attrChip.dataset.attr,attrChip.dataset.attrValue);return}
   const attrReset=event.target.closest("[data-attr-reset]");
@@ -2002,6 +2069,7 @@ el("show-new").addEventListener("click",()=>{
 
 renderChrome(null);
 setInterval(pollActivity,3000);setInterval(pollRuns,6000);setInterval(pollEvalQueue,15000);void pollEvalQueue();
+setInterval(()=>pollRules(),60000);void pollRules();
 Promise.all([reloadJobs(),pollActivity(),pollRuns()]).then(()=>{
   applyRoute();
   void pollFetch();

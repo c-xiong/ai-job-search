@@ -20,6 +20,7 @@
     <div class="crumb" id="crumb" hidden></div>
     <div class="spacer"></div>
     <span class="barsep" id="right-sep" hidden></span>
+    <details class="evalq popover" id="rulesq" hidden><summary class="runpill" id="rules-pill"></summary><div class="evalq-body rules-body" id="rules-body"></div></details>
     <details class="evalq popover" id="evalq" hidden><summary class="runpill" id="evalq-pill"></summary><div class="evalq-body" id="evalq-body"></div></details>
     <button class="runpill" id="runpill" hidden></button>
     <button class="secondary theme-toggle" id="theme-toggle" title="Theme follows the system" aria-label="Theme follows the system"><span class="theme-glyph" id="theme-glyph" aria-hidden="true">◐</span><span id="theme-name">Auto</span></button>
@@ -138,6 +139,19 @@
       <div class="modal-hint" id="text-modal-hint"></div>
       <div class="modal-actions"><button class="secondary" id="text-modal-cancel">Cancel</button><button class="primary" id="text-modal-submit">Save</button></div>
     </section>
+  </div>
+  <div class="modal-backdrop" id="miss-modal" hidden>
+    <form class="text-modal" id="miss-form" role="dialog" aria-modal="true" aria-labelledby="miss-title" novalidate>
+      <div class="modal-head"><div><span class="label">Report a miss</span><h2 id="miss-title">This job should have been filtered</h2></div><button class="modal-close" type="button" data-miss-close aria-label="Close">×</button></div>
+      <span class="modal-label">Why</span>
+      <div class="miss-reasons" id="miss-reasons"></div>
+      <label class="modal-label" for="miss-quote">The sentence in the posting that shows it <span class="dim">best evidence - becomes a rule</span></label>
+      <textarea id="miss-quote" rows="3" placeholder="Select it in the posting before opening this, or paste it here exactly"></textarea>
+      <label class="modal-label" for="miss-word">Or a word in the title that gives it away <span class="dim">optional</span></label>
+      <input id="miss-word" placeholder="e.g. Werkstudent" autocomplete="off">
+      <div class="modal-hint">The job moves to gate now. The rule it suggests waits in <b>Rules</b> (top bar) with a preview of what else it would catch - nothing changes until you accept it.</div>
+      <div class="modal-actions"><button class="secondary" type="button" data-miss-close>Cancel</button><button class="primary" type="submit">Report</button></div>
+    </form>
   </div>
   <div class="modal-backdrop" id="add-modal" hidden>
     <form class="text-modal add-modal" id="add-form" role="dialog" aria-modal="true" aria-labelledby="add-title" novalidate>
