@@ -10,7 +10,7 @@
 
 % Package Imports
 \usepackage[hmargin=2.6cm, vmargin=2.3cm]{geometry}
-\usepackage[hidelinks]{hyperref}
+\usepackage[hidelinks,pdfstartview={}]{hyperref} % no /OpenAction: portals reject it as active content
 \usepackage[usenames,dvipsnames]{xcolor}
 \usepackage{titlesec}
 \usepackage[absolute]{textpos}
