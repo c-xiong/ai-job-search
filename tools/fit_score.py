@@ -661,8 +661,13 @@ def score(title, company, location, body, ctx, german_hard=False):
     # Gates. Each can only lower the band, the number is always preserved, and
     # the reason goes to the front - a band never changes silently.
     gates = []
-    if german_hard or german == "hard":
+    # Written in German, but it says outright German is only a plus: the
+    # posting's own word beats the inference from its language.
+    optional_de = language == "de" and bool(body.strip()) and collectors.german_optional(body)
+    if german_hard or (german == "hard" and not optional_de):
         gates.append(("low", "German stated as a job condition"))
+    elif optional_de:
+        gates.append(("medium", language_reason + ", but German is only a plus"))
     elif language == "de":
         gates.append(("low", language_reason))
     if language == "mixed":

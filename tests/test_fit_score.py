@@ -25,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
+import collectors  # noqa: E402
 import fit_score  # noqa: E402
 import postings  # noqa: E402
 
@@ -637,6 +638,28 @@ class LanguageAndGapsTest(unittest.TestCase):
         self.assertEqual(german["fit_language"], "de")
         self.assertEqual(german["fit"], "low")
         self.assertEqual(german["fit_reasons"][0], "posting is written in German")
+
+    def test_a_german_posting_that_calls_german_a_plus_is_not_capped_low(self):
+        # bexio: "fliessendes Englisch ist ein Muss, Deutsch ein grosses Plus".
+        body = self.DE + " Fliessendes Englisch ist ein Muss, Deutsch ein grosses Plus."
+        self.assertEqual(collectors.german_hit(body)[0], "soft")
+        result = self._score("AI Engineer", body)
+        self.assertEqual(result["fit_language"], "de")
+        self.assertNotEqual(result["fit"], "low")
+        self.assertIn("German is only a plus", result["fit_reasons"][0])
+
+    def test_a_plus_marker_softens_a_german_level(self):
+        self.assertEqual(collectors.german_hit("Gute Deutschkenntnisse sind ein grosses Plus.")[0], "soft")
+        self.assertEqual(collectors.german_hit("German is a big plus.")[0], "soft")
+        self.assertEqual(collectors.german_hit("Sehr gute Deutschkenntnisse.")[0], "hard")
+
+    def test_a_nice_to_have_header_after_a_german_level_does_not_lift_the_cap(self):
+        for body in ("Deutschkenntnisse mindestens B2-Niveau - Nice to have: Erfahrung mit Zoho",
+                     "Fließend in Deutsch und Englisch Von Vorteil: MCP, Webhooks",
+                     "Sehr gute Deutsch- und gute Englischkenntnisse; Französisch von Vorteil",
+                     "Sehr gute Deutschkenntnisse. Englisch ist ein Plus, Deutsch von Vorteil."):
+            self.assertFalse(collectors.german_optional(body), body)
+            self.assertEqual(self._score("AI Engineer", self.DE + " " + body)["fit"], "low", body)
 
     def test_a_bilingual_posting_is_capped_at_medium(self):
         result = self._score("AI Engineer", " ".join([self.EN, self.EN, self.DE]))

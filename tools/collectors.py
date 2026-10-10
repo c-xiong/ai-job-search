@@ -169,8 +169,36 @@ GERMAN_RE = re.compile("|".join(GERMAN_PATTERNS), re.I)
 # the marker on the *other* language, 70+ characters downstream.
 SOFT_MARKERS = re.compile(
     r"(von\s+Vorteil|hilfreich|w[üu]nschenswert|Pluspunkt|nice[- ]to[- ]have|"
-    r"is\s+a\s+plus|are\s+a\s+plus|ideally|advantageous|bonus)", re.I)
+    r"is\s+a\s+plus|are\s+a\s+plus|ein\s+(?:\w+\s+)?Plus\b|ideally|advantageous|bonus)", re.I)
 SOFT_WINDOW = 60
+
+# German named outright as optional with no level attached, so GERMAN_RE never
+# fires: "fliessendes Englisch ist ein Muss, Deutsch ein grosses Plus". Without
+# these such a posting read as silent about German, and a German-written one was
+# capped as if German were assumed.
+# The softener must sit right on "Deutsch": "Fliessend in Deutsch und Englisch
+# Von Vorteil: MCP..." is a section header, not an optional German.
+_DE_LEVEL = r"(?:\([^)]{0,20}\)\s+)?"
+_DE_FILLER = r"(?:(?:ist|sind|w[äa]ren?|auch|ein|eine)\s+){0,2}"
+GERMAN_OPTIONAL_RE = re.compile("|".join([
+    r"\bDeutsch\w*\s+" + _DE_LEVEL + _DE_FILLER + r"(?:\w+\s+)?(?:Plus|Pluspunkt)\b",
+    r"\bDeutsch\w*\s+" + _DE_LEVEL + _DE_FILLER + r"(?:von\s+Vorteil|w[üu]nschenswert|hilfreich|optional)",
+    r"\bGerman\s+(?:language\s+)?(?:skills\s+|knowledge\s+)?(?:is|are|would\s+be)\s+"
+    r"(?:a\s+)?(?:\w+\s+)?(?:plus|bonus|advantage|nice[- ]to[- ]have|optional|not\s+required)",
+]), re.I)
+
+
+def german_optional(text):
+    """True when the posting names German outright as a nice-to-have and states
+    no German level anywhere else. Stricter than a "soft" `german_hit`, whose
+    60-character marker window also catches a "Nice-to-haves" header after a
+    real requirement - harmless for an English posting, but this is what lifts
+    the cap on a German-written one."""
+    soft = [m.span() for m in GERMAN_OPTIONAL_RE.finditer(text or "")]
+    if not soft:
+        return False
+    return all(any(start <= m.start() < end for start, end in soft)
+               for m in GERMAN_RE.finditer(text or ""))
 
 
 def bun(args, log, timeout=120):
@@ -250,6 +278,9 @@ def german_hit(text):
     matched phrase at all.
     """
     match = GERMAN_RE.search(text or "")
+    soft = None
+    if not match:
+        match = soft = GERMAN_OPTIONAL_RE.search(text or "")
     if not match:
         return None, ""
     start = max(0, match.start() - 110)
@@ -260,7 +291,7 @@ def german_hit(text):
     if end < len(text):
         quote = quote + "..."
     tail = text[match.end():match.end() + SOFT_WINDOW]
-    return ("soft" if SOFT_MARKERS.search(tail) else "hard"), quote[:320]
+    return ("soft" if soft or SOFT_MARKERS.search(tail) else "hard"), quote[:320]
 
 
 def screen_text(text):
