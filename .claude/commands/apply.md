@@ -196,8 +196,15 @@ evidence. It replaces a fit report; it has no score.
 ```
 
 Write plain JSON (the comments above are documentation only). Every field is required except `letter_plan`, which a run that writes a letter must include; use `null` where the posting is silent, never a guess. `letter_plan` records the choice the letter makes: the one or two tasks the role spends most time on, where the posting says so, the evidence that most directly does that task, one complementary example of a *different* responsibility, and the task match between them (`connection` is a task match, never a claim of personal enthusiasm).
-Include the selected block IDs and their task-specific rationale in the existing
-evidence strings. These are choices for this posting, not a standing selection
+The owner reads `evidence` on the board and knows their own situation, so keep
+it terse (one short clause, about 15 words at most). For `gap`, name only what
+the posting asks for that the sources lack, e.g. "no speech or multimodal work";
+for `adjacent`, name the nearest real evidence. Never restate the profile
+(availability, permits, relocation, study caps) and never raise a rule that
+does not apply to this posting's country or role type; a fact that would
+actually block the application is a hard conflict, not evidence prose.
+For `documented` and `adjacent` items, include the selected block ID and a
+short task-specific rationale. These are choices for this posting, not a standing selection
 for every employer. Do not add mandatory fields to the brief schema.
 **Hard conflicts** are only explicit statements that collide with a
 deal-breaker (e.g. German stated as a job condition, a start date before the
