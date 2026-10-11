@@ -1012,15 +1012,22 @@ function renderTailor(run){
 // Send: the last step, and the only one that happens outside JobFlow.
 const SEND_DRAFTS=new Map();
 const EMAIL_DRAFTS=new Map();
+// The draft goes to the posting's confirmed application address, or else to the
+// owner's own Application recipients: some portals' Apply button is a mailto
+// link the posting text never shows.
+function draftRecipients(run){
+  if(run.email_guidance?.mode==="email")return run.email_guidance.recipients;
+  const owner=(SEND_DRAFTS.get(run.id)||run).apply_email||"";
+  return owner.split(",").map(s=>s.trim()).filter(Boolean);
+}
 function emailDraftBox(run){
-  const guidance=run.email_guidance||{};
-  if(guidance.mode!=="email")return "";
+  const confirmed=run.email_guidance?.mode==="email";
   const draft=EMAIL_DRAFTS.get(run.id);
-  if(!draft)return `<button class="secondary" data-email-draft="${esc(run.id)}">Draft application email</button><div class="dim">Creates an editable English email from the role and document selection when you click.</div>`;
-  return `<div class="email-draft"><strong>Application email draft</strong><div class="dim">To: ${esc(guidance.recipients.join(", "))} · Replace [Your name] and attach the PDFs before sending.</div><label class="modal-label" for="email-subject">Subject</label><input id="email-subject" value="${esc(draft.subject)}"><label class="modal-label" for="email-body">Message</label><textarea id="email-body" rows="10">${esc(draft.body)}</textarea><div class="title-actions"><button class="secondary" data-copy-email-draft>Copy subject and message</button><button class="secondary" data-open-email-draft>Open in email app ↗</button></div></div>`;
+  if(!draft)return `<button class="secondary" data-email-draft="${esc(run.id)}">Draft application email</button><div class="dim">${confirmed?"Creates an editable English email from the role and document selection when you click.":"For an employer whose Apply button opens an email: put that address under Application recipients below."}</div>`;
+  const to=draftRecipients(run);
+  return `<div class="email-draft"><strong>Application email draft</strong><div class="dim">To: ${to.length?esc(to.join(", ")):"add the address under Application recipients below"} · Replace [Your name] and attach the PDFs before sending.</div><label class="modal-label" for="email-subject">Subject</label><input id="email-subject" value="${esc(draft.subject)}"><label class="modal-label" for="email-body">Message</label><textarea id="email-body" rows="10">${esc(draft.body)}</textarea><div class="title-actions"><button class="secondary" data-copy-email-draft>Copy subject and message</button><button class="secondary" data-open-email-draft>Open in email app ↗</button></div></div>`;
 }
 function createEmailDraft(run){
-  if(run.email_guidance?.mode!=="email")return;
   const attachments=docKinds(run.scope).map(k=>k==="cv"?"CV":"cover letter").join(" and ");
   EMAIL_DRAFTS.set(run.id,{subject:`Application: ${run.role||"Open position"}`,body:`Dear Hiring Team,\n\nI would like to apply for the ${run.role||"advertised"} position at ${run.company||"your company"}. Please find my ${attachments} attached for your consideration.\n\nThank you for your time. I would welcome the opportunity to discuss my application.\n\nKind regards,\n[Your name]`});
   captureSendDraft();renderSend(run);
@@ -1937,9 +1944,11 @@ document.addEventListener("click",event=>{
   if(draftEmail){const run=RUNS.find(r=>r.id===draftEmail.dataset.emailDraft);if(run)createEmailDraft(run);return}
   if(event.target.closest("[data-copy-email-draft],[data-open-email-draft]")){
     const run=RUNS.find(r=>r.id===ACTIVE_RUN),draft=EMAIL_DRAFTS.get(ACTIVE_RUN);
-    if(!draft||run?.email_guidance?.mode!=="email")return;
+    if(!run||!draft)return;
     if(event.target.closest("[data-copy-email-draft]"))void navigator.clipboard.writeText(`Subject: ${draft.subject}\n\n${draft.body}`).then(()=>toast("Email draft copied"),()=>toast("Could not copy",{warn:true}));
-    else location.href="mailto:"+run.email_guidance.recipients.join(",")+"?subject="+encodeURIComponent(draft.subject)+"&body="+encodeURIComponent(draft.body);
+    else{captureSendDraft();const to=draftRecipients(run);
+      if(!to.length)return void toast("Add the application address under Application recipients first",{warn:true});
+      location.href="mailto:"+to.join(",")+"?subject="+encodeURIComponent(draft.subject)+"&body="+encodeURIComponent(draft.body)}
     return;
   }
   const addRecipient=event.target.closest("[data-add-recipient]");

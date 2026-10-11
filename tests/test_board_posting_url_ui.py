@@ -144,8 +144,15 @@ async function staleReload(){
 async function sendForm(){
   run.posting_emails=[{email:"one@example.com",context:"Send documents to one@example.com",apply:true},{email:"two@example.com",context:"Questions: <contact> two@example.com",apply:false,purpose:"questions"}];
   ctx.VIEW="send";ctx.ui.renderSend(run);
-  assert(!ctx.sendHtml.includes('data-email-draft='));
+  assert(ctx.sendHtml.includes('data-email-draft='));
   assert(!ctx.sendHtml.includes('data-add-recipient="two@example.com"'));
+  // No confirmed address: the draft still opens and goes to the owner's recipients.
+  const unconfirmed={...run,id:run.id+"-mailto",apply_email:"jobs@portal.example"};
+  ctx.RUNS.push(unconfirmed);node("owner-form").dataset={runId:unconfirmed.id};
+  node("owner-email").value=unconfirmed.apply_email;
+  listeners.click(event({closest:s=>s==='[data-email-draft]'?{dataset:{emailDraft:unconfirmed.id}}:null}));
+  assert(ctx.sendHtml.includes("To: jobs@portal.example"));
+  ctx.RUNS.pop();
   node("owner-form").dataset={runId:run.id};
   run.email_guidance={mode:"email",recipients:["one@example.com"],message:"Send to one@example.com"};
   ctx.ui.renderSend(run);
