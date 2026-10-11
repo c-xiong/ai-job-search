@@ -214,8 +214,11 @@ deal-breaker yourself.
 
 ### CV
 
-- Never written by a model. The supervisor pins the master's `sde`/`ai`
-  variant; the draft pass only reads it so the letter agrees with it.
+- Never written by a model unless the owner asks. The supervisor pins the
+  master's `sde`/`ai` variant; the draft pass reads it so the letter agrees
+  with it. Only when the owner's one-off instruction explicitly asks for a CV
+  change (e.g. the headline) does the pass edit that copy, in small ways only;
+  any other note leaves it byte-for-byte unchanged.
 - A review finding or layout issue on the CV is reported to the owner, who
   fixes it in the CV repository; no pass edits it here.
 

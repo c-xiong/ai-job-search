@@ -209,6 +209,10 @@ def main():
             return finish(session, 0.5, "did nothing")
         if cv:
             write_through_guard(cv, latex("Tailored CV for Acme at %s" % time.time()))
+        noted_cv = target(prompt, "CV")
+        if how == "edit_cv" and noted_cv:
+            write_through_guard(noted_cv, Path(noted_cv).read_text().replace(
+                "\\begin{document}", "\\begin{document}\nMachine Learning Engineer", 1))
         if how == "cv_then_crash":
             return finish(session, 0.6, "budget exhausted mid-draft", True, 1)
         if cover:

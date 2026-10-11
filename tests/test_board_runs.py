@@ -195,6 +195,24 @@ class ScopeTest(SupervisorCase):
         self.assertEqual(body["files"], [str((run_registry.run_dir(run_id) / "brief.json")
                                              .resolve())])
 
+    def test_a_note_asking_for_a_cv_change_is_applied_in_the_draft_pass(self):
+        os.environ["FAKE_DRAFT"] = "edit_cv"
+        run_id, phase = self.run_to_end(note="Change the CV headline to Machine "
+                                             "Learning Engineer")
+        self.assertEqual(phase, "done", run_registry.get(run_id).get("error"))
+        self.assertEqual(self.stages(), ["draft", "review"])
+        cv = self.manifest(run_id)["docs"]["cv"]
+        self.assertEqual(cv["origin"], "owner-note:%s" % run_id)
+        self.assertIn("Machine Learning Engineer",
+                      checkpoint.absolute(cv["source"]["path"]).read_text())
+
+    def test_a_note_without_a_cv_change_leaves_the_master_variant(self):
+        run_id, phase = self.run_to_end(note="Stress the evaluation work in the letter")
+        self.assertEqual(phase, "done", run_registry.get(run_id).get("error"))
+        cv = self.manifest(run_id)["docs"]["cv"]
+        self.assertTrue(cv["origin"].startswith("variant:"), cv["origin"])
+        self.assertEqual(cv["source"]["sha256"], cv["seed_sha256"])
+
     def test_an_unknown_scope_is_refused_before_any_model_call(self):
         code, body = self.start(scope="portfolio")
         self.assertEqual(code, 400)

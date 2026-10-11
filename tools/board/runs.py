@@ -1236,8 +1236,19 @@ class Supervisor:
         if brief and brief.get("hard_conflicts") and not record.get("proceed_on_conflict"):
             raise self._conflict(brief)
         ext = {k: templates.active(k)["ext"] or ".tex" for k in kinds}
-        # The CV is pinned by `_pin_cv`, never drafted: only the letter is.
+        # The CV is pinned by `_pin_cv`, never drafted: only the letter is. The
+        # one exception is an owner note, which may ask for a small CV change
+        # (e.g. the headline): this pass then gets the pinned variant and
+        # leaves it untouched unless the note asks for it.
         paths = {k: checkpoint.work_source(run_id, k, ext[k]) for k in missing if k != "cv"}
+        cv_seed = None
+        if "cv" in missing and (record.get("note") or "").strip():
+            inputs = manifest["inputs"]
+            snapshot = inputs["master_snapshot"]
+            cv_seed = seed_cv(checkpoint.absolute(snapshot["path"]).read_bytes(),
+                              inputs["variant"]["role"], inputs["variant"]["country"],
+                              snapshot["sha256"])
+            paths["cv"] = checkpoint.work_source(run_id, "cv", ext["cv"])
         if "cover" in kinds and brief and run_guard.validate_letter_plan(brief.get("letter_plan")):
             # A saved CV-only or older brief may not record any letter choices.
             # Regenerate the brief before drafting a cover, rather than silently
@@ -1253,7 +1264,7 @@ class Supervisor:
                     kind, datetime.now().strftime("%H%M%S%f"), path.suffix))
                 os.replace(str(path), str(keep))
             path.parent.mkdir(parents=True, exist_ok=True)
-            data = docs.cover_base().read_bytes()
+            data = cv_seed if kind == "cv" else docs.cover_base().read_bytes()
             path.write_bytes(data)
             seeds[kind] = checkpoint.sha256_bytes(data)
         checkpoint.save(run_id, manifest)
@@ -1302,6 +1313,13 @@ class Supervisor:
         adopted, refused = [], []
         for kind, path in paths.items():
             complete, reason = checkpoint.complete_source(path)
+            if kind == "cv" and (checkpoint.sha256(path) == seeds.get(kind) or (
+                    brief and brief.get("hard_conflicts")
+                    and not record.get("proceed_on_conflict"))):
+                # A note that asked nothing of the CV leaves the seed, which
+                # `_pin_cv` records as the untailored variant; a hard conflict
+                # records no document at all.
+                continue
             if os.path.realpath(str(path)) not in approved:
                 refused.append("%s: no guard record of this pass writing it" % kind)
             elif checkpoint.sha256(path) == seeds.get(kind):
@@ -1309,8 +1327,15 @@ class Supervisor:
             elif not complete:
                 refused.append("%s: %s" % (kind, reason))
             else:
-                checkpoint.record_doc(manifest, kind, path, "drafted:%s" % run_id,
-                                      seeds.get(kind))
+                checkpoint.record_doc(manifest, kind, path,
+                                      ("owner-note:%s" if kind == "cv" else "drafted:%s")
+                                      % run_id, seeds.get(kind))
+                if kind == "cv":
+                    # Keeps `_pin_cv` from reseeding over the owner's change.
+                    variant = manifest["inputs"]["variant"]
+                    manifest["cv_variant"] = {
+                        "role": variant["role"], "country": variant["country"],
+                        "master": manifest["inputs"]["master_snapshot"]["sha256"]}
                 adopted.append(kind)
         for item in refused:
             manifest["issues"].append("draft not adopted - " + item)
@@ -2116,6 +2141,11 @@ class Supervisor:
         "treat it as an error.\n\n")
 
     # Shared by drafting, independent review and fixes. Facts remain grounded; prose may adapt.
+    CV_EDIT_RULES = ("The CV is the owner's chosen master variant. Make only the small, "
+                     "targeted edits this request asks for (for example the title "
+                     "line, the order or wording of existing items, a keyword the "
+                     "inputs already support); keep its structure, keep it exactly "
+                     "one page, and never add experience, skills or numbers.\n")
     COVER_RULES = (
         'Mandatory employer contact research: follow Shared rules in `.claude/commands/apply.md`. Use live '
         'web search and open official local office/contact pages before drafting; absence from the posting is'
@@ -2244,6 +2274,11 @@ class Supervisor:
                 checkpoint.run_path(record["id"], "brief.json"),
                 " (with its `letter_plan`, since this run writes a letter)"
                 if "cover" in kinds else ""))
+        if "cv" in paths:
+            parts.append("- CV: `%s` (holds the pinned master variant). Edit it ONLY if the "
+                         "owner's one-off instruction below explicitly asks for a CV change; "
+                         "otherwise leave it byte-for-byte unchanged. %s"
+                         % (paths["cv"], self.CV_EDIT_RULES))
         if "cover" in paths:
             parts.append("- write cover letter: `%s` (already holds the cover base; tailor "
                          "it in place)\n\n%s" % (paths["cover"], self.COVER_RULES))
@@ -2314,11 +2349,7 @@ class Supervisor:
         if instruction is not None:
             parts.append("\nThe owner's requested change: %s\n" % instruction)
             if "cv" in paths:
-                parts.append("The CV is the owner's chosen master variant. Make only the small, "
-                             "targeted edits this request asks for (for example the title "
-                             "line, the order or wording of existing items, a keyword the "
-                             "inputs already support); keep its structure, keep it exactly "
-                             "one page, and never add experience, skills or numbers.\n")
+                parts.append(self.CV_EDIT_RULES)
         else:
             parts.append("\nReview findings to resolve:\n```json\n%s\n```\n"
                          % json.dumps(findings, ensure_ascii=False, indent=1)[:6000])
