@@ -97,6 +97,8 @@ def _shape(items):
             "company": entry.get("company", ""),
             "location": entry.get("location", ""),
             "posted": entry.get("posted") or entry.get("first_seen", ""),
+            "posted_date": entry.get("posted") or "",
+            "deadline": entry.get("deadline") or "",
             # When this row reached *you*, which is a different question from
             # when it was posted and the only one the "what did the last fetch
             # bring in" filter can be built on. `first_seen_at` is the run

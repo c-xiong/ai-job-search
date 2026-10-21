@@ -584,7 +584,7 @@ function renderJob(){
     <div class="jobmeta"><strong>${esc(j.company)}</strong>${j.location?`<span class="sep">·</span><span>${esc(j.location)}</span>`:""}${posted?`<span class="sep">·</span><span>Posted ${esc(posted)}</span>`:""}</div>
     <div class="badges"><span class="fitpill ${esc(j.fit||"none")}" title="${esc(scoreTitle(j))}"><span class="fitdot"></span>${esc(fitLabel)}${score!=null?`<span class="fitscore">${esc(score)}</span>`:""}</span><span class="badge">${esc(sourceLabel(j.primary_source||j.portal)||"Source unknown")}</span>${j.fit_evidence==="title-only"?'<span class="badge" title="No posting text is stored, so the skills component could not be scored and the band is capped at medium.">Title only</span>':""}</div>
     ${attrsBox(j)}${emailBox(j)}
-    <div class="posting-link"><span class="posting-actions"><button class="linkish" data-posting-url="${esc(j.url)}">Change URL</button><span class="sep">·</span><button class="linkish" data-follow-company="${esc(j.url)}" ${FOLLOW_BUSY?"disabled":""}>Follow company</button></span></div></div>
+    <div class="posting-link"><span class="posting-actions"><button class="linkish" data-edit-job="${esc(j.url)}">Edit job</button><span class="sep">·</span><button class="linkish" data-follow-company="${esc(j.url)}" ${FOLLOW_BUSY?"disabled":""}>Follow company</button></span></div></div>
     <div class="posting"><div class="jobinfo">${whyLine(j,why,losses)}${evalBox(j)}</div><div class="splitter vertical infosplit" data-info-split role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize evaluation and posting" title="Drag to resize · double-click to reset"></div><div class="jobjd"><div class="sectionhead">Posting</div><div id="postingbody" class="${j.description?"":"postingempty"}">${esc(postingText(j))}</div></div></div>
     <div class="jobactions"><div class="statusbuttons">${markButtons(j)}<button class="linkish missbtn" data-miss="${esc(j.url)}" title="This job should have been filtered - teach the rules">Report a miss</button>${evalButton(j)}</div>
       <input class="noteinput" data-note-input="${esc(j.url)}" value="${esc(j.note)}" placeholder="+ note" aria-label="My note">
@@ -667,6 +667,75 @@ async function editNote(j=selectedJob()){
   if(value!==null)update(j.url,{note:value}).then(ok=>ok&&toast("note saved"));
 }
 
+let JOB_EDIT=null,JOB_EDIT_BUSY=false,JOB_EDIT_FOCUS=null;
+const JOB_EDIT_FIELDS=["title","company","location","posted","deadline","description","posting_url","status","note"];
+function jobEditMessage(text,warn=false){el("job-edit-message").textContent=text;el("job-edit-message").classList.toggle("warn",warn)}
+function jobEditBusy(busy){JOB_EDIT_BUSY=busy;el("job-edit-form").querySelectorAll("input,select,textarea,button").forEach(n=>n.disabled=busy)}
+async function openJobEditor(j){
+  if(!j||JOB_EDIT_BUSY)return;JOB_EDIT={url:j.url,base:null};JOB_EDIT_FOCUS=document.activeElement;
+  el("job-edit-form").reset();el("job-edit-attrs").innerHTML="";
+  el("job-edit-status").innerHTML=STATUSES.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");
+  el("job-edit-modal").hidden=false;document.body.classList.add("modal-open");jobEditBusy(true);jobEditMessage("Loading job…");
+  try{
+    const response=await fetch("/api/job?t="+T+"&url="+encodeURIComponent(j.url));
+    if(!response.ok)throw new Error("Could not load the full job. Close and try again.");
+    const full=await response.json();
+    const base={...full,posting_url:full.open_url||full.url,posted:full.posted_date||""};
+    JOB_EDIT.base=base;
+    JOB_EDIT_FIELDS.forEach(key=>el("job-edit-"+key).value=base[key]||"");
+    el("job-edit-attrs").innerHTML=ATTR_FIELDS.map(([key,label,options])=>key==="job_type"
+      ?`<fieldset><legend>${label}</legend>${options.map(([v,text])=>`<label class="source"><input type="checkbox" data-job-edit-type="${v}" ${(base.attrs?.job_type||[]).includes(v)?"checked":""}>${text}</label>`).join("")}</fieldset>`
+      :`<label>${label}<select data-job-edit-attr="${key}"><option value="">Auto-detect</option>${options.map(([v,text])=>`<option value="${v}" ${base.attrs?.[key]===v?"selected":""}>${text}</option>`).join("")}</select></label>`).join("");
+    jobEditMessage("");
+  }catch(error){jobEditMessage(error.message,true)}
+  finally{jobEditBusy(false);el("job-edit-save").disabled=!JOB_EDIT.base;el("job-edit-fetch").disabled=!JOB_EDIT.base;el("job-edit-title").focus()}
+}
+function closeJobEditor(){if(JOB_EDIT_BUSY)return;JOB_EDIT=null;el("job-edit-modal").hidden=true;document.body.classList.remove("modal-open");JOB_EDIT_FOCUS?.focus()}
+async function refreshJobEditor(){
+  if(!JOB_EDIT?.base||JOB_EDIT_BUSY)return;
+  const before=Object.fromEntries(JOB_EDIT_FIELDS.map(k=>[k,el("job-edit-"+k).value]));
+  jobEditBusy(true);jobEditMessage("Fetching posting…");
+  try{
+    const response=await fetch("/api/jobs/refresh?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:JOB_EDIT.url,posting_url:before.posting_url})});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||"Could not fetch this posting.");
+    const changed=[],kept=[];
+    for(const [key,value] of Object.entries(data.fields||{})){
+      if(!JOB_EDIT_FIELDS.includes(key)||!value)continue;
+      if(before[key]!==String(JOB_EDIT.base[key]||"")){kept.push(key);continue}
+      el("job-edit-"+key).value=value;changed.push(key==="description"?"JD":key);
+    }
+    jobEditMessage((changed.length?"Fetched "+changed.join(", ")+". Review, then save.":"No new fields to fill.")+(kept.length?" Your edits were kept.":"")+(!data.fields?.description?" JD unavailable — paste it below.":""));
+  }catch(error){jobEditMessage(error.message+" Your current details are unchanged.",true)}
+  finally{jobEditBusy(false)}
+}
+async function saveJobEditor(){
+  if(!JOB_EDIT?.base||JOB_EDIT_BUSY)return;
+  const base=JOB_EDIT.base,payload={url:JOB_EDIT.url},job={};
+  for(const key of JOB_EDIT_FIELDS){const value=el("job-edit-"+key).value.trim();if(value===String(base[key]||""))continue;if(["posting_url","status","note"].includes(key))payload[key]=value;else job[key]=value}
+  if(Object.keys(job).length)payload.job=job;
+  const attrs={};
+  el("job-edit-attrs").querySelectorAll("[data-job-edit-attr]").forEach(n=>{const key=n.dataset.jobEditAttr;if(n.value!==(base.attrs?.[key]||""))attrs[key]=n.value||null});
+  const types=[...el("job-edit-attrs").querySelectorAll("[data-job-edit-type]:checked")].map(n=>n.dataset.jobEditType);
+  if(JSON.stringify(types)!==JSON.stringify(base.attrs?.job_type||[]))attrs.job_type=types.length?types:null;
+  if(Object.keys(attrs).length)payload.attrs=attrs;
+  jobEditBusy(true);jobEditMessage("Saving…");
+  try{
+    const response=await fetch("/api/update?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||"Could not save job.");
+    POSTING_URL_REVISION++;POSTING_CACHE.delete(JOB_EDIT.url);EMAIL_CACHE.delete(JOB_EDIT.url);
+    await reloadJobs();jobEditBusy(false);closeJobEditor();
+    toast(Object.keys(job).length?"Job saved. Re-evaluate to refresh the AI assessment.":"Job saved",{ms:5000});
+  }catch(error){jobEditMessage(error.message,true)}
+  finally{jobEditBusy(false)}
+}
+el("job-edit-form").addEventListener("submit",event=>{event.preventDefault();void saveJobEditor()});
+el("job-edit-fetch").addEventListener("click",()=>void refreshJobEditor());
+el("job-edit-modal").addEventListener("click",event=>{if(event.target===el("job-edit-modal")||event.target.closest("#job-edit-close,#job-edit-cancel"))closeJobEditor()});
+el("job-edit-modal").addEventListener("keydown",event=>{
+  if(event.key==="Escape"){event.preventDefault();closeJobEditor()}
+  if(event.key==="Tab"){const controls=[...el("job-edit-form").querySelectorAll("input,select,textarea,button,summary")].filter(n=>!n.disabled&&n.getClientRects().length),first=controls[0],last=controls[controls.length-1];if(!first){event.preventDefault();return}if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}}
+});
+
 function openPostingUrl(j){
   if(!j||POSTING_URL_BUSY)return;
   POSTING_URL_JOB=j.url;POSTING_URL_FOCUS=document.activeElement;
@@ -729,15 +798,18 @@ function latestApplications(){
   const latest=new Map();RUNS.forEach(r=>{const key=r.application_id||r.id;if(!latest.has(key))latest.set(key,r)});return [...latest.values()]
 }
 // Where an application stands. Generation needs no one; everything after it is
-// the owner's: check the PDFs (review), send it (ready), record it (applied).
+// the owner's: look at what an automatic check flagged (review), send it
+// (ready), record it (applied).
 function appState(r){
   if(!r)return null;
   if(r.archived_at)return "archived";
   if(RUNNING.includes(r.phase)||QUEUE.includes(r.id))return "generating";
   if(r.phase!=="done")return "failed";
   if(r.tracker_status&&r.tracker_status!=="drafted")return "applied";
-  const review=r.review;return review&&review.total&&review.done>=review.total?"ready":"review";
+  return checksPassed(r)?"ready":"review";
 }
+// Every automatic check on the published PDFs passed.
+const checksPassed=r=>!!(r.review&&r.review.measured&&!r.review.flagged);
 const APP_GROUPS=[["generating","Generating"],["failed","Failed"],["review","To review"],["ready","Ready to send"],["applied","Applied"],["archived","Archived"]];
 function appsByJob(){const map=new Map();latestApplications().forEach(r=>{if(r.job_url&&!map.has(r.job_url))map.set(r.job_url,r)});return map}
 const applicationFor=(j,map=appsByJob())=>j?jobUrls(j).map(url=>map.get(url)).find(Boolean)||null:null;
@@ -878,7 +950,7 @@ function appRowMeta(r,state){
   if(state==="generating")return r.phase==="queued"?"queued":"stage "+(PHASE_STEP[r.phase]||1)+"/"+STAGE_COUNT;
   if(state==="archived")return r.archive_reason||"Not applying";
   if(state==="failed")return (r.phase||"").replaceAll("_"," ")+(r.started_at?" · "+r.started_at.slice(5,10):"");
-  if(state==="review")return r.review?.total?r.review.done+"/"+r.review.total+" checked":"not checked";
+  if(state==="review")return r.review?.measured?r.review.flagged+" to look at":"not checked";
   if(state==="applied")return (r.tracker_status||"applied").replaceAll("_"," ")+(r.tracker_date?" · "+r.tracker_date.slice(5):"");
   return (r.ended_at||r.started_at||"").slice(5,10);
 }
@@ -917,8 +989,8 @@ function attemptTabs(run){
 // first-party posting the row links to.
 const jobOfRun=run=>run&&run.job_url?JOBS.find(j=>matchesJobUrl(j,run.job_url))||null:null;
 function appHeader(run,step){
-  const state=appState(run),done=run.phase==="done",review=run.review||{};
-  const reviewState=!done?"todo":review.total&&review.done>=review.total?"done":step==="review"?"live":"todo";
+  const state=appState(run),done=run.phase==="done";
+  const reviewState=!done?"todo":checksPassed(run)?"done":step==="review"?"live":"todo";
   const sendState=state==="applied"?"done":step==="send"?"live":"todo";
   const stepBtn=(key,n,label,st)=>`<button class="app-step ${st}${step===key?" on":""}" data-app-step="${key}" ${done&&!(run.archived_at&&key==="send")?"":"disabled"}><span class="stepdot">${st==="done"?"✓":n}</span>${label}</button>`;
   const status=state==="generating"?`<span class="app-status generating">◐ Generating · stage ${PHASE_STEP[run.phase]||1} of ${STAGE_COUNT}</span>`
@@ -930,15 +1002,20 @@ function appHeader(run,step){
     ${run.archived_at?`<button data-unarchive-app="${esc(run.id)}">Restore application</button>`:state!=="applied"?`<button data-archive-app="${esc(run.id)}" ${["generating"].includes(state)||run.phase==="orphaned"?"disabled":""}>Archive · not applying…</button>`:""}
     <button class="danger" data-delete-app="${esc(run.id)}">Delete application…</button></div></details>`;
   const job=jobOfRun(run);
-  const id=job?`<button class="app-id app-id-link" data-board-job="${esc(job.url)}" title="Show this job on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)} <span class="app-id-arrow">↗ Board</span></p></button>`
-    :`<div class="app-id" title="This posting is no longer on the Board"><h1>${esc(run.company)}</h1><p>${esc(run.role)}</p></div>`;
+  // The company leads; the role and where/how it is held sit beside it.
+  const where=[job?.location,...(job?.attrs?.job_type||[]).map(t=>JOB_TYPE_LABEL[t]||t)].filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join("");
+  const sub=arrow=>`<span class="app-id-sub"><span class="app-id-role">${esc(run.role)}${arrow}</span>${where?`<span class="app-id-meta">${where}</span>`:""}</span>`;
+  const id=job?`<button class="app-id app-id-link" data-board-job="${esc(job.url)}" title="Show this job on the Board"><h1>${esc(run.company)}</h1>${sub(' <span class="app-id-arrow">↗ Board</span>')}</button>`
+    :`<div class="app-id" title="This posting is no longer on the Board"><h1>${esc(run.company)}</h1>${sub("")}</div>`;
   const jobId=(job&&job.job_id)||run.job_id||"";
   const copyId=jobId?`<button type="button" class="jobid" data-copy="${esc(jobId)}" title="Copy job ID - quote it to Claude or Codex to name this job">${esc(jobId)}</button>`:"";
   const href=(job&&(job.open_url||job.url))||run.job_url||"";
   const posting=href?`<a class="posting-anchor" href="${esc(href)}" target="_blank" rel="noopener" title="Open the posting · ${esc(href)}">${esc(postingLinkLabel(href))} ↗</a>`:"";
-  return `<header class="app-head">${id}${copyId}${posting}
+  // Three columns: what the job is (title, ID, posting), the steps centred on
+  // the pane, then the run's own controls.
+  return `<header class="app-head"><div class="app-title">${id}${copyId||posting?`<div class="app-refs">${copyId}${posting}</div>`:""}</div>
     <nav class="app-steps" aria-label="Steps">${stepBtn("review",1,"Review",reviewState)}<span class="app-step-sep">→</span>${stepBtn("send",2,"Send",sendState)}</nav>
-    ${status}<span class="spacer"></span>${attemptTabs(run)}${menu}</header>${run.archived_at?`<div class="archive-banner"><strong>Archived · not applying</strong>${run.archive_reason?`<span>${esc(run.archive_reason)}</span>`:""}<span>Documents and history are kept.</span><button class="secondary" data-unarchive-app="${esc(run.id)}">Restore application</button></div>`:""}`;
+    <div class="app-head-end">${status}<span class="spacer"></span>${attemptTabs(run)}${menu}</div></header>${run.archived_at?`<div class="archive-banner"><strong>Archived · not applying</strong>${run.archive_reason?`<span>${esc(run.archive_reason)}</span>`:""}<span>Documents and history are kept.</span><button class="secondary" data-unarchive-app="${esc(run.id)}">Restore application</button></div>`:""}`;
 }
 // The frame every application view renders into. Only the detail is repainted
 // by a view; the list refreshes on its own (renderAppsList) so a poll never
@@ -952,11 +1029,12 @@ function mountApp(run,step,body){
   el("apps-groups").scrollTop=scrolled;if(menuOpen)document.querySelector(".app-menu")?.setAttribute("open","");
   if(query!==null){const input=el("apps-q");input.focus();try{input.setSelectionRange(query,query)}catch(_){}}
 }
-// Opening an application lands on what it needs from you now.
+// Opening an application lands on what it needs from you now. Passing the
+// automatic checks still lands on Review: you look at every PDF yourself.
 function openApp(run,step){
   if(!run)return;
   if(run.archived_at&&["send","revise"].includes(step))step="review";
-  if(!step)step=run.phase!=="done"?"log":["ready","applied"].includes(appState(run))?"send":"review";
+  if(!step)step=run.phase!=="done"?"log":appState(run)==="applied"?"send":"review";
   if(run.phase!=="done"&&step!=="log")step="log";
   if(step==="review")renderPreview(run);else if(step==="send")renderSend(run);else if(step==="revise")renderRevise(run);else renderTailor(run);
 }
@@ -1034,7 +1112,7 @@ function createEmailDraft(run){
 }
 function renderSend(run){
   if(!run)return;ACTIVE_RUN=run.id;PREVIEW_RUN=run.id;
-  const review=run.review||{},checked=review.total&&review.done>=review.total,kinds=docKinds(run.scope);
+  const review=run.review||{},checked=checksPassed(run),kinds=docKinds(run.scope);
   const state=appState(run),when=(run.tracker_date||"").slice(5).replace("-","/");
   const job=jobOfRun(run),postingUrl=job?.open_url||run.job_url;
   const open=postingUrl?`<a class="secondary" href="${esc(postingUrl)}" target="_blank" rel="noopener">Open posting ↗</a>`:"";
@@ -1051,7 +1129,7 @@ function renderSend(run){
   const recorded=state==="applied";
   const record=`<label class="applied-toggle"><input type="checkbox" role="switch" id="owner-applied" form="owner-form" ${recorded||draft.mark_applied?"checked":""} ${recorded?'disabled title="Application already recorded"':""}><span class="toggle-track" aria-hidden="true"></span><span>Applied${recorded&&when?" · "+esc(when):""}</span></label>`;
   mountApp(run,"send",`<div class="send-shell"><section class="send-main">
-    <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Check the PDFs</strong><div class="dim">${review.total?`${review.done} of ${review.total} checks ticked`:"No checks recorded yet"}${checked?"":` · <button class="linkish" data-app-step="review">finish them in Review</button>`}</div></div></div>
+    <div class="send-step ${checked?"done":""}"><span class="stepdot">${checked?"✓":"1"}</span><div><strong>Automatic checks</strong><div class="dim">${!review.measured?"No checks recorded yet":checked?`All ${review.total} passed`:`${review.flagged} of ${review.total} need a look`}${checked?"":` · <button class="linkish" data-app-step="review">see them in Review</button>`}</div></div></div>
     <div class="send-step"><span class="stepdot">2</span><div><strong>Submit your application</strong><div class="dim">Follow the posting’s instructions: upload your PDFs on the employer’s site or attach them to an email.</div>${contactList}<div class="title-actions">${open}${changeUrl}${portal}${mailto}${reveals}</div></div></div>
     <div class="send-step ${state==="applied"?"done":""}"><span class="stepdot">${state==="applied"?"✓":"3"}</span><div><strong>Record it</strong><div class="dim">Turn on after submitting your application. Click Save below to save this status together with your details.</div><div class="title-actions">${record}</div></div></div>
     <form class="send-step owner-form" id="owner-form" data-run-id="${esc(run.id)}"><span class="stepdot">✎</span><div><strong>Portal, email &amp; notes</strong><div class="dim">Where you applied - a portal to log in to again, or the address you emailed. Saved to the tracker and Notion.</div>
@@ -1156,28 +1234,23 @@ async function renderPreview(run){
 const SCREEN_TAG={gap:"missing",adjacent:"adjacent",documented:"met"};
 function screeningPanel(v){
   const s=v.screening;
-  if(!s)return `<div class="panelhead"><span class="label">Screening</span></div><div class="panel-empty">No requirement brief yet.</div>`;
-  const reqs=s.requirements||[],count=st=>reqs.filter(r=>r.status===st).length;
+  if(!s)return `<div class="panel-empty">No requirement brief yet.</div>`;
+  const reqs=s.requirements||[];
   const item=r=>`<div class="screen-item ${esc(r.status)}"><div class="screen-req"><span class="screen-tag">${esc(SCREEN_TAG[r.status]||r.status)}</span><strong>${esc(r.requirement)}</strong>${r.priority&&r.priority!=="required"?` <span class="dim">${esc(r.priority)}</span>`:""}</div>${r.evidence?`<div class="screen-evidence">${esc(r.evidence)}</div>`:""}</div>`;
   const open=reqs.filter(r=>r.status!=="documented"),met=reqs.filter(r=>r.status==="documented");
-  const facts=Object.entries(s.facts||{}).filter(([key])=>key!=="language").map(([,value])=>esc(value)).join(" · ");
   const conflicts=(s.conflicts||[]).map(c=>`<div class="screen-conflict">${esc(c)}</div>`).join("");
   const kw=v.keywords||{},absent=kw.measured===false?null:(kw.absent||[]);
   const terms=absent===null?`<div class="dim">Measured after the CV is built.</div>`:absent.length?`<div class="term-list">${absent.map(t=>`<span class="term">${esc(t)}</span>`).join("")}</div>`:`<div class="dim">Every posting term is on your CV.</div>`;
-  return `<div class="panelhead"><span class="label">Screening</span><span class="spacer"></span><span class="dim">${count("gap")} missing · ${count("adjacent")} adjacent · ${met.length} met</span></div>
-    <div class="screen-scroll">${facts?`<div class="screen-facts">${facts}</div>`:""}${conflicts}${open.map(item).join("")||`<div class="dim screen-none">No stated requirement is missing from your evidence.</div>`}
+  return `<div class="screen-scroll">${conflicts}${open.map(item).join("")||`<div class="dim screen-none">No stated requirement is missing from your evidence.</div>`}
     <div class="screen-block"><span class="label">Posting terms not on your CV</span>${terms}</div>
     ${met.length?`<details class="screen-met"><summary>${met.length} requirements met</summary>${met.map(item).join("")}</details>`:""}</div>`;
 }
-// You check the PDFs; the board only measures what a machine can measure
-// (text layer, contacts, pages, keywords) and lists it underneath.
+// The board measures what a machine can measure (pages, text layer, contacts,
+// placeholders, keywords); you only look at what did not pass.
 function checklistPanel(v){
-  const manual=v.manual||[],done=manual.filter(m=>m.done).length;
-  const group=(doc,title)=>{const rows=manual.filter(m=>m.doc===doc);return rows.length?`<div class="check-group"><span class="label">${title}</span>${rows.map(m=>`<label class="check-row${m.stale?" stale":""}"><input type="checkbox" data-mark="${esc(m.id)}" ${m.done?"checked":""}> <span>${esc(m.label)}${m.stale?` <em class="dim">PDF changed</em>`:""}</span></label>`).join("")}</div>`:""};
-  const auto=v.checks||[],flagged=auto.filter(c=>c.state!=="pass");
+  const auto=v.checks||[],flagged=auto.filter(c=>c.state!=="pass");if(!auto.length)return "";
   const autoRow=c=>`<div class="verify-item ${esc(c.state)}"><span class="verify-mark ${esc(c.state)}">${c.state==="pass"?"✓":"!"}</span><div><div>${esc(c.label)}</div><div class="verify-detail">${esc(c.detail)}</div></div></div>`;
-  const autoBlock=auto.length?`<details class="auto-checks"${flagged.length?" open":""}><summary>Automatic checks · ${auto.length-flagged.length} pass${flagged.length?` · ${flagged.length} to look at`:""}</summary>${[...flagged,...auto.filter(c=>c.state==="pass")].map(autoRow).join("")}</details>`:"";
-  return `<div class="panelhead"><span class="label">Your checks</span><span class="spacer"></span><span class="dim state-summary">${done} / ${manual.length}</span></div><div class="check-scroll">${group("cv","CV")}${group("cover","Cover letter")}${group("both","Both")}${autoBlock}</div>`;
+  return `<details class="auto-checks"${flagged.length?" open":""}><summary>Automatic checks · ${auto.length-flagged.length} pass${flagged.length?` · ${flagged.length} to look at`:""}</summary>${[...flagged,...auto.filter(c=>c.state==="pass")].map(autoRow).join("")}</details>`;
 }
 // Regenerate one document from a prompt. The CV variant switch needs no model:
 // it re-seeds the CV from the other master variant and rebuilds.
@@ -1185,7 +1258,9 @@ function regeneratePanel(run,v){
   if(run.phase!=="done")return `<div class="regen"><div class="hint">Regenerate is available once this run has finished. ${["failed","cancelled"].includes(run.phase)?"Continue it from the run view first.":""}</div></div>`;
   const kinds=docKinds(run.scope),hasCv=kinds.includes("cv");
   const variant=hasCv?`<div class="regen-row"><span class="label">CV variant</span><div class="seg">${[["sde","SDE"],["ai","AI"]].map(([value,label])=>`<button type="button" class="chip${v.variant===value?" on":""}" data-variant="${value}" ${v.variant===value?"disabled":""}>${label}</button>`).join("")}</div></div>`:"";
-  const docs=kinds.map((kind,i)=>`<label><input type="checkbox" name="edit" value="${kind}" ${i===(kinds.length>1?1:0)?"checked":""}> ${kind==="cv"?"CV":"Cover letter"}</label>`).join("");
+  // A document this run never produced is offered too: picking it drafts it afresh.
+  const docs=docKinds("both").map(kind=>{const owned=kinds.includes(kind),label=kind==="cv"?"CV":"Cover letter";
+    return `<label${owned?"":` title="This run has no ${label.toLowerCase()} yet; picking it drafts one"`}><input type="checkbox" name="edit" value="${kind}" ${owned&&kind===kinds[kinds.length-1]?"checked":""}> ${owned?label:`+ ${label}`}</label>`}).join("");
   return `<form class="regen" id="regen-form">${enginePicker(run.id,run.provider||"claude")}${variant}<div class="regen-row"><span class="label">Regenerate</span><div class="seg">${docs}</div></div><textarea id="regen-note" placeholder="${hasCv?"Optional, e.g. change the CV title to “AI Engineer | LLM Applications”. Leave empty to regenerate from scratch.":"Optional: what should change? Leave empty to regenerate from scratch."}"></textarea><button class="primary" type="submit">Regenerate</button></form>`;
 }
 
@@ -1629,7 +1704,7 @@ el("rules-body")?.addEventListener("click",event=>{
 });
 function openMiss(j){
   MISS_JOB=j.url;const picked=String(window.getSelection?.()||"").trim();
-  const reasons=Object.keys(RULES.reasons||{}).length?RULES.reasons:{citizenship:"Citizenship or clearance required",german:"German required",too_senior:"Too senior",phd:"PhD required",wrong_type:"Wrong job type",remote:"Fully remote",wrong_role:"Not my kind of role",other:"Other"};
+  const reasons=Object.keys(RULES.reasons||{}).length?RULES.reasons:{citizenship:"Citizenship or clearance required",german:"German required",too_senior:"Too senior",phd:"PhD required",wrong_type:"Wrong job type",remote:"Fully remote",wrong_role:"Not my kind of role",fee:"I'd pay them (programme fee)",other:"Other"};
   el("miss-reasons").innerHTML=Object.entries(reasons).map(([key,label],i)=>`<label class="chip miss-reason"><input type="radio" name="miss-reason" value="${key}" ${i===0?"checked":""}> ${esc(label)}</label>`).join("");
   el("miss-quote").value=picked.length<=300?picked:"";el("miss-word").value="";el("miss-title").textContent=j.company+" — "+displayTitle(j.title);
   el("miss-modal").hidden=false;document.body.classList.add("modal-open");
@@ -1642,7 +1717,7 @@ el("miss-form")?.addEventListener("submit",async event=>{
   const response=await fetch("/api/update?t="+T,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,miss})});
   const data=await response.json().catch(()=>({}));
   if(!response.ok){toast(data.error||"could not report",{warn:true});return}
-  closeMiss();toast(miss.quote||miss.word?"Moved to gate - a rule suggestion is waiting in Rules":"Moved to gate",{ms:4000});
+  closeMiss();toast(data.miss?.suggestion?"Moved to gate - a rule suggestion is waiting in Rules":data.miss?.explained?"Moved to gate - the next learning pass turns your words into a rule":"Moved to gate",{ms:4000});
   await reloadJobs().catch(()=>{});void pollRules();
 });
 
@@ -1651,8 +1726,8 @@ el("miss-form")?.addEventListener("submit",async event=>{
 // plainly not for you before a detail fetch is spent on it. Saved into
 // scrape_config.json on every change, so they apply to the next fetch -
 // including the scheduled one.
-let SEARCH_CFG=null,SEARCH_OPEN=new Set(["prefs"]);
-const JOB_TYPE_LABEL={full_time:"Full-time",intern:"Intern",working_student:"Working student"};
+let SEARCH_CFG=null,SEARCH_OPEN=new Set(["europe"]);
+const JOB_TYPE_LABEL={full_time:"Full-time",intern:"Intern",working_student:"Working student",graduate:"Graduate programme"};
 async function loadSearchConfig(){
   try{const response=await fetch("/api/search-config?t="+T);if(!checkAuth(response)||!response.ok)throw new Error();SEARCH_CFG=await response.json()}
   catch(_){el("search-config").innerHTML='<div class="evalerror">Could not load the search settings.</div>';return}
@@ -1672,11 +1747,15 @@ function renderSearchConfig(){
   const types=`<div class="sc-row"><span class="sc-label">Job types</span><div class="sc-chips">${c.job_types.map(t=>`<button type="button" class="chip${p.job_types.includes(t)?" on":""}" data-sc-type="${t}">${JOB_TYPE_LABEL[t]}</button>`).join("")}</div></div>`;
   const generated=c.searches.filter(r=>!r.custom).length,custom=c.searches.length-generated;
   const section=(id,title,meta,body)=>`<details class="fetch-advanced sc-section" data-sc-section="${id}" ${SEARCH_OPEN.has(id)?"open":""}><summary>${title}${meta?` <span class="sc-meta">${meta}</span>`:""}</summary><div class="sc-body">${body}</div></details>`;
-  const prefs=`${p.enabled?"":`<div class="hint">Off - only your custom searches run. Any change below turns it on.</div>`}
-    ${listRow("roles","Roles","+ role, Enter")}${types}${listRow("locations","Locations","+ place, Enter")}
-    <div class="sc-row"><span class="sc-label">Pages</span><select data-sc-pages>${[1,2,3].map(n=>`<option value="${n}" ${p.pages===n?"selected":""}>${n} per search (${n*10} jobs)</option>`).join("")}</select></div>
+  const europe=`<div class="sc-europe-toolbar"><label class="source"><input type="checkbox" data-sc-europe ${p.europe_enabled?"checked":""}> Search Europe</label><select class="sc-region" data-sc-region-select aria-label="Add countries by region"><option value="">+ Add region</option>${Object.keys(c.europe_regions||{}).map(name=>`<option value="${esc(name)}">${esc(name)}</option>`).join("")}</select></div>
+    ${listRow("europe_locations","Countries","+ country")}
+    <div class="sc-row"><span class="sc-label">Job types</span><div class="sc-chips">${c.job_types.map(t=>`<button type="button" aria-pressed="${p.europe_job_types.includes(t)}" class="chip${p.europe_job_types.includes(t)?" on":""}" data-sc-europe-type="${t}">${JOB_TYPE_LABEL[t]}</button>`).join("")}</div></div>
+    <div class="sc-source-needed" ${chosenSources().some(s=>["linkedin","freehire"].includes(s))?"hidden":""}><span>Select a job search source.</span><button type="button" class="linkish" data-sc-sources>Enable LinkedIn + freehire</button></div>`;
+  const geography=`${listRow("excluded_locations","Exclude","+ city or country")}<div class="hint">Matching new jobs go to Gate.</div>`;
+  const prefs=`${types}${listRow("locations","Locations","+ place")}`;
+  const volume=`<div class="sc-row"><span class="sc-label">Pages</span><select data-sc-pages>${[1,2,3].map(n=>`<option value="${n}" ${p.pages===n?"selected":""}>${n} per search</option>`).join("")}</select></div>
     <div class="sc-row"><span class="sc-label">Per fetch</span><input type="number" class="sc-budget" data-sc-budget min="1" max="${c.budget_ceiling}" value="${c.budget}"><span class="dim">searches</span></div>
-    <div class="hint">${generated} generated + ${custom} custom searches, ${c.tasks} result pages: about ${c.fetches_per_round} fetch${c.fetches_per_round===1?"":"es"} to run them all once.</div>`;
+    <div class="hint">${c.tasks} pages · about ${c.fetches_per_round} fetches per round</div>`;
   const on=c.filters.filter(f=>f.on).length+c.body_filters.filter(f=>f.on).length;
   const filters=`<div class="hint">Matching titles go to <b>gate</b> before any detail is fetched; you can move one back at any time.</div>
     ${c.filters.map(f=>`<label class="source"><input type="checkbox" data-sc-filter="${f.key}" ${f.on?"checked":""}> ${esc(f.label)}</label>`).join("")}
@@ -1686,13 +1765,25 @@ function renderSearchConfig(){
     <input class="sc-allow" data-sc-allow value="${esc(c.allow.join(", "))}" placeholder="e.g. Member of Technical Staff">`;
   const rows=c.searches.map(r=>`<tr class="${r.custom?"custom":""}"><td title="${esc(r.label)}">${esc(r.label)}</td><td class="dim">${r.custom?"custom":esc(JOB_TYPE_LABEL[r.job_type]||"")}</td><td class="num" title="Results last time">${r.last_run?r.returned:"–"}</td><td class="num good" title="High or medium fit, not gated">${r.last_run?r.good:"–"}</td><td class="num dim" title="Gated (filtered, German, …)">${r.last_run?r.gated:"–"}</td></tr>`).join("");
   const table=`<table class="sc-table"><thead><tr><th>Search</th><th></th><th class="num">got</th><th class="num">good</th><th class="num">gated</th></tr></thead><tbody>${rows}</tbody></table><div class="hint">Custom searches live in scrape_config.json. A search that keeps bringing nothing good is worth removing.</div>`;
-  el("search-config").innerHTML=section("prefs","Search preferences",p.enabled?`${p.roles.length}×${p.job_types.length}×${p.locations.length}`:"off",prefs)
-    +section("filters","Filters",`${on} on`,filters)+section("searches","Searches",`${c.searches.length}`,table);
+  el("search-config").innerHTML=`<div class="sc-shared">${listRow("roles","Roles","+ role")}</div>`
+    +section("prefs","Primary search",p.enabled?esc(p.locations.join(" · ")):"off",prefs)
+    +section("europe","Europe",p.europe_enabled?`${p.europe_locations.length} countries`:"off",europe)
+    +section("geography","Exclude places",p.excluded_locations.length?`${p.excluded_locations.length}`:"",geography)
+    +section("filters","Filters",`${on} on`,filters)
+    +section("volume","Search limits",`${c.budget} per fetch`,volume)
+    +section("searches","Search history",`${c.searches.length}`,table);
+
 }
+el("fetch-options").addEventListener("change",()=>{const hint=document.querySelector(".sc-source-needed");if(hint)hint.hidden=chosenSources().some(s=>["linkedin","freehire"].includes(s))});
 el("fetch-settings").addEventListener("toggle",()=>{if(el("fetch-settings").open)loadSearchConfig()});
 el("search-config").addEventListener("toggle",event=>{const box=event.target.closest?.("[data-sc-section]");if(box)box.open?SEARCH_OPEN.add(box.dataset.scSection):SEARCH_OPEN.delete(box.dataset.scSection)},true);
 el("search-config").addEventListener("click",event=>{
   const c=SEARCH_CFG;if(!c)return;
+  const region=event.target.closest("[data-sc-region]");
+  if(region){const values=[...c.preferences.europe_locations];for(const place of c.europe_regions[region.dataset.scRegion])if(!values.some(v=>v.toLowerCase()===place.toLowerCase()))values.push(place);return savePrefs({europe_locations:values,europe_enabled:true})}
+  if(event.target.closest("[data-sc-sources]")){["linkedin","freehire"].forEach(s=>{el("s-"+s).checked=true;el("s-"+s).dispatchEvent(new Event("change",{bubbles:true}))});toast("LinkedIn and freehire enabled");renderSearchConfig();return}
+  const europeType=event.target.closest("[data-sc-europe-type]");
+  if(europeType){const cur=new Set(c.preferences.europe_job_types),t=europeType.dataset.scEuropeType;cur.has(t)?cur.delete(t):cur.add(t);if(!cur.size){toast("keep at least one job type",{warn:true});return}return savePrefs({europe_job_types:c.job_types.filter(x=>cur.has(x))})}
   const remove=event.target.closest("[data-sc-remove]");
   if(remove){const key=remove.dataset.scRemove;return savePrefs({[key]:c.preferences[key].filter(v=>v!==remove.dataset.scValue)})}
   const type=event.target.closest("[data-sc-type]");
@@ -1706,6 +1797,8 @@ el("search-config").addEventListener("keydown",event=>{
 });
 el("search-config").addEventListener("change",event=>{
   const t=event.target,c=SEARCH_CFG;if(!c)return;
+  if(t.matches("[data-sc-region-select]")){const values=[...c.preferences.europe_locations];for(const place of c.europe_regions[t.value]||[])if(!values.some(v=>v.toLowerCase()===place.toLowerCase()))values.push(place);if(!t.value)return;return savePrefs({europe_locations:values,europe_enabled:true})}
+  if(t.matches("[data-sc-europe]"))return savePrefs({europe_enabled:t.checked});
   if(t.matches("[data-sc-pages]"))return savePrefs({pages:+t.value});
   if(t.matches("[data-sc-budget]"))return saveSearchConfig({keyword_search_budget:Math.max(1,Math.min(c.budget_ceiling,+t.value||c.budget_default))});
   if(t.matches("[data-sc-filter]")){c.filters.find(f=>f.key===t.dataset.scFilter).on=t.checked;return saveFilters({})}
@@ -1785,7 +1878,7 @@ async function submitAddJob(allowNoDescription=false){
 // The bookmarklet reads the page you are on - LinkedIn's detail pane, an <h1>
 // anywhere else, or your text selection - and hands it to static/add.html.
 function bookmarkletHref(){
-  const code=`(()=>{const q=s=>{for(const x of s.split("|")){const n=document.querySelector(x);if(n&&n.innerText.trim())return n.innerText.trim()}return ""};const sel=String(getSelection()).trim();const d={job_url:location.href,title:q(".job-details-jobs-unified-top-card__job-title|.jobs-unified-top-card__job-title|.top-card-layout__title|h1"),company:q(".job-details-jobs-unified-top-card__company-name|.jobs-unified-top-card__company-name|.topcard__org-name-link")||((document.querySelector('meta[property="og:site_name"]')||{}).content||"").trim(),location:(()=>{for(const n of document.querySelectorAll("dt,th,strong,b,label,h3,h4")){const t=n.innerText.trim().replace(/:$/,"");if(/^((job )?locations?|standorte?|arbeitsort|einsatzort|office)$/i.test(t)){const v=(n.nextElementSibling||{}).innerText||"";if(v.trim())return v.trim().slice(0,120)}}return ""})(),description:(sel||q(".jobs-description__content|#job-details|.jobs-box__html-content|.description__text")).slice(0,20000)};window.open(${JSON.stringify(location.origin+"/static/add.html#")}+encodeURIComponent(JSON.stringify(d)),"_blank")})()`;
+  const code=`(()=>{const q=s=>{for(const x of s.split("|")){for(const n of document.querySelectorAll(x)){const text=(n.innerText||" ").trim();if(n.getClientRects().length&&text&&!/internet explorer|browser.{0,40}(not supported|unsupported)|enable javascript/i.test(text))return text}}return ""};const sel=String(getSelection()).trim();const d={job_url:location.href,title:q(".job-details-jobs-unified-top-card__job-title|.jobs-unified-top-card__job-title|.top-card-layout__title|h1"),company:q(".job-details-jobs-unified-top-card__company-name|.jobs-unified-top-card__company-name|.topcard__org-name-link")||((document.querySelector('meta[property="og:site_name"]')||{}).content||"").trim(),location:(()=>{for(const n of document.querySelectorAll("dt,th,strong,b,label,h3,h4")){const t=n.innerText.trim().replace(/:$/,"");if(/^((job )?locations?|standorte?|arbeitsort|einsatzort|office)$/i.test(t)){const v=(n.nextElementSibling||{}).innerText||"";if(v.trim())return v.trim().slice(0,120)}}return ""})(),description:(sel||q(".jobs-description__content|#job-details|.jobs-box__html-content|.description__text")).slice(0,20000)};window.open(${JSON.stringify(location.origin+"/static/add.html#")}+encodeURIComponent(JSON.stringify(d)),"_blank")})()`;
   return "javascript:"+code;
 }
 el("add-bookmarklet").href=bookmarkletHref();
@@ -1955,6 +2048,7 @@ document.addEventListener("click",event=>{
   if(addRecipient){const input=el("owner-email");if(!input)return;const addresses=input.value.split(",").map(s=>s.trim()).filter(Boolean),address=addRecipient.dataset.addRecipient;if(!addresses.some(s=>s.toLowerCase()===address.toLowerCase()))addresses.push(address);input.value=addresses.join(", ");captureSendDraft();input.focus();return}
   const copyEmail=event.target.closest("[data-copy-email]");
   if(copyEmail){const address=copyEmail.dataset.copyEmail;return void navigator.clipboard.writeText(address).then(()=>toast("copied "+address),()=>toast("could not copy",{warn:true}))}
+  const jobEdit=event.target.closest("[data-edit-job]");if(jobEdit)return void openJobEditor(JOBS.find(j=>j.url===jobEdit.dataset.editJob));
   const postingUrl=event.target.closest("[data-posting-url]");if(postingUrl)return void openPostingUrl(JOBS.find(j=>j.url===postingUrl.dataset.postingUrl));
   if(event.target.closest("[data-evalq-retry]"))return void retryEvalQueue();
   const evalqJob=event.target.closest("[data-evalq-job]");if(evalqJob)return void openEvalJob(evalqJob.dataset.evalqJob);
@@ -2069,9 +2163,9 @@ document.addEventListener("submit",event=>{
   if(event.target.id==="regen-form"){
     event.preventDefault();const run=RUNS.find(r=>r.id===PREVIEW_RUN),note=el("regen-note").value.trim(),picked=new FormData(event.target).getAll("edit");
     if(!run)return;if(!picked.length){toast("pick the CV, the cover letter or both",{warn:true});return}
-    const edit=picked.length===1?picked[0]:picked;
+    const edit=picked.length===1?picked[0]:picked,owned=docKinds(run.scope),scope=picked.every(k=>owned.includes(k))?run.scope||"both":"both";
     const button=event.submitter;if(button)button.disabled=true;
-    postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope:run.scope||"both",edit,note,provider:chosenEngine(run.id,run)}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else if(button)button.disabled=false});return;
+    postRun("/api/runs",{job_url:run.job_url,kind:"revise",parent:run.id,scope,edit,note,provider:chosenEngine(run.id,run)}).then(({ok,run_id})=>{const next=ok&&RUNS.find(r=>r.id===run_id);if(next)renderTailor(next);else if(button)button.disabled=false});return;
   }
   if(event.target.id!=="revise-form")return;event.preventDefault();const button=event.submitter,kind=button?.dataset.reentryKind,run=RUNS.find(r=>r.id===REVISE_RUN);if(!run||!kind)return;
   const scope=new FormData(event.target).get("scope")||"both",note=el("revision-note").value.trim(),remember=el("revision-remember").value.trim();
@@ -2084,11 +2178,6 @@ document.addEventListener("change",event=>{
   if(["f-fit","f-found","f-sort","f-type","f-mode","f-country"].includes(event.target.id)){
     facets[event.target.id.slice(2)]=event.target.value;saveFacets();sel=0;render();return;
   }
-  if(event.target.matches("[data-mark]")&&PREVIEW_RUN){const box=event.target;box.disabled=true;
-    fetch(`/api/runs/${encodeURIComponent(PREVIEW_RUN)}/marks?t=${T}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:box.dataset.mark,done:box.checked})})
-      .then(async response=>{checkAuth(response);const data=await response.json().catch(()=>({}));if(!response.ok){box.checked=!box.checked;toast(data.error||"could not save the mark",{warn:true})}
-        else{const manual=data.manual||[],summary=document.querySelector(".check-rail .state-summary");if(summary)summary.textContent=`${manual.filter(m=>m.done).length} / ${manual.length}`}})
-      .finally(()=>{box.disabled=false});return}
   if(event.target.matches("[data-run-follow]")){RUN_FOLLOW=event.target.checked;
     const runlog=el("runlog");if(RUN_FOLLOW&&runlog)runlog.scrollTop=runlog.scrollHeight}
 
@@ -2107,6 +2196,7 @@ document.addEventListener("keydown",event=>{
     }
     return;
   }
+  if(JOB_EDIT)return;
   if(ADD_OPEN)return;
   if(MODAL_RESOLVE){if(event.key==="Escape"){event.preventDefault();closeTextModal(false)}else if((event.metaKey||event.ctrlKey)&&event.key==="Enter"){event.preventDefault();closeTextModal(true)}return}
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);

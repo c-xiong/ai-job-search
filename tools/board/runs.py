@@ -288,16 +288,24 @@ class Supervisor:
 
         entry = self._board_entry(job_url)
         parent = None
+        added = []
         if kind != "apply":
             parent = get(payload.get("parent"))
             if parent is None or parent.get("phase") != "done" or parent.get("deleted_at") or parent.get("archived_at"):
                 return 409, {"error": "revise/redraft needs a completed parent run"}
             if parent.get("job_url") != job_url:
                 return 409, {"error": "parent belongs to a different posting"}
+            # A revision may add a document the parent never produced (a CV-only
+            # run that now needs its letter), but only by naming it in `edit`:
+            # it is drafted afresh, the inherited documents are carried over.
             inherited = docs.doc_kinds(parent)
-            if any(k not in inherited for k in docs.doc_kinds({"scope": scope})):
+            added = [k for k in docs.doc_kinds({"scope": scope}) if k not in inherited]
+            if added and (kind != "revise" or any(
+                    k not in edit_kinds({"edit": payload.get("edit")})
+                    for k in added)):
                 return 409, {"error": "that run produced the %s only; a %s cannot be revised "
-                                      "into existence - start a full re-run"
+                                      "into existence - pick it under Regenerate to draft "
+                                      "it, or start a full re-run"
                                       % (docs.doc_phrase(inherited), scope)}
             # A revision keeps the parent's CV variant and country unless the
             # owner switches the variant explicitly.
@@ -353,6 +361,12 @@ class Supervisor:
                           if "cover" in edit_kinds({"edit": edit}) else {})
             else:
                 budget = run_registry.stage_budget(settings, kind)
+            if kind == "revise" and note and "cover" in added:
+                # The new letter is drafted, not revised: reserve those stages
+                # too, on top of the edit pass for the inherited documents.
+                budget.update({k: v for k, v in
+                               run_registry.stage_budget(settings, "apply").items()
+                               if k not in budget})
         worst_case = round(sum(budget.values()), 4)
         needs_model = bool(budget)
         if needs_model:
@@ -433,6 +447,8 @@ class Supervisor:
                     "note": (payload.get("note") or "")[:1000],
                     "scope": scope,
                     "edit": edit,
+                    # Documents the parent lacked, drafted afresh by this revision.
+                    "added": added,
                     "remember": remember,
                     "base_cv": base_cv,
                     "resolved_base_cv": _resolve_base_cv(
@@ -770,11 +786,9 @@ class Supervisor:
             if record.get("pipeline") == 2:
                 record["progress"] = self._progress(record, settings)
             if record.get("phase") == "done":
-                # The owner's checklist, which is what separates "to review"
-                # from "ready to send" in the Applications list.
-                items = review_marks.checklist(record)
-                record["review"] = {"done": sum(1 for m in items if m["done"]),
-                                    "total": len(items)}
+                # The automatic checks separate "to review" (something did not
+                # pass) from "ready to send" in the Applications list.
+                record["review"] = review_marks.summary(record)
             runs.append(record)
         return {
             "runs": runs,
@@ -1503,6 +1517,14 @@ class Supervisor:
             return
         if edit_kinds(record):
             kinds = edit_kinds(record)
+        # A document this revision adds has nothing to revise yet: the draft
+        # stage writes it, with the note as its one-off instruction.
+        kinds = [k for k in kinds if k not in (record.get("added") or [])]
+        if not kinds:
+            manifest["revision"] = {"note": record.get("note") or "", "applied": True,
+                                    "at": checkpoint.now()}
+            checkpoint.save(record["id"], manifest)
+            return
         missing = [k for k in kinds if checkpoint.current_source_sha(manifest, k) is None]
         if missing:
             raise RunFailure("the version to revise has no recoverable %s"

@@ -14,7 +14,7 @@ class ArchiveBrowserTest(unittest.TestCase):
 const assert=require('assert/strict'),fs=require('fs'),vm=require('vm');
 const source=fs.readFileSync(process.argv[1],'utf8');
 const block=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));
-const run={id:'example',company:'Example',role:'Engineer',phase:'done',review:{total:8,done:0}};
+const run={id:'example',company:'Example',role:'Engineer',phase:'done',review:{total:8,flagged:2,measured:true}};
 const ctx={RUNS:[run],RUNNING:[],QUEUE:[],APPS_SHOW_ARCHIVED:false,
   modal:'Not a match',requests:[],opened:[],messages:[],reloads:0,render:()=>{}};
 ctx.openTextModal=async options=>{assert(options.hint.includes('mark the job as No'));return ctx.modal};

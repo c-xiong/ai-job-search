@@ -328,7 +328,7 @@ def enrich_existing(entry, row, key, today, portal, pending=None, ctx=None):
     append_source(entry, source_record(row, today, portal))
     entry["last_seen_at"] = today
 
-    body = row.get("description") or ""
+    body = "" if entry.get("posting_manual") else (row.get("description") or "")
     if body:
         # Keyed by the row's own URL, never the sighting's. A collapsed
         # duplicate arrives under a different URL, and the key never moves, so

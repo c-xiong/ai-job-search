@@ -10,7 +10,9 @@ const src=fs.readFileSync(process.argv[1],'utf8');
 const slice=(a,b)=>src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));
 const listeners={},requests=[],nodes={};
 const run={id:'r1',provider:'claude',scope:'both',job_url:'https://example.test/job'};
-const ctx={RUNS:[run],PREVIEW_RUN:'r1',REVISE_RUN:'r1',POSTING_URL_JOB:null,
+const cvRun={id:'r2',provider:'codex',scope:'cv',job_url:'https://example.test/job'};
+const ctx={RUNS:[run,cvRun],PREVIEW_RUN:'r1',REVISE_RUN:'r1',POSTING_URL_JOB:null,
+  docKinds:scope=>(scope||'both')==='both'?['cv','cover']:[scope],
   closePopovers:()=>{},esc:String,toast:()=>{},confirm:()=>true,renderTailor:()=>{},openApp:()=>{},
   restoreWorkspace:()=>{},el:id=>nodes[id]||(nodes[id]={value:''}),
   postRun:async(path,body)=>{requests.push({path,body});return {ok:false}},
@@ -37,11 +39,16 @@ for(const kind of ['revise','redraft','apply']){
   const e=event('',{id:'revise-form',data:{scope:'both'}});
   e.submitter.dataset.reentryKind=kind;listeners.submit(e);
 }
-assert.equal(requests.length,6);
+ctx.PREVIEW_RUN='r2';
+listeners.submit(event('',{id:'regen-form',data:{edit:'cover'}}));
+assert.equal(requests.length,7);
 for(const request of requests)assert.equal(request.body.provider,'codex');
 assert.equal(requests[0].path,'/api/runs/r1/continue');
 assert.equal(requests[1].path,'/api/runs/r1/retry');
 assert.equal(requests[2].body.edit,'cover');
+assert.equal(requests[2].body.scope,'both');
+assert.equal(requests[6].body.scope,'both');
+assert.equal(requests[6].body.parent,'r2');
 assert.equal(requests[5].body.kind,'apply');
 assert.equal(requests[5].body.parent,undefined);
 assert.equal(ctx.ui.chosenEngine('legacy',{provider:'claude'}),'claude');

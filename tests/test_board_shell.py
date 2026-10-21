@@ -197,7 +197,7 @@ class ShellMarkupTest(unittest.TestCase):
         for marker in ("preview-shell", "screen-rail", "check-rail", "pdf-stage"):
             self.assertIn(marker, self.css)
         for marker in ("renderPreview", "data-preview-filter", "data-recompile",
-                       "/api/pdf/", "data-reveal", "data-mark", "regen-form"):
+                       "/api/pdf/", "data-reveal", "auto-checks", "regen-form"):
             self.assertIn(marker, self.js)
         # The frames are built per document kind now, so the titles are in the
         # branch rather than in two literal tags.
@@ -604,7 +604,7 @@ const build=new Function("ctx",`
   const document={activeElement:null,querySelector:()=>null};
   let RUNS=ctx.runs||[],EV=[],ACTIVE_RUN=null,RUN_FOLLOW=true,QUEUE=[],layout={},PREVIEW_RUN=null,PREV_LOG_PHASE=null;
   const APP_GROUPS=[],latestApplications=()=>RUNS;
-  const appState=r=>RUNNING.includes(r.phase)?"generating":r.phase==="done"?"review":"failed";
+  const appState=r=>RUNNING.includes(r.phase)?"generating":r.phase==="done"?"review":"failed",checksPassed=()=>false;
   const RUN_LOG_SCROLL=new Map();
   ${src.slice(src.indexOf('let DEFAULT_PROVIDER='),src.indexOf('const generatePicker='))}
   ${src.slice(start,end)}

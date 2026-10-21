@@ -1,9 +1,8 @@
-"""The owner's review of a run's compiled PDFs: checklist, marks, screening, reveal.
+"""The owner's review of a run's compiled PDFs: automatic checks, screening, reveal.
 
-By default no model checks the PDFs (`automated_review: false`); the owner does,
-from a short checklist on the Preview screen. A mark is bound to the exact PDF
-bytes it was made against, so a recompile, restore or revision shows the item
-unchecked again rather than carrying an old tick onto new pages.
+By default no model checks the PDFs (`automated_review: false`). The board's
+automatic checks decide whether a finished run is ready to send; the owner
+looks at the PDFs without ticking anything.
 
 Stdlib only, Python 3.9+.
 """
@@ -11,7 +10,6 @@ Stdlib only, Python 3.9+.
 import json
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -19,21 +17,8 @@ import jobs_md  # noqa: E402
 
 from . import checkpoint, docs, run_registry
 
-# (id, doc, label). `doc` is the document whose PDF the mark is bound to;
-# "both" binds to both PDFs.
-CHECKLIST = (
-    ("cv_layout", "cv", "Exactly one page; no heading split from its bullets"),
-    ("cv_variant", "cv", "Right variant and title line for this role"),
-    ("cv_facts", "cv", "Dates, titles and contact details are correct"),
-    ("cover_layout", "cover", "One page; the signature fits with the body"),
-    ("cover_addressee", "cover", "Employer block, addressee and role subject are right"),
-    ("cover_claims", "cover", "Every claim is true; company facts are verified"),
-    ("cover_language", "cover", "Reads well; no filler, spelling or grammar errors"),
-    ("consistency", "both", "CV and letter agree on every shared fact"),
-)
-CHECK_IDS = {item[0] for item in CHECKLIST}
-# The model-produced checks that manual review replaces. Hidden from the rail
-# when `automated_review` is off: they would only ever read "not run".
+# The model-produced checks. Hidden, and ignored for readiness, when
+# `automated_review` is off: they would only ever read "not run".
 _MODEL_CHECKS = ("content_", "visual_", "consistency")
 
 
@@ -55,79 +40,6 @@ def _pdf(record, kind):
     return path if path.is_file() else None
 
 
-def _binding(record, doc):
-    kinds = docs.doc_kinds(record)
-    wanted = kinds if doc == "both" else [doc]
-    shas = []
-    for kind in wanted:
-        path = _pdf(record, kind)
-        if path is None:
-            return None
-        shas.append(_sha(path))
-    return ":".join(shas)
-
-
-# `/api/runs` summarises every finished run's checklist on each poll, so the
-# PDF hash is memoised on (path, mtime, size): a rebuild changes the key.
-_SHA_CACHE = {}
-
-
-def _sha(path):
-    stat = path.stat()
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    if key not in _SHA_CACHE:
-        if len(_SHA_CACHE) > 512:
-            _SHA_CACHE.clear()
-        _SHA_CACHE[key] = checkpoint.sha256(path)
-    return _SHA_CACHE[key]
-
-
-def _marks_path(record):
-    return run_registry.run_dir(record["id"]) / "marks.json"
-
-
-def _load_marks(record):
-    try:
-        payload = json.loads(_marks_path(record).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return payload.get("marks") or {} if isinstance(payload, dict) else {}
-
-
-def checklist(record):
-    """The items that apply to this run's documents, with their current marks."""
-    kinds = docs.doc_kinds(record)
-    marks = _load_marks(record)
-    out = []
-    for check_id, doc, label in CHECKLIST:
-        if doc == "both" and len(kinds) < 2 or doc != "both" and doc not in kinds:
-            continue
-        mark = marks.get(check_id) or {}
-        binding = _binding(record, doc)
-        out.append({"id": check_id, "doc": doc, "label": label,
-                    "done": bool(binding and mark.get("pdf") == binding),
-                    "stale": bool(mark and binding and mark.get("pdf") != binding)})
-    return out
-
-
-def mark(record, check_id, done):
-    if check_id not in CHECK_IDS:
-        raise ReviewError("unknown checklist item")
-    doc = next(item[1] for item in CHECKLIST if item[0] == check_id)
-    binding = _binding(record, doc)
-    if binding is None:
-        raise ReviewError("there is no compiled PDF to check yet", 409)
-    marks = _load_marks(record)
-    if done:
-        marks[check_id] = {"pdf": binding,
-                           "at": datetime.now().isoformat(timespec="seconds")}
-    else:
-        marks.pop(check_id, None)
-    jobs_md.write_json_atomic(_marks_path(record), {"schema": "jobflow.marks/1",
-                                                    "marks": marks})
-    return checklist(record)
-
-
 def _brief(record):
     try:
         payload = json.loads((run_registry.run_dir(record["id"]) / "brief.json")
@@ -137,14 +49,32 @@ def _brief(record):
     return payload if isinstance(payload, dict) else None
 
 
+def _shown_checks(checks):
+    if run_registry.config().get("automated_review", False):
+        return list(checks or [])
+    return [c for c in checks or []
+            if not str(c.get("id", "")).startswith(_MODEL_CHECKS)
+            and c.get("id") != "visual_layout"
+            and not str(c.get("id", "")).endswith("_mechanical")]
+
+
+def summary(record):
+    """How the automatic checks on a finished run came out: `flagged` counts
+    the ones that did not pass, which is what keeps it in "to review"."""
+    try:
+        payload = json.loads((run_registry.run_dir(record["id"]) / "verify.json")
+                             .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"total": 0, "flagged": 0, "measured": False}
+    checks = _shown_checks(payload.get("checks") if isinstance(payload, dict) else None)
+    return {"total": len(checks), "measured": True,
+            "flagged": sum(1 for c in checks if c.get("state") != "pass")}
+
+
 def view(record, verify):
     """verify.json as the Preview screen shows it."""
     verify = dict(verify or {})
-    if not run_registry.config().get("automated_review", False):
-        verify["checks"] = [c for c in verify.get("checks") or []
-                            if not str(c.get("id", "")).startswith(_MODEL_CHECKS)
-                            and c.get("id") != "visual_layout"
-                            and not str(c.get("id", "")).endswith("_mechanical")]
+    verify["checks"] = _shown_checks(verify.get("checks"))
     brief = _brief(record) or {}
     order = {"gap": 0, "adjacent": 1}
     requirements = sorted(
@@ -159,7 +89,6 @@ def view(record, verify):
                                             "deadline", "contact_person")
                   if brief.get(k)},
     } if brief else None
-    verify["manual"] = checklist(record)
     verify["variant"] = "ai" if record.get("resolved_base_cv") in ("ai", "ml") else "sde"
     targets = {kind: reveal_target(record, kind) for kind in docs.doc_kinds(record)}
     verify["files"] = {kind: _rel(path)

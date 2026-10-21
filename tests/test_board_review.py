@@ -1,5 +1,6 @@
 """Manual PDF review (the default): no model checks, owner-driven revisions."""
 
+import json
 import os
 import re
 import sys
@@ -96,6 +97,26 @@ class ManualReviewTest(SupervisorCase):
         prompt = next(p for p in (run_registry.state_dir(new_id)).glob("spec-*.json"))
         self.assertIn("small, targeted edits", prompt.read_text())
 
+    def test_a_cv_only_run_gains_a_letter_through_regenerate(self):
+        first, _ = self.run_to_end(scope="cv")
+        cv_before = checkpoint.current_source_sha(self.manifest(first), "cv")
+        code, body = self.start(kind="revise", parent=first, scope="cv", edit="cover", note="")
+        self.assertEqual(code, 400, body)
+        code, body = self.start(kind="revise", parent=first, scope="both", edit="cv", note="x")
+        self.assertEqual(code, 409, body)
+        for note in ("", "mention the Munich office"):
+            before = len(self.stages())
+            code, body = self.start(kind="revise", parent=first, scope="both", edit="cover",
+                                    note=note)
+            self.assertEqual(code, 202, body)
+            new_id = body["run_id"]
+            self.assertEqual(self.settle(new_id), "done", run_registry.get(new_id).get("error"))
+            self.assertEqual(self.stages()[before:], ["draft"])
+            manifest = self.manifest(new_id)
+            self.assertEqual(checkpoint.current_source_sha(manifest, "cv"), cv_before)
+            self.assertIsNotNone(checkpoint.current_source_sha(manifest, "cover"))
+            self.assertIn("draft", run_registry.get(new_id)["budget_usd"])
+
     def test_a_variant_switch_reseeds_the_cv_without_a_model(self):
         first, _ = self.run_to_end(base_cv="sde")
         before = len(self.stages())
@@ -111,18 +132,19 @@ class ManualReviewTest(SupervisorCase):
         code, body = self.start(kind="revise", parent=first, note="")
         self.assertEqual(code, 400, body)
 
-    def test_marks_bind_to_the_exact_pdf(self):
+    def test_readiness_follows_the_automatic_checks(self):
         run_id, _ = self.run_to_end()
         record = run_registry.get(run_id)
-        items = review.mark(record, "cv_layout", True)
-        self.assertTrue(next(i for i in items if i["id"] == "cv_layout")["done"])
-        pdf = run_registry.ROOT / record["artefacts"]["cv_pdf"]
-        pdf.write_bytes(pdf.read_bytes() + b"\n% changed")
-        again = next(i for i in review.checklist(record) if i["id"] == "cv_layout")
-        self.assertFalse(again["done"])
-        self.assertTrue(again["stale"])
-        with self.assertRaises(review.ReviewError):
-            review.mark(record, "not-an-item", True)
+        path = run_registry.run_dir(run_id) / "verify.json"
+        path.write_text(json.dumps({"checks": [
+            {"id": "content_cv", "state": "unverified"},
+            {"id": "cv_page_count", "state": "pass"}]}), encoding="utf-8")
+        self.assertEqual(review.summary(record), {"total": 1, "flagged": 0, "measured": True})
+        path.write_text(json.dumps({"checks": [{"id": "cv_page_count", "state": "fail"}]}),
+                        encoding="utf-8")
+        self.assertEqual(review.summary(record)["flagged"], 1)
+        path.unlink()
+        self.assertFalse(review.summary(record)["measured"])
 
     def test_the_view_hides_model_checks_and_reveals_a_repo_file(self):
         run_id, _ = self.run_to_end()
@@ -132,7 +154,7 @@ class ManualReviewTest(SupervisorCase):
             {"id": "visual_cover", "state": "unverified"},
             {"id": "cv_pages", "state": "pass"}]})
         self.assertEqual([c["id"] for c in view["checks"]], ["cv_pages"])
-        self.assertEqual({i["doc"] for i in view["manual"]}, {"cv", "cover", "both"})
+        self.assertNotIn("manual", view)
         self.assertEqual(set(view["files"]), {"cv", "cover"})
         with mock.patch.object(review.subprocess, "run") as run, \
                 mock.patch.object(review.sys, "platform", "darwin"):

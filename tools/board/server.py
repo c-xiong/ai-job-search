@@ -46,7 +46,7 @@ import job_attrs  # noqa: E402
 import linkedin_inbox  # noqa: E402
 import search_prefs  # noqa: E402
 
-from . import (activity, archive, add_job, companies, docs, fit_eval, learn, notion, review,  # noqa: E402
+from . import (activity, archive, add_job, job_edit, companies, docs, fit_eval, learn, notion, review,  # noqa: E402
                run_registry, runs, state, trash)
 
 TOKEN_FILE = jobs_md.ROOT / "job_scraper" / ".board-token"
@@ -255,7 +255,7 @@ def fetch_status():
 # id never reaches the supervisor.
 RUN_PATH = re.compile(r"^/api/runs/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"(?:/(?P<action>approve|cancel|kill|fit|verify|compile|restore|retry|continue"
-                      r"|marks|reveal|applied|owner|delete|archive|unarchive))?$")
+                      r"|reveal|applied|owner|delete|archive|unarchive))?$")
 PDF_PATH = re.compile(r"^/api/pdf/(?P<id>r-[0-9]{8}-[0-9]{6}-[a-z0-9]{1,16}-[0-9a-f]{6})"
                       r"/(?P<kind>cv|cover)$")
 COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
@@ -264,7 +264,7 @@ COMPANY_PATH = re.compile(r"^/api/companies/(?P<slug>[a-z0-9][a-z0-9-]{0,120})"
 
 # Run actions a POST may reach; anything else is refused before the body is read.
 RUN_POST_ACTIONS = ("approve", "cancel", "kill", "compile", "restore", "retry", "continue",
-                    "marks", "reveal", "applied", "owner", "delete", "archive", "unarchive")
+                    "reveal", "applied", "owner", "delete", "archive", "unarchive")
 
 
 def run_route(path):
@@ -523,7 +523,7 @@ class Handler(BaseHTTPRequestHandler):
         parts = urlparse(self.path)
         run_id, action = run_route(parts.path)
         company_match = COMPANY_PATH.fullmatch(parts.path)
-        known = parts.path in ("/api/update", "/api/jobs/add", "/api/fetch", "/api/runs",
+        known = parts.path in ("/api/update", "/api/jobs/title", "/api/jobs/refresh", "/api/jobs/add", "/api/fetch", "/api/runs",
                                "/api/evaluate", "/api/evaluate/retry",
                                "/api/linkedin/capture", "/api/linkedin/process",
                                "/api/runs/undelete",
@@ -551,6 +551,38 @@ class Handler(BaseHTTPRequestHandler):
 
         if not isinstance(payload, dict):
             payload = {}
+
+        if parts.path == "/api/jobs/refresh":
+            with jobs_md.board_lock():
+                entry = state.load().get(payload.get("url")) if isinstance(payload.get("url"), str) else None
+                target = payload.get("posting_url") or (state.primary_url(entry) if entry else None)
+            if not entry:
+                return self._send(404, json.dumps({"error": "unknown job"}))
+            if not add_job.external_apply_url(target) and not (isinstance(target, str) and add_job._is_linkedin(target)):
+                return self._send(400, json.dumps({"error": "Enter a public job posting URL."}))
+            try:
+                found = add_job.resolve(*add_job.classify(target))
+                found = {k: v for k, v in found.items() if k in ("title", "company", "location", "posted", "deadline", "description") and isinstance(v, str) and v.strip()}
+                if not found:
+                    return self._send(422, json.dumps({"error": "Could not read this posting. You can paste the details manually."}))
+                return self._send(200, json.dumps({"fields": found}))
+            except Exception:
+                return self._send(502, json.dumps({"error": "Could not fetch this posting. You can paste the details manually."}))
+
+        if parts.path == "/api/jobs/title":
+            # Snapshot identity under lock; network resolution must not block board writes.
+            with jobs_md.board_lock():
+                entry = state.load().get(payload.get("url")) if isinstance(payload.get("url"), str) else None
+                target = state.primary_url(entry) if entry else None
+            if not target:
+                return self._send(404, json.dumps({"error": "unknown job"}))
+            try:
+                title = add_job.refresh_title(target)
+                return self._send(200, json.dumps({"title": title}))
+            except add_job.AddError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}))
+            except Exception:
+                return self._send(502, json.dumps({"error": "Could not fetch the title. Enter it manually."}))
 
         if parts.path == "/api/learn":
             # The Rules panel: learn from notes, or accept/reject a suggestion.
@@ -720,19 +752,15 @@ class Handler(BaseHTTPRequestHandler):
                              body["tracker"]), run_id=run_id)
             return self._send(200, json.dumps(body, ensure_ascii=False))
 
-        if run_id and action in ("marks", "reveal"):
+        if run_id and action == "reveal":
             record = runs.get(run_id)
             if record is None:
                 return self._send(404, json.dumps({"error": "unknown run"}))
             try:
-                if action == "marks":
-                    body = {"manual": review.mark(record, str(payload.get("id") or ""),
-                                                  payload.get("done") is True)}
-                else:
-                    kind = payload.get("kind")
-                    if kind not in ("cv", "cover"):
-                        return self._send(400, json.dumps({"error": "kind must be cv or cover"}))
-                    body = {"revealed": review.reveal(record, kind)}
+                kind = payload.get("kind")
+                if kind not in ("cv", "cover"):
+                    return self._send(400, json.dumps({"error": "kind must be cv or cover"}))
+                body = {"revealed": review.reveal(record, kind)}
             except review.ReviewError as exc:
                 return self._send(exc.status, json.dumps({"error": str(exc)}))
             return self._send(200, json.dumps(body, ensure_ascii=False))
@@ -774,6 +802,15 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(url, str) or url not in seen:
                 return self._send(404, json.dumps({"error": "unknown job"}))
             why = []
+            try:
+                edited = job_edit.validate(payload["job"]) if "job" in payload else {}
+            except ValueError as exc:
+                return self._send(400, json.dumps({"error": str(exc)}))
+            title = None
+            if "title" in payload:
+                title = add_job.clean_title(payload["title"])
+                if not title:
+                    return self._send(400, json.dumps({"error": "Enter a job title of 1–200 characters, not a browser error message."}))
             posting_url = None
             if "posting_url" in payload:
                 posting_url, error = posting_url_value(payload["posting_url"])
@@ -799,7 +836,7 @@ class Handler(BaseHTTPRequestHandler):
             if "miss" in payload:
                 # "Report a miss": gate the job and suggest the rule that would
                 # have caught it (learn.py). Nothing is learned without review.
-                result, error = learn.report_miss(
+                miss_result, error = learn.report_miss(
                     seen, url, payload["miss"] if isinstance(payload["miss"], dict) else {})
                 if error:
                     return self._send(400, json.dumps({"error": error}))
@@ -842,9 +879,23 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     entry.pop("user_posting_url", None)
                 why.append("posting link on %s" % (entry.get("company") or "job"))
+            if title is not None:
+                seen[url]["title"] = title
+                why.append("title edited on %s" % (seen[url].get("company") or "job"))
+            if edited:
+                job_edit.apply(seen[url], url, edited)
+                try:
+                    fit_score.apply_to(seen[url], fit_score.Context(), detect_attrs=True)
+                except (fit_score.ConfigError, OSError):
+                    pass
+                why.append("job details edited")
             state.save(seen, "; ".join(why))
             result = {"ok": True, "open_url": state.primary_url(seen[url]),
                       "posting_url": seen[url].get("user_posting_url") or ""}
+            if title is not None:
+                result["title"] = title
+            if "miss" in payload:
+                result["miss"] = miss_result
         self._send(200, json.dumps(result))
 
     def do_PATCH(self):

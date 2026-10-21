@@ -54,6 +54,30 @@ def _text(payload, key, limit=500):
     return value.strip()[:limit] if isinstance(value, str) else ""
 
 
+def clean_title(value):
+    """Reject browser/error banners instead of treating them as job names."""
+    if not isinstance(value, str):
+        return ""
+    title = " ".join(value.split())
+    if not title or len(title) > 200:
+        return ""
+    if re.search(r"(?i)internet explorer|browser.{0,40}(?:not supported|unsupported|out.of.date)|"
+                 r"access denied|just a moment|page not found|enable javascript|"
+                 r"checking your browser|verify you are human", title):
+        return ""
+    return title
+
+
+def refresh_title(url):
+    """Resolve a title only; the editor previews it before saving."""
+    job_id, company_url = classify(url)
+    found = resolve(job_id, company_url)
+    title = clean_title(found.get("title"))
+    if not title:
+        raise AddError(422, "Could not retrieve a reliable job title. Enter it manually.")
+    return title
+
+
 def _is_linkedin(url):
     host = (urlsplit(url).hostname or "").lower()
     return host == "linkedin.com" or host.endswith(".linkedin.com")
@@ -387,7 +411,8 @@ def resolve(job_id, company_url):
         if jobs_md.composite_id_for_url(company_url):
             company_side = resolve_ats(company_url)
         # Ashby, for one, does not name the employer in its API.
-        if not company_side.get("description") or not company_side.get("company"):
+        company_side["title"] = clean_title(company_side.get("title"))
+        if not company_side.get("description") or not company_side.get("company") or not company_side.get("title"):
             page = resolve_page(company_url)
             company_side = dict(page, **{k: v for k, v in company_side.items() if v})
     linkedin_side = resolve_linkedin(job_id) if job_id else {}
@@ -401,6 +426,7 @@ def resolve(job_id, company_url):
         merged["company"] = linkedin_side["company"]
     if merged.get("description") and not posting_text.check(merged["description"])[0]:
         merged.pop("description")
+    merged["title"] = clean_title(merged.get("title"))
     return merged
 
 
@@ -479,6 +505,7 @@ def add(payload, today=None):
         for key in ("title", "company", "location"):
             if not found.get(key) and _text(payload, key):
                 found[key] = _text(payload, key)
+        found["title"] = clean_title(found.get("title"))
         # Last resort for the employer: the link itself usually names it
         # (jobs.northwind.com, boards.greenhouse.io/acme, acme.recruitee.com).
         if not found.get("company"):

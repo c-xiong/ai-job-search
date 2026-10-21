@@ -19,7 +19,7 @@ const original="https://freehire.me/jobs/engineer",legacy="https://careers.examp
 const preferred="https://company.example.test/apply?jobId=42",replacement="https://company.example.test/jobs/42";
 const job={url:original,open_url:legacy,default_open_url:legacy,posting_url:"",
   known_urls:[original,legacy],company:"Example",title:"Engineer",status:"yes",note:"Keep this"};
-const run={id:"r1",job_url:legacy,phase:"done",scope:"cv",review:{total:1,done:1}};
+const run={id:"r1",job_url:legacy,phase:"done",scope:"cv",review:{total:1,flagged:0,measured:true}};
 const listeners={},nodes={},requests=[],responses=[],messages=[];
 const classList=()=>({add(){},remove(){},toggle(){}});
 const document={body:{classList:classList()},activeElement:null,
@@ -37,7 +37,7 @@ const ctx={URL,document,JOBS:[job],RUNS:[run],T:"token",ACTIVE_RUN:null,PREVIEW_
   el:node,displayTitle:x=>x,requestAnimationFrame:fn=>fn(),checkAuth:()=>{},render:()=>{},pollActivity:()=>{},
   toast:message=>messages.push(message),closePopovers:()=>{},latestApplications:()=>[run],
   esc:x=>String(x||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"),
-  docKinds:()=>["cv"],appState:()=>"ready",DOC_TITLE:{cv:"CV"},crumbRun:()=>({}),openView:()=>{},
+  docKinds:()=>["cv"],appState:()=>"ready",checksPassed:()=>true,DOC_TITLE:{cv:"CV"},crumbRun:()=>({}),openView:()=>{},
   mountApp:(_run,_view,html)=>ctx.sendHtml=html,
   fetch:async(url,options)=>{
     requests.push({url,...options,body:JSON.parse(options.body)});

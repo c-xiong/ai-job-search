@@ -40,7 +40,7 @@
                   <label class="source"><input type="checkbox" id="s-freehire" checked> freehire</label>
                   <label class="source"><input type="checkbox" id="s-linkedin" checked> LinkedIn</label>
                   <label class="source"><input type="checkbox" id="s-arbeitnow" checked> Arbeitnow</label>
-                  <p class="hint">Recent searches are reused for an hour. Each fetch checks the next batch of companies.</p>
+
                   <details class="fetch-advanced"><summary>Limits</summary><div class="collectopts">
                     <label>Companies per fetch <input type="number" id="mc" value="8" min="1" max="20"></label>
                     <label>New company jobs per fetch <input type="number" id="mn" value="40" min="1" max="200"></label>
@@ -145,8 +145,8 @@
       <div class="modal-head"><div><span class="label">Report a miss</span><h2 id="miss-title">This job should have been filtered</h2></div><button class="modal-close" type="button" data-miss-close aria-label="Close">×</button></div>
       <span class="modal-label">Why</span>
       <div class="miss-reasons" id="miss-reasons"></div>
-      <label class="modal-label" for="miss-quote">The sentence in the posting that shows it <span class="dim">best evidence - becomes a rule</span></label>
-      <textarea id="miss-quote" rows="3" placeholder="Select it in the posting before opening this, or paste it here exactly"></textarea>
+      <label class="modal-label" for="miss-quote">The sentence that shows it, or why in your own words <span class="dim">an exact quote becomes a rule</span></label>
+      <textarea id="miss-quote" rows="3" placeholder="Select it in the posting before opening this, or explain it, e.g. &quot;this role is based in Seoul&quot;"></textarea>
       <label class="modal-label" for="miss-word">Or a word in the title that gives it away <span class="dim">optional</span></label>
       <input id="miss-word" placeholder="e.g. Werkstudent" autocomplete="off">
       <div class="modal-hint">The job moves to gate now. The rule it suggests waits in <b>Rules</b> (top bar) with a preview of what else it would catch - nothing changes until you accept it.</div>
@@ -173,6 +173,30 @@
       <div class="add-status" id="add-status" role="status" aria-live="polite"></div>
       <div class="modal-actions"><button class="secondary" type="button" id="add-cancel">Cancel</button><button class="secondary" type="button" id="add-anyway" hidden>Add without description</button><button class="primary" type="submit" id="add-submit">Add</button></div>
       <div class="add-bookmarklet">Drag <a id="add-bookmarklet" href="#" title="Drag me to the bookmarks bar">+ JobFlow</a> to your bookmarks bar, then click it on any job page to open this dialog already filled in.</div>
+    </form>
+  </div>
+  <div class="modal-backdrop" id="job-edit-modal" hidden>
+    <form class="text-modal job-edit-modal" id="job-edit-form" role="dialog" aria-modal="true" aria-labelledby="job-edit-heading">
+      <div class="modal-head"><h2 id="job-edit-heading">Edit job</h2><button type="button" class="modal-close" id="job-edit-close" aria-label="Close">×</button></div>
+      <div class="job-edit-scroll">
+        <label class="modal-label" for="job-edit-posting_url">Posting URL</label>
+        <div class="job-edit-fetch"><input type="url" id="job-edit-posting_url" required><button type="button" class="secondary" id="job-edit-fetch">Fetch again</button></div>
+        <div class="job-edit-grid">
+          <label>Title<input id="job-edit-title" maxlength="200" required></label>
+          <label>Company<input id="job-edit-company" maxlength="200" required></label>
+          <label>Location<input id="job-edit-location" maxlength="300"></label>
+          <label>Status<select id="job-edit-status"></select></label>
+        </div>
+        <label class="modal-label" for="job-edit-description">Job description</label>
+        <textarea id="job-edit-description" rows="12" maxlength="60000" placeholder="Paste the full job description here…"></textarea>
+        <details class="job-edit-extra"><summary>Dates, job details & notes</summary>
+          <div class="job-edit-grid"><label>Posted<input type="date" id="job-edit-posted"></label><label>Deadline<input type="date" id="job-edit-deadline"></label></div>
+          <div class="job-edit-grid" id="job-edit-attrs"></div>
+          <label class="modal-label" for="job-edit-note">My note</label><textarea id="job-edit-note" rows="3" maxlength="500"></textarea>
+        </details>
+      </div>
+      <div class="add-status" id="job-edit-message" role="status" aria-live="polite"></div>
+      <div class="modal-actions"><button type="button" class="secondary" id="job-edit-cancel">Cancel</button><button class="primary" id="job-edit-save" type="submit">Save changes</button></div>
     </form>
   </div>
   <div class="modal-backdrop" id="posting-url-modal" hidden>
