@@ -983,7 +983,7 @@ function attemptTabs(run){
   const numberOf=id=>{const i=lineage.findIndex(r=>r.id===id);return i<0?"?":i+1};
   const attemptMark=r=>r.phase==="done"?"✓":["failed","cancelled"].includes(r.phase)?"✕":RUNNING.includes(r.phase)?"●":"·";
   const attemptTitle=(r,i)=>`Run ${i+1} of ${lineage.length}${i===lineage.length-1?" · Latest":""} · ${ENGINE_NAMES[r.provider||"claude"]||"Unknown engine"} · ${(r.phase||"queued").replaceAll("_"," ")}${r.started_at?" · "+r.started_at.replace("T"," "):""} · ${r.continue_of?"continued from Run "+numberOf(r.continue_of):r.retry_of?"regenerated from scratch after Run "+numberOf(r.retry_of):r.parent?"revised from Run "+numberOf(r.parent):i===0?"first run":"new run"}`;
-  return `<div class="attempts" role="tablist" aria-label="Runs, oldest to newest">${lineage.map((r,i)=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r,i))}"><span class="attempt-mark" aria-hidden="true">${attemptMark(r)}</span>Run ${i+1}<span class="attempt-engine">${esc(ENGINE_NAMES[r.provider||"claude"]||"Unknown engine")}</span>${i===lineage.length-1?'<span class="attempt-latest">Latest</span>':""}</button>`).join("")}</div>`;
+  return `<div class="attempts" role="tablist" aria-label="Runs, oldest to newest" data-lineage="${esc(lineage[0]?.id||"")}">${lineage.map((r,i)=>`<button class="attempt ${esc(r.phase)}${r.id===run.id?" on":""}" role="tab" aria-selected="${r.id===run.id}" data-run="${esc(r.id)}" title="${esc(attemptTitle(r,i))}"><span class="attempt-mark" aria-hidden="true">${attemptMark(r)}</span>Run ${i+1}<span class="attempt-engine">${esc(ENGINE_NAMES[r.provider||"claude"]||"Unknown engine")}</span>${i===lineage.length-1?'<span class="attempt-latest">Latest</span>':""}</button>`).join("")}</div>`;
 }
 // The board row an application was generated from: its own URL, or the
 // first-party posting the row links to.
@@ -1025,8 +1025,13 @@ function mountApp(run,step,body){
   // list - typing a filter, scrolled down, the ⋯ menu open.
   const query=document.activeElement?.id==="apps-q"?document.activeElement.selectionStart:null;
   const scrolled=el("apps-groups")?.scrollTop||0,menuOpen=!!document.querySelector(".app-menu[open]");
+  // The run strip scrolls sideways; a re-render must not snap it back to Run 1.
+  const strip=document.querySelector(".attempts"),stripAt=strip?{lineage:strip.dataset.lineage,left:strip.scrollLeft}:null;
   el("tailor-view").innerHTML=`<div class="apps-shell${appsListCollapsed(step)?" list-collapsed":""}"><aside class="apps-list"><div class="splitter vertical edge" data-split="appsW" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize applications list" title="Drag to resize · double-click to reset"></div><button class="spine" data-apps-collapse title="Show applications ( [ )"><span>Applications</span><b>›</b></button><div class="panelhead"><span class="label">Applications</span><span class="count">${latestApplications().filter(r=>!r.archived_at).length}</span><span class="spacer"></span><button class="linkish" data-apps-collapse title="Hide the list ( [ )">‹</button></div><label class="search apps-search"><span>⌕</span><input type="search" id="apps-q" placeholder="filter…" value="${esc(APPS_Q)}"></label><div class="apps-groups" id="apps-groups">${appsGroupsHtml()}</div></aside><div class="apps-detail">${appHeader(run,step)}<div class="apps-body">${body}</div></div></div>`;
   el("apps-groups").scrollTop=scrolled;if(menuOpen)document.querySelector(".app-menu")?.setAttribute("open","");
+  const newStrip=document.querySelector(".attempts");
+  if(newStrip){if(stripAt&&stripAt.lineage===newStrip.dataset.lineage)newStrip.scrollLeft=stripAt.left;
+    else{const on=newStrip.querySelector(".attempt.on");if(on)newStrip.scrollLeft=Math.max(0,on.getBoundingClientRect().right-newStrip.getBoundingClientRect().right)}}
   if(query!==null){const input=el("apps-q");input.focus();try{input.setSelectionRange(query,query)}catch(_){}}
 }
 // Opening an application lands on what it needs from you now. Passing the
