@@ -117,6 +117,8 @@ job_scraper/linkedin_inbox.json
 job_scraper/linkedin_inbox.json.*.tmp
 job_scraper/linkedin_intake_state.json
 job_scraper/linkedin_intake_state.json.tmp
+# Atomic-write leftovers of the seen-jobs cache (same privacy class as the file).
+job_scraper/seen_jobs.json.*.tmp
 job_scraper/linkedin_emails/
 job_scraper/.linkedin-inbox.lock
 job_scraper/.linkedin-process.lock
@@ -173,6 +175,8 @@ Thumbs.db
 # else was run on this machine. Until 2026-09-18 it was only covered by the
 # owner's ~/.config/git/ignore, which a fresh clone or CI does not have.
 .claude/settings.local.json
+# Isolated git worktrees that agent sessions create for their own branches.
+.claude/worktrees/
 
 # Skills lock (auto-generated)
 skills-lock.json
@@ -193,6 +197,7 @@ documents/cv/**
 documents/linkedin/**
 documents/diplomas/**
 documents/references/**
+documents/cover_letter_samples/**
 documents/applications/**
 documents/postings/**
 # One folder per board-driven run: the posting it fetched, the fit evaluation,
