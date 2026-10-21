@@ -94,6 +94,13 @@ BODY_RULES = (
          r"(?:must|able to) (?:obtain|hold|pass) (?:a |an )?(?:security clearance|sicherheitsüberprüfung)",
          r"sicherheitsüberprüfung (?:ist )?(?:erforderlich|voraussetzung)",
          r"staatsangehörigkeit (?:ist )?(?:erforderlich|voraussetzung)")),
+    # Pay-to-intern programmes (Praktix and the like) sold as internships: the
+    # candidate pays the fee. "Relocation fees covered" must not match.
+    ("candidate_pays", "You pay a programme fee",
+     _rx(r"(?<!no )(?<!without )program(?:me)? fees?",
+         r"(?<!no )(?:participation|tuition|enrol?ment|registration|course) fees?",
+         r"teilnahmegebühr\w*", r"programmgebühr\w*",
+         r"(?:internship|program(?:me)?)\s*[:\-–]\s*(?:€|eur|chf|usd|\$|£)\s?\d")),
 )
 
 
@@ -117,13 +124,22 @@ def settings(cfg=None):
     custom_body = [r for r in block.get("custom_body") or []
                    if isinstance(r, dict) and str(r.get("phrase", "")).strip()]
     return {"groups": groups, "allow": allow, "body": body,
-            "custom_title": custom_title, "custom_body": custom_body}
+            "custom_title": custom_title, "custom_body": custom_body,
+            "excluded_locations": ((cfg or {}).get("search_preferences") or {}).get("excluded_locations", [])}
 
 
 def _literal(text):
     """A literal phrase as a regex: case-insensitive, any run of whitespace."""
     words = str(text).split()
     return re.compile(r"(?i)(?<![\w-])%s(?![\w-])" % r"\s+".join(re.escape(w) for w in words))
+
+
+def location_hit(location, opts):
+    """Match explicit excluded place names in listing metadata, never description text."""
+    for place in opts.get("excluded_locations") or []:
+        if str(place).strip() and _literal(place).search(location or ""):
+            return "location", "excluded location", str(place)
+    return None
 
 
 def title_hit(title, opts):

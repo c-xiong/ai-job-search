@@ -580,7 +580,11 @@ def screen(record, log, budget=None):
     """
     # The title filter runs first and needs no request: a Senior posting must
     # not spend one of the run's detail fetches.
-    hit = job_filters.title_hit(record.get("title", ""), job_filters.load_settings())
+    opts = job_filters.load_settings()
+    location = job_filters.location_hit(record.get("location", ""), opts)
+    if location:
+        return "gate", job_filters.body_note(location), record.get("description") or ""
+    hit = job_filters.title_hit(record.get("title", ""), opts)
     if hit:
         return "gate", job_filters.title_note(hit), record.get("description") or ""
     if record.get("description"):

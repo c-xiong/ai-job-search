@@ -41,8 +41,19 @@ import jobs_md  # noqa: E402
 
 CONFIG = jobs_md.ROOT / "job_scraper" / "scrape_config.json"
 
-JOB_TYPES = ("full_time", "intern", "working_student")
-DEFAULTS = {"enabled": False, "roles": [], "job_types": ["full_time"], "locations": [], "pages": 1}
+JOB_TYPES = ("full_time", "intern", "working_student", "graduate")
+EUROPE_REGIONS = {
+    "Nordic": ["Denmark", "Sweden", "Norway", "Finland", "Iceland"],
+    "Western Europe": ["Switzerland", "Germany", "Austria", "France", "Netherlands", "Belgium", "Luxembourg", "Ireland", "United Kingdom"],
+    "Southern Europe": ["Spain", "Portugal", "Italy", "Greece", "Malta", "Cyprus"],
+}
+COUNTRY_CODES = dict(zip(
+    "Denmark Sweden Norway Finland Iceland Switzerland Germany Austria France Netherlands Belgium Luxembourg Ireland Spain Portugal Italy Greece Malta Cyprus".split(),
+    "DK SE NO FI IS CH DE AT FR NL BE LU IE ES PT IT GR MT CY".split()))
+COUNTRY_CODES["United Kingdom"] = "GB"
+DEFAULTS = {"enabled": False, "roles": [], "job_types": ["full_time"], "locations": [], "pages": 1,
+            "europe_enabled": False, "europe_locations": [],
+            "europe_job_types": ["graduate", "intern"], "excluded_locations": []}
 SEARCH_BUDGET_DEFAULT = 24
 SEARCH_BUDGET_CEILING = 40
 
@@ -65,7 +76,8 @@ def preferences(cfg):
     raw = raw if isinstance(raw, dict) else {}
     out = dict(DEFAULTS)
     out["enabled"] = bool(raw.get("enabled", bool(raw)))
-    for key in ("roles", "locations"):
+    out["europe_enabled"] = bool(raw.get("europe_enabled", False))
+    for key in ("roles", "locations", "europe_locations", "excluded_locations"):
         values = raw.get(key)
         if isinstance(values, list):
             seen, clean = set(), []
@@ -75,9 +87,10 @@ def preferences(cfg):
                     seen.add(text.lower())
                     clean.append(text)
             out[key] = clean
-    types = raw.get("job_types")
-    if isinstance(types, list):
-        out["job_types"] = [t for t in JOB_TYPES if t in types]
+    for key in ("job_types", "europe_job_types"):
+        types = raw.get(key)
+        if isinstance(types, list):
+            out[key] = [t for t in JOB_TYPES if t in types]
     try:
         out["pages"] = max(1, min(3, int(raw.get("pages", 1))))
     except (TypeError, ValueError):
@@ -89,18 +102,20 @@ def clean(raw):
     """Validate a preference block from the board. Returns (block, error)."""
     if not isinstance(raw, dict):
         return None, "search_preferences must be an object"
-    for key in ("roles", "locations", "job_types"):
+    for key in ("roles", "locations", "job_types", "europe_locations", "europe_job_types", "excluded_locations"):
         if key in raw and not isinstance(raw[key], list):
             return None, "%s must be a list" % key
-    if any(t not in JOB_TYPES for t in raw.get("job_types") or []):
+    if any(t not in JOB_TYPES for key in ("job_types", "europe_job_types") for t in raw.get(key) or []):
         return None, "job_types must be among %s" % ", ".join(JOB_TYPES)
     block = preferences({"search_preferences": dict(raw, enabled=raw.get("enabled", True))})
-    if len(block["roles"]) > 12 or len(block["locations"]) > 12:
-        return None, "at most 12 roles and 12 locations"
+    if len(block["roles"]) > 12 or any(len(block[k]) > 50 for k in ("locations", "europe_locations", "excluded_locations")):
+        return None, "at most 12 roles and 50 places per list"
     return block, None
 
 
 def _keywords(role, job_type, country):
+    if job_type == "graduate":
+        return ["%s Graduate" % role, "%s Graduate Programme" % role]
     if job_type == "intern":
         out = ["%s Intern" % role]
         if country in _GERMAN_SPEAKING:
@@ -141,8 +156,8 @@ def freehire_searches(prefs):
     """freehire queries: role categories x job types, over the countries chosen."""
     if not prefs["enabled"]:
         return []
-    countries = sorted({c for c in (job_attrs.country(l) for l in prefs["locations"])
-                        if c in ("CH", "DE", "AT")})
+    countries = sorted({c for c in (COUNTRY_CODES.get(l, job_attrs.country(l)) for l in prefs["locations"])
+                        if c in COUNTRY_CODES.values()})
     if not countries:
         return []
     country = ",".join(countries)
@@ -157,6 +172,8 @@ def freehire_searches(prefs):
                 spec["q"] = role
             if job_type == "full_time":
                 spec["seniority"] = "junior"
+            elif job_type == "graduate":
+                spec["q"] = ("%s graduate" % spec["q"]) if spec.get("q") else "graduate"
             elif job_type == "intern":
                 spec["q"] = ("%s intern" % spec["q"]) if spec.get("q") else "intern"
             else:
@@ -185,6 +202,13 @@ def searches(cfg):
     for source, generate, key in (("linkedin", linkedin_searches, _linkedin_key),
                                   ("freehire", freehire_searches, _freehire_key)):
         generated = generate(prefs)
+        if prefs["europe_enabled"]:
+            generated += generate(dict(prefs, enabled=True, locations=prefs["europe_locations"],
+                                       job_types=prefs["europe_job_types"]))
+        unique = {}
+        for spec in generated:
+            unique.setdefault(key(spec), spec)
+        generated = list(unique.values())
         known = {key(spec) for spec in generated}
         custom = [dict(spec, custom=True) for spec in (cfg or {}).get(source) or []
                   if isinstance(spec, dict) and spec.get("enabled", True) and key(spec) not in known]
@@ -257,6 +281,7 @@ def overview(cfg, state=None, seen=None):
     return {
         "preferences": preferences(cfg),
         "job_types": list(JOB_TYPES),
+        "europe_regions": EUROPE_REGIONS,
         "budget": budget,
         "budget_default": SEARCH_BUDGET_DEFAULT,
         "budget_ceiling": SEARCH_BUDGET_CEILING,

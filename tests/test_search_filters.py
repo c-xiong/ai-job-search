@@ -69,6 +69,14 @@ class BodyFilterTest(unittest.TestCase):
         self.assertIsNone(self.body("Currently pursuing a PhD or Master degree in CS"))
         self.assertIsNone(self.body("PhD or MSc in Computer Science"))
 
+    def test_pay_to_intern_programme(self):
+        self.assertEqual(self.body("Program Fees: 5-Week Internship: €699"), "candidate_pays")
+        self.assertEqual(self.body("12-Week Internship: €1,399"), "candidate_pays")
+        self.assertEqual(self.body("A tuition fee of EUR 900 applies."), "candidate_pays")
+        self.assertIsNone(self.body("There are no program fees."))
+        self.assertIsNone(self.body("We cover relocation fees and travel costs."))
+        self.assertIsNone(self.body("Internship salary: CHF 3,000 per month"))
+
     def test_screen_text_gates_on_body_rules(self):
         status, note = collectors.screen_text("Requirements: U.S. citizenship required.")
         self.assertEqual(status, "gate")
