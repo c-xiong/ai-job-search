@@ -794,7 +794,7 @@ class Supervisor:
             "runs": runs,
             "queue": queued,
             "queue_depth": settings["queue_depth"],
-            "default_provider": settings.get("provider", "codex"),
+            "default_provider": settings.get("provider", "claude"),
             "ledger": {"spent_today_usd": spent_today(data),
                        "reserved_usd": run_registry.reserved(data),
                        "unknown_cost_runs": sum(1 for r in data["runs"]
@@ -2173,38 +2173,130 @@ class Supervisor:
         'web search and open official local office/contact pages before drafting; absence from the posting is'
         ' not a failed search. Record queries, opened URLs and omissions in `% CONTACT_RESEARCH` source '
         'comments. Review/fix may reuse supported research; otherwise research first. Never infer employer '
-        'location from the CV country.\n'
+        'location from the CV country. Choose the recipient address in this order: an employer office in '
+        'the posting city or country on a first-party page; then the legal-notice/Impressum address; then '
+        'the commercial-register seat (e.g. Zefix/SHAB, Handelsregister) when first-party pages give none. '
+        'Never substitute an office in another country while a local one exists. A coworking, incubator, '
+        'university project house, client site or hybrid worksite named as the work location is not the '
+        "postal address unless a first-party page names it as the company's address; an aggregator alone "
+        'does not verify one. Record which rule selected the address in `% CONTACT_RESEARCH`, and do not '
+        'describe a registered office as the worksite. An official commercial-register entry verifies the '
+        "recipient address; the first-party requirement for employer claims applies to the letter's body.\n"
         "Facts are fixed; wording and paragraph order are editable. The canonical base's TAILORING RULES, "
         'evidence bank and DO NOT CLAIM boundaries bind every pass.\n'
         "- Write one coherent personal letter, not a CV recap. Choose evidence by the posting's tasks, not "
         'its title. Start with one honest reason for pursuing this work, or a relevant experience that '
         'explains that interest. No stock opening is required: do not routinely use "What draws me to this '
-        'role". Do not explain the employer\'s product back to them, paste job-description keywords into an '
+        'role". Do not recap the employer\'s product or marketing, paste job-description keywords into an '
         'opening, or invent longstanding passion, product use or domain expertise.\n'
+        '- Make the opening concrete by choosing one opening angle from what the role spends most time on and'
+        " the candidate's real evidence. (A) Language: the candidate's documented language or NLP background "
+        'meets a verified language or speech product; any related skill the profile does not document, such '
+        'as speech technology, may appear only as something the candidate wants to learn, never as a fit. (B)'
+        " Measurement: the posting's evaluation, testing, benchmark or latency tasks meet documented evidence"
+        ' of comparing approaches and investigating failures. (C) Product: the candidate enjoys building '
+        "applications people use, made concrete through the employer's verified product form and the role's "
+        'actual software tasks. Choose C when neither A nor B fits; no other angle. At a speech or voice '
+        'company, target the agent-engineering, backend, web or evaluation work the posting lists; do not '
+        'present speech-model training, STT/TTS or audio work as a fit the evidence lacks. Record the chosen '
+        'angle and why in % COMPANY_RESEARCH. Do not open with a rhetorical engineering question, project '
+        'walkthrough or technical result; a one-clause reference to real experience is allowed. Role '
+        'relevance does not require a clever hook. Do not invent personal lessons, feelings, employer use '
+        'cases or enthusiasm.\n'
+        "- Specificity check: mentally replace the employer's name in the opening with a competitor's. At "
+        "least one opening sentence must then no longer fit, because it names this employer's verified "
+        "product, users or setting, or the role's actual tasks. Cut or rewrite any sentence that survives the"
+        " swap and adds nothing. The profile's career-direction wording is background for choosing the "
+        'reason, never a sentence to copy. This asks for specificity, not a claim that the employer is '
+        'unique.\n'
+        "- Consequential-domain layer: when first-party research shows the employer's business is one where "
+        'mistakes directly harm its users, for example finance (banking, investing, payments, insurance), '
+        "healthcare or legal and contract work, and the role's own tasks touch that part of the business, add"
+        ' this layer to the chosen angle instead of replacing it. Build it in order: one verified fact '
+        'specific to this employer; why a mistake costs its users there, in concrete terms such as money, '
+        "health or a legal position, as the candidate's judgement; the role task that therefore matters, such"
+        " as evaluation or knowing a system's limits; and, in one clause, a real decision from the "
+        "candidate's evidence that reflects the same care, such as keeping a consequential decision out of a "
+        "model's hands or having a system decline rather than guess. Name the concrete consequence instead of"
+        ' a label such as "high-risk domain", which reads as a legal classification. Other domains qualify on'
+        ' the same verified basis. Do not assume how the employer uses AI, claim domain expertise, or add the'
+        ' layer when the role does not touch that work. Record "Stakes: yes" or "Stakes: no" with the '
+        'supporting fact in % COMPANY_RESEARCH.\n'
+        '- Stay high level without being vague: explain purpose, responsibility and judgement rather than '
+        "implementation, but anchor every claim in something named, such as this employer's verified product "
+        'or users, a task from the posting, or a specific decision the candidate made. Rewrite any sentence '
+        'that adds no concrete fact, task or decision and would fit a letter to another company or role '
+        'unchanged, any sentence that rests on abstract words such as "useful", "meaningful", "real-world '
+        'impact", "cutting-edge" or "make a difference" without a concrete object, and any sentence that only'
+        " restates the one before it. Grounded statements about the candidate's own work may recur across "
+        'letters.\n'
+        '- Research the employer context before drafting: use live web search and open independently located '
+        'first-party product, business or about pages. Follow the employer business research workflow in '
+        'apply.md and record % COMPANY_RESEARCH with queries, opened sources and supported facts. Add a '
+        "brief, natural connection between the candidate's confirmed interests and a verified aspect of this "
+        "employer's business, users or product in the opening. Explain why that setting matters without "
+        'reciting company marketing. Do not reuse a finance/high-stakes rationale for unrelated employers, '
+        'assume the hiring team owns a particular product, or invent domain expertise or product usage. '
+        'Review/fix/repair may reuse supported research; if a material claim lacks support, research it or '
+        'omit it and record the limitation.\n'
+        "- Respect the candidate profile's current project priorities when selecting relevant evidence. The "
+        'preferred lead project gets the main explanation; a supporting project earns space only for a '
+        'distinct task, not another version of the same reliability story. Omit irrelevant projects rather '
+        'than forcing every project into every letter. Older voice examples do not override current '
+        "priorities. Record the choice and any relevance-based exception in letter_plan's existing evidence "
+        'strings.\n'
+        '- Explain experiences at cover-letter level: the purpose of the work, the responsibility taken and '
+        'the relevant judgement or way of working it demonstrates. Default to a short qualitative account. '
+        'Leave benchmark percentages, trial counts, internal routing, debugging sequences and library lists '
+        'to the CV unless a specific detail is essential to the argument. Removing numbers is not enough if '
+        'the paragraph still walks through the implementation. When a metric is essential, preserve its '
+        'comparator and development/test scope; automated rubric scores are not answer accuracy or production'
+        ' success.\n'
         '- The candidate profile is the authority for motivation, career direction and preferences. Use '
         'agent-specific interest only when relevant to actual agent responsibilities; do not force that '
         'interest into other work. Employer claims require first-party support. Distinguish plans from '
         'existing capabilities.\n'
-        '- Build the whole narrative around that reason. Background may be brief or integrated with evidence;'
-        ' no compulsory introduction paragraph or research-topic recital. Use "MSc in Computational '
-        'Linguistics" and preserve the distinction between completing requirements and degree conferral. Do '
-        'not turn a research appointment into production experience.\n'
-        '- Select normally two complementary experiences, with a third only when it adds a distinct relevant '
-        'strength. For SDE work, lead with software delivery, engineering decisions and supported outcomes; '
-        'include AI or coursework only when relevant. For AIE work, consider agent engineering, product '
-        'delivery and model adaptation/evaluation on their merits. A task-specific model comparison does not '
-        'establish universal superiority, production gains or monetary savings. Do not repeat one project as '
-        "multiple independent achievements. Record the task match and distinct contribution in letter_plan's "
-        'existing evidence strings.\n'
+        '- Build the narrative around that reason. Background may be brief or integrated with evidence. Use '
+        'the degree name exactly as the profile states it and preserve the distinction between enrollment, '
+        'completing requirements and degree conferral. For internship or working-student roles, foreground '
+        'confirmed current enrollment rather than volunteering completed requirements. Do not imply '
+        'unfinished coursework or guarantee future enrollment; answer direct eligibility questions '
+        'truthfully. For graduate/full-time roles, use completion status when relevant. Do not turn research '
+        'into production experience. Describe research appointments with the title and emphasis the profile '
+        'sets, follow its instructions on what not to name or foreground, and never use a research subject or'
+        ' affiliation as evidence of industry-domain experience or fit. The methods, evaluation and software '
+        'work remain valid evidence for any employer.\n'
+        '- Select a small set of complementary experiences by responsibility, not a fixed project quota. For '
+        'AI engineering roles involving application or system delivery, give documented production software '
+        'experience real weight even when it came from a software engineering rather than an AI role: product'
+        ' ownership, frontend/backend integration, testing and launch can complement the lead AI project. Do '
+        'not recast that work as production AI. A secondary project can be one sentence; research can briefly'
+        ' establish a different relevant strength. Omit redundant evidence and keep one page. Record task '
+        'matches and distinct contributions in letter_plan; do not count one project as independent '
+        'achievements. Task-specific model comparisons do not establish universal superiority or production '
+        'savings. Place documented production software experience before personal projects, normally as the '
+        'first evidence paragraph, even for AI roles, and say what it taught, as the profile records it, '
+        "shown through one or two concrete decisions rather than asserted. The profile's lead AI project "
+        'still receives the main explanation.\n'
         '- Each paragraph must advance the argument. Explain a relevant decision or result rather than '
         'inventorying tools. Connect background and projects naturally; avoid repeated statements about '
         'reliability, debugging or career goals. Technical detail must preserve ownership, project context '
         'and limitations. Personal projects, coursework, research and production remain distinct; tests are '
-        'not guarantees.\n'
+        'not guarantees. Show that a project is the candidate\'s own through plain wording such as "an agent I'
+        ' built", not labels such as "personal open-source project" that add nothing; never imply it was paid'
+        ' or production work.\n'
         '- Close briefly with the contribution or next step that follows from the evidence. No compulsory '
         'invitation sentence, sentence count or paragraph word quota. Do not repeat the opening, retell '
         'projects, claim ideal fit or promise results. Use relocation only when supported by the profile and '
         'verified role location; never invent availability or visa facts.\n'
+        "- Use the profile's role- and country-specific availability in the closing when requested by the "
+        'owner or posting. Include confirmed start availability and, for internships, supported placement '
+        'duration; match a posted duration when supported instead of mechanically listing alternatives. Do '
+        "not transfer one country's term-time hour limits to another country, add internship durations to "
+        'permanent-role letters, or infer work authorization from scheduling availability. For '
+        'working-student roles always state the weekly hours. When a posting asks for more hours than the '
+        "profile's cap for that country, state the profile's cap plainly and do not raise it to match; this "
+        'difference is not a hard conflict.\n'
         '- Use plain first-person prose in separate lettercontent paragraphs, no bullets or labels, normally '
         'three to seven body paragraphs plus salutation. No slogans, em dashes, generic praise or keyword '
         'collage. Review the entire letter for natural transitions, repetition and unsupported implications, '
@@ -2427,6 +2519,11 @@ class Supervisor:
                json.dumps(issues, ensure_ascii=False, indent=2),
                "".join("%s: `%s`\n" % (_DOC_TITLES[kind], path)
                        for kind, path in paths.items())))
+        if "cover" in paths:
+            parts.append("\nPreserve the selected lead project and its main explanation; "
+                         "shorten supporting examples first when evidence must be cut. "
+                         "Do not change the established evidence priority during layout repair.\n"
+                         + self.COVER_RULES)
         return "".join(parts)
 
 

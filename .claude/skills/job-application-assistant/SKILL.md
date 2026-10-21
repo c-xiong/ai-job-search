@@ -36,7 +36,7 @@ approval pause on this path; a fit evaluation runs only when the user asks for o
 - Follow the writing style rules in `03-writing-style.md` (critical: no em-dashes, no cliches)
 - Follow the template structure in `06-cover-letter-templates.md`
 - Start from `cover_letters/my_cover.tex` and follow its TAILORING RULES and evidence boundaries. In narrative mode, keep facts fixed while adapting wording and paragraph order throughout the letter. Use the approved examples for voice, never as employer facts or compulsory sentences.
-- Choose complementary evidence by actual responsibilities; give each paragraph a distinct purpose. Keep background proportionate, motivation sincere and closing concise. Review factual scope and whole-letter flow independently.
+- Choose complementary evidence by actual responsibilities; give each paragraph a distinct purpose. Keep background proportionate, motivation sincere and closing concise. Review factual scope and whole-letter flow independently. Choose the opening angle and apply the specificity check from the cover policy.
 - At most 380 body words, exactly one page; preserve the canonical preamble, margins and typography. Older COVER_LIBRARY_V1 bases retain their exact-block rules.
 - Create `cover_letters/cover_<company>_<role>.tex`
 - Ensure the letter connects the strongest specific experience to the role rather than answering every requirement; use no more than one honest adjacent-skill bridge and omit generic programme language

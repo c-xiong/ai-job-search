@@ -113,6 +113,7 @@ After creating or updating a CV or cover letter, re-read the generated file and 
 
 ### Targeting
 - [ ] Profile statement / opening paragraph is tailored to the specific role (not generic)
+- [ ] Opening passes the specificity check (it fails if a competitor's name is swapped in) and does not copy the profile's career-direction wording
 - [ ] CV is the untailored `sde`/`ai` master variant; posting requirements it lacks are reported as screening reminders, never added
 - [ ] Broad graduate-programme language is not mechanically copied; decisive gaps are bridged only where useful rather than every gap being narrated
 - [ ] Nice-to-have requirements are highlighted where there is a match

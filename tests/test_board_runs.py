@@ -137,10 +137,19 @@ class ScopeTest(SupervisorCase):
         self.assertIn("letter_plan", prompt)
         for rule in ("Facts are fixed; wording and paragraph order are editable",
                      "No stock opening is required", "entire letter", "380 body words",
-                     "candidate profile is the authority", "MSc in Computational Linguistics",
+                     "candidate profile is the authority", "degree name exactly as the profile states",
                      "Mechanical structure/layout checks do not establish factual grounding",
                      "canonical preamble unchanged", "COVER_NARRATIVE_V1",
-                     "CONTACT_RESEARCH", "Use live web search and open official"):
+                     "CONTACT_RESEARCH", "Use live web search and open official",
+                     "COMPANY_RESEARCH", "first-party product",
+                     "internship or working-student", "production software experience",
+                     "choosing one opening angle", "Choose C when neither A nor B fits",
+                     "Specificity check", "never a sentence to copy",
+                     "state the profile's cap plainly", "commercial-register seat",
+                     "Consequential-domain layer", "instead of a label such as",
+                     "Stay high level without being vague", "title and emphasis the profile sets",
+                     "Place documented production software experience before personal projects",
+                     "not labels such as \"personal open-source project\""):
             self.assertIn(rule, prompt)
         self.assertNotIn("Exactly three unmarked", prompt)
 
@@ -154,11 +163,26 @@ class ScopeTest(SupervisorCase):
             self.assertIn("Facts are fixed; wording and paragraph order are editable", prompt)
             self.assertIn("Independently review every claim", prompt)
             self.assertIn("No compulsory invitation sentence", prompt)
+            self.assertIn("COMPANY_RESEARCH", prompt)
+            self.assertIn("confirmed current enrollment", prompt)
+            self.assertIn("choosing one opening angle", prompt)
+            self.assertIn("Specificity check", prompt)
+            self.assertIn("state the profile's cap plainly", prompt)
+            self.assertIn("commercial-register entry verifies the recipient address", prompt)
+            self.assertIn("Consequential-domain layer", prompt)
+            self.assertIn("Stay high level without being vague", prompt)
+            self.assertIn("title and emphasis the profile sets", prompt)
             self.assertNotIn("Exactly three unmarked", prompt)
         repair = self.supervisor._prompt_repair(record, paths, [], "a" * 32)
         self.assertIn("across the entire narrative", repair)
         self.assertIn("fresh content review", repair)
+        self.assertIn("Make the opening concrete", repair)
+        self.assertIn("candidate profile's current project priorities", repair)
+        self.assertIn("Preserve the selected lead project", repair)
+        self.assertIn("COMPANY_RESEARCH", repair)
+        self.assertIn("confirmed current enrollment", repair)
         self.assertIn("Legacy USE_COVER_TEXT blocks remain unchanged", repair)
+        self.assertIn("Specificity check", repair)
 
     def test_a_cover_brief_without_a_letter_plan_is_rejected(self):
         os.environ["FAKE_DRAFT"] = "noplan"
@@ -237,6 +261,43 @@ class ScopeTest(SupervisorCase):
             run_id, phase = self.run_to_end(url="https://example.com/jobs/2", cv_country="ch")
         self.assertEqual(phase, "done")
         self.assertEqual(run_registry.get(run_id)["cv_country"], "ch")
+
+
+def _policy_words(text):
+    """The cover policy from "Facts are fixed" through the Compatibility bullet, whitespace-normalised."""
+    start = text.index("Facts are fixed; wording and paragraph order are editable")
+    end = text.index("\n", text.index("- Compatibility:", start))
+    return " ".join(text[start:end].split())
+
+
+class CoverPolicyMirrorTest(unittest.TestCase):
+    """The cover policy is mirrored verbatim; a drifted copy silently changes one path's letters."""
+
+    POLICY_MD = (".claude/skills/job-application-assistant/03-writing-style.md",
+                 ".claude/commands/apply.md")
+
+    def test_tracked_copies_match_the_board_prompt(self):
+        board = _policy_words(runs.Supervisor.COVER_RULES)
+        for rel in self.POLICY_MD:
+            with self.subTest(rel):
+                self.assertEqual(_policy_words((ROOT / rel).read_text()), board)
+
+    def test_contact_research_is_inside_shared_rules(self):
+        # Headless stages read only named sections of apply.md, "Shared rules" among them.
+        text = (ROOT / ".claude/commands/apply.md").read_text()
+        start = text.index("\n## Shared rules")
+        shared = text[start:text.index("\n## ", start + 1)]
+        self.assertIn("**Mandatory employer contact research", shared)
+        self.assertIn("commercial-register seat", shared)
+        self.assertIn("CONTACT_RESEARCH", shared)
+
+    def test_local_cover_base_mirrors_policy(self):
+        base = ROOT / "cover_letters/my_cover.tex"
+        if not base.exists():
+            self.skipTest("my_cover.tex is owner-local (gitignored)")
+        header = "\n".join(line[2:] if line.startswith("% ") else line.lstrip("%")
+                           for line in base.read_text().splitlines())
+        self.assertEqual(_policy_words(header), _policy_words(runs.Supervisor.COVER_RULES))
 
 
 class ContentReviewTest(SupervisorCase):

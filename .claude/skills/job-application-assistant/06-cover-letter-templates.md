@@ -40,7 +40,7 @@ For a PDF attachment, use an **A4 formal business-letter frame** rather than a c
 4. Bold application subject naming the exact role and any reference number, without the label `Subject`
 5. Personal salutation, body, closing, signature space and typed full name, all left aligned
 
-This is the default for Swiss and German applications. If the application is pasted into a portal text field rather than uploaded as a PDF, omit the letter frame and provide body text only. Never invent a street address for either party. The reusable base may retain bracketed address slots; a final application must fill them from a verified source or remove unresolved optional lines, never ship visible placeholders.
+This is the default for Swiss and German applications. If the application is pasted into a portal text field rather than uploaded as a PDF, omit the letter frame and provide body text only. Never invent a street address for either party. Choose the recipient address by the order in apply.md's contact research rule. The reusable base may retain bracketed address slots; a final application must fill them from a verified source or remove unresolved optional lines, never ship visible placeholders.
 
 **Output file:** `cover_letters/cover_<company>_<role>.tex`
 **Compile with:** XeLaTeX (cover.cls requires fontspec)
@@ -182,7 +182,8 @@ letter for distinct paragraph purposes and natural transitions.
 
 - Every claim, metric, credential and implication matches source evidence.
 - Personal, course, research and production work are accurately distinguished.
-- Motivation is sincere and specific without explaining the employer's product.
+- Motivation uses a role-appropriate opening angle, passes the specificity check and does not explain the employer's product back to them.
+- A consequential-domain layer appears only on verified grounds and names the concrete consequence; no generic sentence lacks a concrete fact, task or decision.
 - Evidence adds complementary strengths; background and closing support the narrative.
 - No repeated manifesto, stock opening, keyword collage or unresolved placeholders.
 - Contact details are verified and unknown address lines removed.

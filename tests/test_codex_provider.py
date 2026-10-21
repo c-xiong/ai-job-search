@@ -42,10 +42,14 @@ class CodexProviderTest(SupervisorCase):
         self.assertEqual(run["provider"], "claude")
         self.assertEqual(run["phase"], "done", run.get("error"))
 
-    def test_shipped_default_uses_codex(self):
-        self.assertEqual(run_registry.DEFAULT_CONFIG["provider"], "codex")
-        self.write_config(provider=run_registry.DEFAULT_CONFIG["provider"],
-                          codex_bin=str(self.codex))
+    def test_shipped_default_uses_claude(self):
+        self.assertEqual(run_registry.DEFAULT_CONFIG["provider"], "claude")
+        # A local config that never names a provider falls back to Claude too.
+        unset = {k: v for k, v in run_registry.DEFAULT_CONFIG.items() if k != "provider"}
+        self.assertEqual(providers.selection({}, unset)[0], "claude")
+
+    def test_configured_codex_default_remains_supported(self):
+        self.write_config(provider="codex", codex_bin=str(self.codex))
         self.assertEqual(self.supervisor.snapshot()["default_provider"], "codex")
         run = self.run_to_end()
         self.assertEqual(run["provider"], "codex")

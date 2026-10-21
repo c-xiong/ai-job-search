@@ -252,7 +252,7 @@ const COUNTRIES=[["ch","Country: CH"],["de","Country: DE"]];
 const AI_TITLE=/\b(machine[ -]learning|deep[ -]learning|ml|mlops|data[ -]scien(?:tist|ce)|ai|artificial intelligence|llms?|nlp|computer vision|genai|generative[ -]ai)\b/i;
 const variantOptions=url=>{const title=(JOBS.find(j=>j.url===url)||{}).title||"",pick=AI_TITLE.test(title)?"ai":"sde";
   return [["sde","CV: SDE"],["ai","CV: AI"]].map(([value,label])=>`<option value="${value}" ${pick===value?"selected":""}>${label}</option>`).join("")};
-let DEFAULT_PROVIDER="codex";
+let DEFAULT_PROVIDER="claude";
 const ENGINE_NAMES={claude:"Claude Code",codex:"Codex"};
 const ENGINE_CHOICES=new Map();
 const enginePicker=(key,selected=DEFAULT_PROVIDER)=>`<label class="engine-picker">Engine <select data-engine="${esc(key)}" aria-label="Engine">${Object.entries(ENGINE_NAMES).map(([value,label])=>`<option value="${value}" ${value===(ENGINE_CHOICES.get(key)||selected)?"selected":""}>${label}</option>`).join("")}</select></label>`;
@@ -855,7 +855,7 @@ function renderRuns(){
 }
 async function pollRuns(){
   let data;try{const response=await fetch("/api/runs?t="+T);if(!checkAuth(response)||!response.ok)return;data=await response.json()}catch(_){return}
-  const before=JSON.stringify(RUNS.map(r=>[r.id,r.phase]));RUNS=data.runs||[];QUEUE=data.queue||[];LEDGER=data.ledger;BUDGET=data.budget_usd;DEFAULT_PROVIDER=data.default_provider||"codex";const engine=document.querySelector('[data-engine="generate"]');if(engine&&!ENGINE_CHOICES.has("generate"))engine.value=DEFAULT_PROVIDER;renderRuns();
+  const before=JSON.stringify(RUNS.map(r=>[r.id,r.phase]));RUNS=data.runs||[];QUEUE=data.queue||[];LEDGER=data.ledger;BUDGET=data.budget_usd;DEFAULT_PROVIDER=data.default_provider||"claude";const engine=document.querySelector('[data-engine="generate"]');if(engine&&!ENGINE_CHOICES.has("generate"))engine.value=DEFAULT_PROVIDER;renderRuns();
   if(JSON.stringify(RUNS.map(r=>[r.id,r.phase]))!==before)render();
   const busy=activeRuns().length>0;if(busy&&!RUNPOLL)RUNPOLL=setInterval(pollRuns,2000);if(!busy&&RUNPOLL){clearInterval(RUNPOLL);RUNPOLL=null}
 }
