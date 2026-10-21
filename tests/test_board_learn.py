@@ -49,10 +49,17 @@ class LearnTest(unittest.TestCase):
         hits = learn.preview(result["suggestion"], self.seen)
         self.assertEqual([h["url"] for h in hits], ["u2"])
 
-    def test_report_miss_rejects_text_not_in_the_posting(self):
-        _, error = learn.report_miss(self.seen, "u1", {"reason": "citizenship",
-                                                       "quote": "EU citizens only"})
-        self.assertIn("not in the stored posting", error)
+    def test_report_miss_keeps_text_not_in_the_posting_as_an_explanation(self):
+        result, error = learn.report_miss(self.seen, "u1", {"reason": "other",
+                                                            "quote": "this role is based in Seoul"})
+        self.assertIsNone(error)
+        self.assertTrue(result["explained"])
+        self.assertIsNone(result["suggestion"])
+        report = self.seen["u1"]["miss_reports"][-1]
+        self.assertEqual((report["quote"], report["explanation"]), ("", "this role is based in Seoul"))
+        self.assertEqual(self.seen["u1"]["user_status"], "gate")
+        rows = learn._note_rows(self.seen, learn._load())
+        self.assertIn("owner explains: this role is based in Seoul", learn.build_prompt(rows, {}))
         _, error = learn.report_miss(self.seen, "u1", {"reason": "nope"})
         self.assertIsNotNone(error)
 

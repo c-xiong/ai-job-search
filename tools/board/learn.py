@@ -4,9 +4,12 @@ Two inputs:
 
   Report a miss   From a job's panel: "this should have been filtered", with a
                   reason and, ideally, the sentence from the posting that proves
-                  it. Deterministic and free - the quote becomes a suggested
-                  body rule, a title word becomes a suggested title rule. The
-                  job itself is gated straight away.
+                  it. Deterministic and free - a verbatim quote becomes a
+                  suggested body rule, a title word a suggested title rule.
+                  Text that is not in the posting (often the reason is in the
+                  job's metadata, e.g. "this role is in Seoul") is kept as your
+                  explanation, and the next learning pass turns it into a rule
+                  or lesson. The job itself is gated straight away.
   Learn from notes  On demand, one model pass over the rows you wrote a note on
                   (or reported) since the last pass. The model proposes rules;
                   each proposal is checked against the postings it cites, so a
@@ -47,11 +50,12 @@ REASONS = {
     "wrong_type": "Wrong job type",
     "remote": "Fully remote",
     "wrong_role": "Not my kind of role",
+    "fee": "I'd pay them (programme fee)",
     "other": "Other",
 }
 # Reasons whose evidence is a sentence in the posting (a body rule); the rest
 # are usually visible in the title (a title rule).
-BODY_REASONS = ("citizenship", "german", "phd", "remote", "other")
+BODY_REASONS = ("citizenship", "german", "phd", "remote", "fee", "other")
 OPEN_STATUSES = job_filters.OPEN_STATUSES
 MAX_ROWS = 25            # rows one learning pass reads
 POSTING_CHARS = 2500     # of each posting, around the note's evidence
@@ -147,12 +151,14 @@ def report_miss(seen, url, payload):
     quote = _norm(payload.get("quote"))[:300]
     word = _norm(payload.get("word"))[:60]
     body = _body(entry)
+    explanation = ""
     if quote and not job_filters._literal(quote).search(body):
-        return None, "That sentence is not in the stored posting - copy it exactly."
+        # Not a verbatim quote: your own words, for the learning pass to read.
+        explanation, quote = quote, ""
     if word and not job_filters._literal(word).search(entry.get("title", "")):
         return None, "That word is not in the job title."
     entry.setdefault("miss_reports", []).append(
-        {"reason": reason, "quote": quote, "word": word, "at": _now()})
+        {"reason": reason, "quote": quote, "word": word, "explanation": explanation, "at": _now()})
     entry["user_status"] = "gate"
     entry["note"] = "AUTO-SCREEN: reported miss - %s" % REASONS[reason]
     data = _load()
@@ -167,7 +173,7 @@ def report_miss(seen, url, payload):
                      'You reported "%s" as a miss, quoting the posting.' % entry.get("title"),
                      ref, "miss")
     _save(data)
-    return {"gated": True, "suggestion": added}, None
+    return {"gated": True, "suggestion": added, "explained": bool(explanation)}, None
 
 
 # --------------------------------------------------------- learn from notes
@@ -226,6 +232,11 @@ Propose rules that would have caught what the notes describe, as JSON:
                  a fixed phrase cannot catch (e.g. "Treat 'must be based in the US'
                  as a location requirement the candidate fails").
 
+A reported miss may carry the owner's own explanation instead of a quote - the
+reason is often in the job's metadata (its location, its title) rather than the
+posting text. Use it to choose the rule; a location the owner does not want is
+a "lesson" unless the posting text states it in a fixed phrase.
+
 For each: `label` names the condition in a few words, `why` says which note(s)
 led to it, `job_ids` lists the numbered jobs it is based on. Prefer few, precise
 rules over many loose ones; an empty list is a fine answer. Do not propose a rule
@@ -266,12 +277,14 @@ def _excerpt(body, note):
 def build_prompt(rows, cfg):
     parts = [INSTRUCTIONS, "=== CURRENT RULES ===", _current_rules(cfg)]
     for index, (url, entry, note, reports, _) in enumerate(rows, 1):
-        report_text = "; ".join("%s%s" % (REASONS.get(r.get("reason"), r.get("reason")),
-                                          ' - "%s"' % r["quote"] if r.get("quote") else "")
+        report_text = "; ".join("%s%s%s" % (REASONS.get(r.get("reason"), r.get("reason")),
+                                            ' - "%s"' % r["quote"] if r.get("quote") else "",
+                                            " - owner explains: %s" % r["explanation"]
+                                            if r.get("explanation") else "")
                                 for r in reports)
         parts += ["=== JOB %d ===" % index,
-                  "Title: %s\nCompany: %s\nStatus: %s\nFit band: %s" % (
-                      entry.get("title", ""), entry.get("company", ""),
+                  "Title: %s\nCompany: %s\nLocation: %s\nStatus: %s\nFit band: %s" % (
+                      entry.get("title", ""), entry.get("company", ""), entry.get("location") or "-",
                       jobs_md.user_status(entry), entry.get("fit") or "-"),
                   "Owner's note: %s" % (note or "-"),
                   "Reported miss: %s" % (report_text or "-"),
